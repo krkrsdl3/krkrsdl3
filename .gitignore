@@ -1,0 +1,19 @@
+# build target
+/**/cmake-build-android/
+/**/cmake-build-android-release/
+/**/cmake-build-android-debug/
+/**/build/
+/**/out/
+/**/bin/
+
+.idea/
+.vscode/
+.vs/
+.gradle/
+.act/
+
+local.properties
+
+java_pid*.hprof
+.DS_Store
+*.pdb

@@ -1,0 +1,48 @@
+{
+    "dependencies": [
+        "oniguruma",
+        "unrar",
+        "zlib",
+        "libarchive",
+        "7zip",
+        "ffmpeg",
+        "opencv4",
+        "jxrlib",
+        "libbpg",
+        "libpng",
+        "libwebp",
+        "libjpeg-turbo",
+        "libogg",
+        "libvorbis",
+        "opus",
+        "opusfile",
+        "freetype",
+
+        "openal-soft",
+        "sdl3",
+		"sdl3-ttf",
+		    {
+            "name": "glad",
+            "features": ["loader"],
+            "platform": "windows"
+        },
+        {
+            "name": "glad",
+            "features": ["egl", "loader"],
+            "platform": "android"
+        },
+        "glm",
+		"blend2d",
+		
+		"boost-iostreams",
+        "boost-locale",
+        "boost-phoenix",
+        "boost-spirit"
+    ],
+    "overrides": [
+        {
+            "name": "opencv4",
+            "version": "4.8.0"
+        }
+    ]
+}

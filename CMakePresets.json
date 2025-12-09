@@ -1,0 +1,40 @@
+{
+	"version": 6,
+	"cmakeMinimumRequired": {
+		"major": 3,
+		"minor": 28,
+		"patch": 0
+	},
+	"configurePresets": [{
+			"name": "Windows Config",
+			"generator": "Visual Studio 17 2022",
+			"cacheVariables": {
+				"WINDOWS": true,
+				"CMAKE_EXPORT_COMPILE_COMMANDS": true
+			},
+			"condition": {
+				"type": "equals",
+				"lhs": "${hostSystemName}",
+				"rhs": "Windows"
+			},
+			"architecture": "x64",
+			"binaryDir": "${sourceDir}/out/windows",
+			"vendor": {
+				"microsoft.com/VisualStudioSettings/CMake/1.0": {
+					"hostOS": ["Windows"]
+				}
+			}
+		}
+	],
+	"buildPresets": [{
+			"name": "Windows Debug Build",
+			"configurePreset": "Windows Config",
+			"configuration": "Debug"
+		},
+		{
+			"name": "Windows Release Build",
+			"configurePreset": "Windows Config",
+			"configuration": "Release"
+		}
+	]
+}

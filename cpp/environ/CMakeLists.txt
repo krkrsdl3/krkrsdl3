@@ -1,0 +1,32 @@
+set(KRKRSDL_ENVIRON_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cpp/environ)
+
+set(KRKRSDL_ENVIRON_SRC
+    ${KRKRSDL_ENVIRON_PATH}/DetectCPU.cpp
+	${KRKRSDL_ENVIRON_PATH}/KeyCodeConv.cpp
+	${KRKRSDL_ENVIRON_PATH}/KRMovieOverlay.cpp
+	${KRKRSDL_ENVIRON_PATH}/MainWindowLayer.cpp
+	${KRKRSDL_ENVIRON_PATH}/Other.cpp
+	${KRKRSDL_ENVIRON_PATH}/TVPConfig.cpp
+	${KRKRSDL_ENVIRON_PATH}/WaveMixer.cpp
+	${KRKRSDL_ENVIRON_PATH}/math/MathAlgorithms.cpp
+	${KRKRSDL_ENVIRON_PATH}/math/md5.c
+	${KRKRSDL_ENVIRON_PATH}/math/xmmlib.cpp
+	${KRKRSDL_ENVIRON_PATH}/math/xxhash.c
+	${KRKRSDL_ENVIRON_PATH}/math/xxtea.cpp
+	${KRKRSDL_ENVIRON_PATH}/gl/tvpgl.cpp
+    )
+	
+if(ANDROID)
+    list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/android/ioapi.cpp)
+	list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/android/Platform.cpp)
+	list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/android/TVPScreen.cpp)
+	list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/android/JniHelper.cpp)
+elseif(LINUX)
+elseif(WINDOWS)
+    list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/windows/ioapi.cpp)
+	list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/windows/Platform.cpp)
+	list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/windows/TVPScreen.cpp)
+	list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/pthread/pthread.c)
+else()
+    message(FATAL_ERROR "unsupported: ${CMAKE_SYSTEM_NAME}")
+endif()

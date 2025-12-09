@@ -1,0 +1,374 @@
+diff -uprN a/libavcodec/avcodec.h b/libavcodec/avcodec.h
+--- a/libavcodec/avcodec.h
++++ b/libavcodec/avcodec.h
+@@ -3534,7 +3534,7 @@ void avcodec_register_all(void);
+  * @return An AVCodecContext filled with default values or NULL on failure.
+  * @see avcodec_get_context_defaults
+  */
+-AVCodecContext *avcodec_alloc_context3(const AVCodec *codec);
++AVCodecContext *libbpg_avcodec_alloc_context3(const AVCodec *codec);
+ 
+ /**
+  * Free the codec context and everything associated with it and write NULL to
+@@ -3659,7 +3659,7 @@ void avcodec_free_frame(AVFrame **frame)
+  * @see avcodec_alloc_context3(), avcodec_find_decoder(), avcodec_find_encoder(),
+  *      av_dict_set(), av_opt_find().
+  */
+-int avcodec_open2(AVCodecContext *avctx, const AVCodec *codec, AVDictionary **options);
++int libbpg_avcodec_open2(AVCodecContext *avctx, const AVCodec *codec, AVDictionary **options);
+ 
+ /**
+  * Close a given AVCodecContext and free all the data associated with it
+@@ -3670,7 +3670,7 @@ int avcodec_open2(AVCodecContext *avctx,
+  * avcodec_get_context_defaults3() with a non-NULL codec. Subsequent calls will
+  * do nothing.
+  */
+-int avcodec_close(AVCodecContext *avctx);
++int libbpg_avcodec_close(AVCodecContext *avctx);
+ 
+ /**
+  * Free all allocated data in the given subtitle struct.
+@@ -3705,7 +3705,7 @@ void av_destruct_packet(AVPacket *pkt);
+  *
+  * @param pkt packet
+  */
+-void av_init_packet(AVPacket *pkt);
++void libbpg_av_init_packet(AVPacket *pkt);
+ 
+ /**
+  * Allocate the payload of a packet and initialize its fields with
+@@ -3940,7 +3940,7 @@ attribute_deprecated int avcodec_default
+  * it can be called by custom get_buffer2() implementations for decoders without
+  * CODEC_CAP_DR1 set.
+  */
+-int avcodec_default_get_buffer2(AVCodecContext *s, AVFrame *frame, int flags);
++int libbpg_avcodec_default_get_buffer2(AVCodecContext *s, AVFrame *frame, int flags);
+ 
+ #if FF_API_EMU_EDGE
+ /**
+@@ -4916,8 +4916,8 @@ void avcodec_string(char *buf, int buf_s
+  */
+ const char *av_get_profile_name(const AVCodec *codec, int profile);
+ 
+-int avcodec_default_execute(AVCodecContext *c, int (*func)(AVCodecContext *c2, void *arg2),void *arg, int *ret, int count, int size);
+-int avcodec_default_execute2(AVCodecContext *c, int (*func)(AVCodecContext *c2, void *arg2, int, int),void *arg, int *ret, int count);
++int libbpg_avcodec_default_execute(AVCodecContext *c, int (*func)(AVCodecContext *c2, void *arg2),void *arg, int *ret, int count, int size);
++int libbpg_avcodec_default_execute2(AVCodecContext *c, int (*func)(AVCodecContext *c2, void *arg2, int, int),void *arg, int *ret, int count);
+ //FIXME func typedef
+ 
+ /**
+@@ -5243,4 +5243,14 @@ const AVCodecDescriptor *avcodec_descrip
+  * @}
+  */
+ 
++
++#define av_init_packet libbpg_av_init_packet
++#define avcodec_alloc_context3 libbpg_avcodec_alloc_context3
++#define avcodec_close libbpg_avcodec_close
++#define avcodec_default_get_buffer2 libbpg_avcodec_default_get_buffer2
++#define avcodec_open2 libbpg_avcodec_open2
++#define avcodec_default_execute2 libbpg_avcodec_default_execute2
++#define avcodec_default_execute libbpg_avcodec_default_execute
++
++
+ #endif /* AVCODEC_AVCODEC_H */
+diff -uprN a/libavcodec/internal.h b/libavcodec/internal.h
+--- a/libavcodec/internal.h
++++ b/libavcodec/internal.h
+@@ -206,7 +206,7 @@ static av_always_inline int64_t ff_sampl
+  * AVCodecContext.get_buffer() and should be used instead calling get_buffer()
+  * directly.
+  */
+-int ff_get_buffer(AVCodecContext *avctx, AVFrame *frame, int flags);
++int libbpg_ff_get_buffer(AVCodecContext *avctx, AVFrame *frame, int flags);
+ 
+ /**
+  * Identical in function to av_frame_make_writable(), except it uses
+@@ -214,7 +214,7 @@ int ff_get_buffer(AVCodecContext *avctx,
+  */
+ int ff_reget_buffer(AVCodecContext *avctx, AVFrame *frame);
+ 
+-int ff_thread_can_start_frame(AVCodecContext *avctx);
++int libbpg_ff_thread_can_start_frame(AVCodecContext *avctx);
+ 
+ int avpriv_h264_has_num_reorder_frames(AVCodecContext *avctx);
+ 
+@@ -244,7 +244,7 @@ int ff_set_dimensions(AVCodecContext *s,
+  * Check that the provided sample aspect ratio is valid and set it on the codec
+  * context.
+  */
+-int ff_set_sar(AVCodecContext *avctx, AVRational sar);
++int libbpg_ff_set_sar(AVCodecContext *avctx, AVRational sar);
+ 
+ /**
+  * Add or update AV_FRAME_DATA_MATRIXENCODING side data.
+@@ -264,4 +264,8 @@ int ff_get_format(AVCodecContext *avctx,
+  */
+ int ff_decode_frame_props(AVCodecContext *avctx, AVFrame *frame);
+ 
++#define ff_set_sar libbpg_ff_set_sar
++#define ff_get_buffer libbpg_ff_get_buffer
++#define ff_thread_can_start_frame libbpg_ff_thread_can_start_frame
++
+ #endif /* AVCODEC_INTERNAL_H */
+diff -uprN a/libavcodec/thread.h b/libavcodec/thread.h
+--- a/libavcodec/thread.h
++++ b/libavcodec/thread.h
+@@ -69,7 +69,7 @@ int ff_thread_decode_frame(AVCodecContex
+  *
+  * @param avctx The context.
+  */
+-void ff_thread_finish_setup(AVCodecContext *avctx);
++void libbpg_ff_thread_finish_setup(AVCodecContext *avctx);
+ 
+ /**
+  * Notify later decoding threads when part of their reference picture is ready.
+@@ -81,7 +81,7 @@ void ff_thread_finish_setup(AVCodecConte
+  * @param field The field being decoded, for field-picture codecs.
+  * 0 for top field or frame pictures, 1 for bottom field.
+  */
+-void ff_thread_report_progress(ThreadFrame *f, int progress, int field);
++void libbpg_ff_thread_report_progress(ThreadFrame *f, int progress, int field);
+ 
+ /**
+  * Wait for earlier decoding threads to finish reference pictures.
+@@ -95,7 +95,7 @@ void ff_thread_report_progress(ThreadFra
+  * @param field The field being referenced, for field-picture codecs.
+  * 0 for top field or frame pictures, 1 for bottom field.
+  */
+-void ff_thread_await_progress(ThreadFrame *f, int progress, int field);
++void libbpg_ff_thread_await_progress(ThreadFrame *f, int progress, int field);
+ 
+ /**
+  * Wrapper around get_format() for frame-multithreaded codecs.
+@@ -115,7 +115,7 @@ enum AVPixelFormat ff_thread_get_format(
+  * @param avctx The current context.
+  * @param f The frame to write into.
+  */
+-int ff_thread_get_buffer(AVCodecContext *avctx, ThreadFrame *f, int flags);
++int libbpg_ff_thread_get_buffer(AVCodecContext *avctx, ThreadFrame *f, int flags);
+ 
+ /**
+  * Wrapper around release_buffer() frame-for multithreaded codecs.
+@@ -130,7 +130,7 @@ int ff_thread_get_buffer(AVCodecContext
+  */
+ void ff_thread_release_buffer(AVCodecContext *avctx, ThreadFrame *f);
+ 
+-int ff_thread_ref_frame(ThreadFrame *dst, ThreadFrame *src);
++int libbpg_ff_thread_ref_frame(ThreadFrame *dst, ThreadFrame *src);
+ 
+ int ff_thread_init(AVCodecContext *s);
+ void ff_thread_free(AVCodecContext *s);
+@@ -140,4 +140,10 @@ void ff_reset_entries(AVCodecContext *av
+ void ff_thread_report_progress2(AVCodecContext *avctx, int field, int thread, int n);
+ void ff_thread_await_progress2(AVCodecContext *avctx,  int field, int thread, int shift);
+ 
++#define ff_thread_get_buffer libbpg_ff_thread_get_buffer
++#define ff_thread_ref_frame libbpg_ff_thread_ref_frame
++#define ff_thread_finish_setup libbpg_ff_thread_finish_setup
++#define ff_thread_report_progress libbpg_ff_thread_report_progress
++#define ff_thread_await_progress libbpg_ff_thread_await_progress
++
+ #endif /* AVCODEC_THREAD_H */
+diff -uprN a/libavutil/frame.h b/libavutil/frame.h
+--- a/libavutil/frame.h	2018-04-21
++++ b/libavutil/frame.h	2025-11-30
+@@ -543,7 +543,7 @@ const char *av_get_colorspace_name(enum
+  * must be allocated through other means, e.g. with av_frame_get_buffer() or
+  * manually.
+  */
+-AVFrame *av_frame_alloc(void);
++AVFrame *libbpg_frame_alloc(void);
+ 
+ /**
+  * Free the frame and any dynamically allocated objects in it,
+@@ -552,7 +552,7 @@ AVFrame *av_frame_alloc(void);
+  *
+  * @param frame frame to be freed. The pointer will be set to NULL.
+  */
+-void av_frame_free(AVFrame **frame);
++void libbpg_frame_free(AVFrame **frame);
+ 
+ /**
+  * Set up a new reference to the data described by the source frame.
+@@ -565,7 +565,7 @@ void av_frame_free(AVFrame **frame);
+  *
+  * @return 0 on success, a negative AVERROR on error
+  */
+-int av_frame_ref(AVFrame *dst, const AVFrame *src);
++int libbpg_frame_ref(AVFrame *dst, const AVFrame *src);
+ 
+ /**
+  * Create a new frame that references the same data as src.
+@@ -579,12 +579,12 @@ AVFrame *av_frame_clone(const AVFrame *s
+ /**
+  * Unreference all the buffers referenced by frame and reset the frame fields.
+  */
+-void av_frame_unref(AVFrame *frame);
++void libbpg_frame_unref(AVFrame *frame);
+ 
+ /**
+  * Move everythnig contained in src to dst and reset src.
+  */
+-void av_frame_move_ref(AVFrame *dst, AVFrame *src);
++void libbpg_frame_move_ref(AVFrame *dst, AVFrame *src);
+ 
+ /**
+  * Allocate new buffer(s) for audio or video data.
+@@ -700,4 +700,10 @@ const char *av_frame_side_data_name(enum
+  * @}
+  */
+ 
++#define av_frame_alloc libbpg_frame_alloc
++#define av_frame_free libbpg_frame_free
++#define av_frame_move_ref libbpg_frame_move_ref
++#define av_frame_ref libbpg_frame_ref
++#define av_frame_unref libbpg_frame_unref
++
+ #endif /* AVUTIL_FRAME_H */
+diff -uprN a/libavutil/imgutils.h b/libavutil/imgutils.h
+--- a/libavutil/imgutils.h
++++ b/libavutil/imgutils.h
+@@ -189,7 +189,7 @@ int av_image_copy_to_buffer(uint8_t *dst
+  * @param log_ctx the parent logging context, it may be NULL
+  * @return >= 0 if valid, a negative error code otherwise
+  */
+-int av_image_check_size(unsigned int w, unsigned int h, int log_offset, void *log_ctx);
++int libbpg_av_image_check_size(unsigned int w, unsigned int h, int log_offset, void *log_ctx);
+ 
+ /**
+  * Check if the given sample aspect ratio of an image is valid.
+@@ -209,5 +209,6 @@ int av_image_check_sar(unsigned int w, u
+  * @}
+  */
+ 
++#define av_image_check_size libbpg_av_image_check_size
+ 
+ #endif /* AVUTIL_IMGUTILS_H */
+diff -uprN a/libavutil/mem.h b/libavutil/mem.h
+--- a/libavutil/mem.h
++++ b/libavutil/mem.h
+@@ -80,7 +80,7 @@
+  * be allocated.
+  * @see av_mallocz()
+  */
+-void *av_malloc(size_t size) av_malloc_attrib av_alloc_size(1);
++void *libbpg_malloc(size_t size) av_malloc_attrib av_alloc_size(1);
+ 
+ /**
+  * Allocate a block of size * nmemb bytes with av_malloc().
+@@ -90,7 +90,7 @@ void *av_malloc(size_t size) av_malloc_a
+  * be allocated.
+  * @see av_malloc()
+  */
+-av_alloc_size(1, 2) void *av_malloc_array(size_t nmemb, size_t size);
++av_alloc_size(1, 2) void *libbpg_av_malloc_array(size_t nmemb, size_t size);
+ 
+ /**
+  * Allocate or reallocate a block of memory.
+@@ -110,7 +110,7 @@ av_alloc_size(1, 2) void *av_malloc_arra
+  *          some libc implementations.
+  * @see av_fast_realloc()
+  */
+-void *av_realloc(void *ptr, size_t size) av_alloc_size(2);
++void* libbpg_av_realloc(void* ptr, size_t size) av_alloc_size(2);
+ 
+ /**
+  * Allocate or reallocate a block of memory.
+@@ -120,7 +120,7 @@ void *av_realloc(void *ptr, size_t size)
+  * - It frees the input block in case of failure, thus avoiding the memory
+  *   leak with the classic "buf = realloc(buf); if (!buf) return -1;".
+  */
+-void *av_realloc_f(void *ptr, size_t nelem, size_t elsize);
++void* libbpg_av_realloc_f(void *ptr, size_t nelem, size_t elsize);
+ 
+ /**
+  * Allocate or reallocate a block of memory.
+@@ -139,7 +139,7 @@ void *av_realloc_f(void *ptr, size_t nel
+  *          The situation is undefined according to POSIX and may crash with
+  *          some libc implementations.
+  */
+-int av_reallocp(void *ptr, size_t size);
++int libbpg_av_reallocp(void *ptr, size_t size);
+ 
+ /**
+  * Allocate or reallocate an array.
+@@ -158,7 +158,7 @@ int av_reallocp(void *ptr, size_t size);
+  *          The situation is undefined according to POSIX and may crash with
+  *          some libc implementations.
+  */
+-av_alloc_size(2, 3) void *av_realloc_array(void *ptr, size_t nmemb, size_t size);
++av_alloc_size(2, 3) void *libbpg_av_realloc_array(void *ptr, size_t nmemb, size_t size);
+ 
+ /**
+  * Allocate or reallocate an array through a pointer to a pointer.
+@@ -177,7 +177,7 @@ av_alloc_size(2, 3) void *av_realloc_arr
+  *          The situation is undefined according to POSIX and may crash with
+  *          some libc implementations.
+  */
+-av_alloc_size(2, 3) int av_reallocp_array(void *ptr, size_t nmemb, size_t size);
++av_alloc_size(2, 3) int libbpg_av_reallocp_array(void *ptr, size_t nmemb, size_t size);
+ 
+ /**
+  * Free a memory block which has been allocated with av_malloc(z)() or
+@@ -187,7 +187,7 @@ av_alloc_size(2, 3) int av_reallocp_arra
+  * @note It is recommended that you use av_freep() instead.
+  * @see av_freep()
+  */
+-void av_free(void *ptr);
++void libbpg_free(void *ptr);
+ 
+ /**
+  * Allocate a block of size bytes with alignment suitable for all
+@@ -197,7 +197,7 @@ void av_free(void *ptr);
+  * @return Pointer to the allocated block, NULL if it cannot be allocated.
+  * @see av_malloc()
+  */
+-void *av_mallocz(size_t size) av_malloc_attrib av_alloc_size(1);
++void *libbpg_mallocz(size_t size) av_malloc_attrib av_alloc_size(1);
+ 
+ /**
+  * Allocate a block of nmemb * size bytes with alignment suitable for all
+@@ -256,7 +256,7 @@ void *av_memdup(const void *p, size_t si
+  * @note passing a pointer to a NULL pointer is safe and leads to no action.
+  * @see av_free()
+  */
+-void av_freep(void *ptr);
++void libbpg_freep(void *ptr);
+ 
+ /**
+  * Add an element to a dynamic array.
+@@ -338,7 +338,7 @@ static inline int av_size_mult(size_t a,
+ /**
+  * Set the maximum size that may me allocated in one block.
+  */
+-void av_max_alloc(size_t max);
++void libbpg_av_max_alloc(size_t max);
+ 
+ /**
+  * deliberately overlapping memcpy implementation
+@@ -370,10 +370,23 @@ void *av_fast_realloc(void *ptr, unsigne
+  * @param min_size minimum size of *ptr buffer after returning, *ptr will be NULL and
+  *                 *size 0 if an error occurred.
+  */
+-void av_fast_malloc(void *ptr, unsigned int *size, size_t min_size);
++void libbpg_fast_malloc(void *ptr, unsigned int *size, size_t min_size);
+ 
+ /**
+  * @}
+  */
+ 
++#define av_free libbpg_free
++#define av_freep libbpg_freep
++#define av_malloc libbpg_malloc
++#define av_mallocz libbpg_mallocz
++#define av_fast_malloc libbpg_fast_malloc
++#define av_max_alloc libbpg_av_max_alloc
++#define av_realloc libbpg_av_realloc
++#define av_realloc_f libbpg_av_realloc_f
++#define av_reallocp libbpg_av_reallocp
++#define av_realloc_array libbpg_av_realloc_array
++#define av_reallocp_array libbpg_av_reallocp_array
++#define av_malloc_array libbpg_av_malloc_array
++
+ #endif /* AVUTIL_MEM_H */
