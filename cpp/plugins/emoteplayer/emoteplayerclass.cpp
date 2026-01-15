@@ -11,8 +11,10 @@
 
 // 渲染混用太tm痛苦了，下一版预计只能统一使用bgfx渲染，然后SDL只充当硬件接口且不参与渲染了
 #if !_MSC_VER
+#if !__linux__
 extern SDL_Window* tvp_window;
 extern SDL_GLContext tvp_glContext;
+#endif
 #endif
 
 namespace emoteplayer
@@ -164,7 +166,9 @@ void SeparateLayerAdaptor::assign(iTJSDispatch2* anotherAdaptor)
 void SeparateLayerAdaptor::clear()
 {
 #if !_MSC_VER
+#if !__linux__
     SDL_GL_MakeCurrent(tvp_window, tvp_glContext);
+#endif
 #endif
     if (fbotexture != 0 && glIsTexture(fbotexture) == GL_TRUE)
         glDeleteTextures(1, &fbotexture);
@@ -185,7 +189,9 @@ void SeparateLayerAdaptor::clear()
         _this = nullptr;
     }
 #if !_MSC_VER
+#if !__linux__
     SDL_GL_MakeCurrent(tvp_window, NULL);
+#endif
 #endif
 }
 void SeparateLayerAdaptor::set_absolute(tjs_int v)
@@ -276,7 +282,9 @@ void SeparateLayerAdaptor::checkDrawArea(tjs_int width, tjs_int height)
 EmotePlayer::~EmotePlayer()
 {
 #if !_MSC_VER
+#if !__linux__
     SDL_GL_MakeCurrent(tvp_window, tvp_glContext);
+#endif
 #endif
     if (fbotexture != 0 && glIsTexture(fbotexture) == GL_TRUE)
         glDeleteTextures(1, &fbotexture);
@@ -295,7 +303,9 @@ EmotePlayer::~EmotePlayer()
     if (m_bmpData != nullptr)
         delete[] m_bmpData;
 #if !_MSC_VER
+#if !__linux__
     SDL_GL_MakeCurrent(tvp_window, NULL);
+#endif
 #endif
 }
 int32_t EmotePlayer::get_loopTime()
@@ -459,7 +469,9 @@ void EmotePlayer::clear(iTJSDispatch2* layer, tjs_uint32 neutralColor)
         return;
 
 #if !_MSC_VER
+#if !__linux__
     SDL_GL_MakeCurrent(tvp_window, tvp_glContext);
+#endif
 #endif
     if (withoutAdaptor)
         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
@@ -468,7 +480,9 @@ void EmotePlayer::clear(iTJSDispatch2* layer, tjs_uint32 neutralColor)
             glBindFramebuffer(GL_FRAMEBUFFER, self->fbo);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 #if !_MSC_VER
+#if !__linux__
     SDL_GL_MakeCurrent(tvp_window, NULL);
+#endif
 #endif
 }
 void EmotePlayer::progress(tjs_real mstime)
@@ -497,11 +511,15 @@ void EmotePlayer::progress(tjs_real mstime)
             //_currentfile->updatePhysics(clockPassed);
             // 将子对象画到自己身上
 #if !_MSC_VER
+#if !__linux__
             SDL_GL_MakeCurrent(tvp_window, tvp_glContext);
+#endif
 #endif
             _currmotion->progress(0, empty, _limitArea);
 #if !_MSC_VER
+#if !__linux__
             SDL_GL_MakeCurrent(tvp_window, NULL);
+#endif
 #endif
         }
         else
@@ -523,11 +541,15 @@ void EmotePlayer::progress(tjs_real mstime)
             }
             // 将子对象画到自己身上
 #if !_MSC_VER
+#if !__linux__
             SDL_GL_MakeCurrent(tvp_window, tvp_glContext);
+#endif
 #endif
             _currmotion->progress(clockPassed, empty, _limitArea);
 #if !_MSC_VER
+#if !__linux__
             SDL_GL_MakeCurrent(tvp_window, NULL);
+#endif
 #endif
         }
     }
@@ -553,7 +575,9 @@ void EmotePlayer::draw(iTJSDispatch2* objthis)
     if (_currentfile != nullptr && _currmotion != nullptr)
     {
 #if !_MSC_VER
+#if !__linux__
         SDL_GL_MakeCurrent(tvp_window, tvp_glContext);
+#endif
 #endif
         ResetDrawArea(ths->GetWidth(), ths->GetHeight());
         if (withoutAdaptor)
@@ -607,7 +631,9 @@ void EmotePlayer::draw(iTJSDispatch2* objthis)
             //cv::imshow(name, bgra);
         }
 #if !_MSC_VER
+#if !__linux__
         SDL_GL_MakeCurrent(tvp_window, NULL);
+#endif
 #endif
     }
 }

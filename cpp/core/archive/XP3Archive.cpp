@@ -14,7 +14,7 @@
 
 #include "TVPSystem.h"
 #include "TVPMsg.h"
-#include "TVPdebug.h"
+#include "TVPDebug.h"
 #include "TVPEvent.h"
 #include "UtilStreams.h"
 #include "TVPArchive.h"

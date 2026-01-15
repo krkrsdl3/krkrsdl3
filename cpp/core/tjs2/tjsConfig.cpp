@@ -628,13 +628,11 @@ tjs_char* TJS_strrchr(const tjs_char* s, int c)
 	return ret;
 }
 
-
-
+#include <float.h>
 //---------------------------------------------------------------------------
 // Prepare Func
 //---------------------------------------------------------------------------
 /* Some useful macros */
-
 #define MAX(a,b) ((a)>(b) ? (a) : (b))
 #define MIN(a,b) ((a)<(b) ? (a) : (b))
 #define CONCAT2(x,y) x ## y
@@ -1297,6 +1295,7 @@ static tjs_char* fmt_u(uintmax_t x, tjs_char* s)
     for (y = x; y; y /= 10) *--s = '0' + y % 10;
     return s;
 }
+
 #if LDBL_MANT_DIG == 53 && LDBL_MAX_EXP == 1024
 union ldshape {
     long double f;
@@ -2637,16 +2636,17 @@ done:
     return fraction;
 }
 
+extern std::string TVP_codecvt_utf8_utf16(const tjs_char* indata);
+extern std::u16string TVP_codecvt_utf16_utf8(const char* indata);
 size_t TJS_strftime(tjs_char* wstring, size_t maxsize, const tjs_char* wformat, const tm* timeptr)
 {
 #ifdef _MSC_VER
     return __strftime_l(wstring, maxsize, wformat, (tm*)timeptr);
 #else
-    std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> converter;
-    std::string formatStr = converter.to_bytes(wformat);
+    std::string formatStr = TVP_codecvt_utf8_utf16(wformat);
     char buffer[256];
     strftime(buffer, sizeof(buffer), formatStr.c_str(), timeptr);
-    std::u16string ret = converter.from_bytes(buffer);
+    std::u16string ret = TVP_codecvt_utf16_utf8(buffer);
     size_t retLen = ret.size() > maxsize ? maxsize : ret.size();
     memcpy(wstring, ret.data(), retLen);
     return retLen;
@@ -2668,5 +2668,4 @@ tjs_int TJS_snprintf(tjs_char* s, size_t count, const tjs_char* format, ...)
     va_end(param);
     return r;
 }
-
 }

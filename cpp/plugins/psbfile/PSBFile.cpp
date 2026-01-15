@@ -1,5 +1,5 @@
 #include "tjsCommHead.h"
-#include "psbfile.h"
+#include "PSBFile.h"
 
 #include "Log.h"
 #include "TVPStorage.h"
@@ -7,6 +7,7 @@
 #include "tjsArray.h"
 
 #include <zlib.h>
+#include <cstring>
 
 //---------------------------------------------------------------------------
 // tTJSNI_PsbFile : PsbFile TJS native instance

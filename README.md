@@ -1,6 +1,6 @@
 # 介绍
 
-基于[krkr2](https://github.com/2468785842/krkr2)/[krkrz](https://github.com/krkrz/krkrz/)/[kirikiroid2](https://github.com/zeas2/Kirikiroid2)等开发出的krkr视觉小说引擎(支持windows/android)，使用SDL统一硬件管理、bgfx统一图形渲染(未来计划)、blend2d统一绘图。
+基于[krkr2](https://github.com/2468785842/krkr2)/[krkrz](https://github.com/krkrz/krkrz/)/[kirikiroid2](https://github.com/zeas2/Kirikiroid2)等开发出的krkr视觉小说引擎(支持windows/linux/android)，使用SDL统一硬件管理、bgfx统一图形渲染(未来计划)、blend2d统一绘图。
 
 # 目录结构说明
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "tvpfontstruc.h"
+#include "TVPFontstruc.h"
 #include "ComplexRect.h"
 #include "drawable.h"
 #include "tvpinputdefs.h"

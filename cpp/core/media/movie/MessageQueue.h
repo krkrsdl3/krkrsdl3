@@ -1,6 +1,7 @@
 #pragma once
 #include "KRMovieDef.h"
 #include "Message.h"
+#include <mutex>
 #include <condition_variable>
 #include <list>
 #include <algorithm>

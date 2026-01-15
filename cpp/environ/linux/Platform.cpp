@@ -1,14 +1,17 @@
 #include "tjsCommHead.h"
 #include "Platform.h"
 
-#include <codecvt>
+#include <filesystem>
 #include <algorithm>
 #include <set>
-#include <filesystem>
+#include <fstream>
 
 #include <fcntl.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <sys/stat.h>
+#include <sys/sysinfo.h>
+#include <sys/time.h>
 #include "io_public.h"
 
 #include "TVPSystem.h"
@@ -20,10 +23,6 @@
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_messagebox.h>
-
-#include "JniHelper.h"
-#define KR2ActJavaPath "org/tvp/krkrsdl3/KRKRActivity"
-#define PATH_MAX 260
 
 //---------------------------------------------------------------------------
 // TVPLocalExtrectFilePath
@@ -349,55 +348,26 @@ iTVPStorageMedia* TVPCreateFileMedia()
 }
 //---------------------------------------------------------------------------
 
-static tjs_uint32 _lastMemoryInfoQuery = 0;
-static tjs_int _availMemory, usedMemory;
-static void updateMemoryInfo() {
-    if(TVPGetRoughTickCount32() - _lastMemoryInfoQuery > 3000) { // freq in 3s
-
-        JniMethodInfo methodInfo;
-        if(JniHelper::getStaticMethodInfo(methodInfo, KR2ActJavaPath,
-                                          "updateMemoryInfo", "()V")) {
-            methodInfo.env->CallStaticVoidMethod(methodInfo.classID,
-                                                 methodInfo.methodID);
-            methodInfo.env->DeleteLocalRef(methodInfo.classID);
-        }
-
-        if(JniHelper::getStaticMethodInfo(methodInfo, KR2ActJavaPath,
-                                          "getAvailMemory", "()J")) {
-            _availMemory = methodInfo.env->CallStaticLongMethod(
-                    methodInfo.classID, methodInfo.methodID) /
-                           (1024 * 1024);
-            methodInfo.env->DeleteLocalRef(methodInfo.classID);
-        }
-
-        if(JniHelper::getStaticMethodInfo(methodInfo, KR2ActJavaPath,
-                                          "getUsedMemory", "()J")) {
-            // in kB
-            usedMemory = methodInfo.env->CallStaticLongMethod(
-                    methodInfo.classID, methodInfo.methodID) /
-                         1024;
-            methodInfo.env->DeleteLocalRef(methodInfo.classID);
-        }
-
-        _lastMemoryInfoQuery = TVPGetRoughTickCount32();
-    }
-}
-
 tjs_int TVPGetSystemFreeMemory()
 {
-    updateMemoryInfo();
-    return _availMemory;
+	struct sysinfo info;
+    if(sysinfo(&info) == -1) {
+        return -1;
+    }
+    return (info.freeram * info.mem_unit) / (1024 * 1024);
 }
 
 tjs_int TVPGetSelfUsedMemory()
 {
-    updateMemoryInfo();
-    return usedMemory;
+	std::ifstream statm{ "/proc/self/statm" };
+    tjs_int pages = 0;
+    statm >> pages;
+    return (pages * sysconf(_SC_PAGESIZE)) / (1024 * 1024);
 }
 
 void TVPGetMemoryInfo(TVPMemoryInfo& m)
 {
-    /* to read /proc/meminfo */
+	/* to read /proc/meminfo */
     FILE *meminfo;
     char buffer[100] = { 0 };
     char *end;
@@ -407,10 +377,10 @@ void TVPGetMemoryInfo(TVPMemoryInfo& m)
     meminfo = fopen("/proc/meminfo", "r");
 
     static const char pszMemFree[] = "MemFree:", pszMemTotal[] = "MemTotal:",
-            pszSwapTotal[] = "SwapTotal:",
-            pszSwapFree[] = "SwapFree:",
-            pszVmallocTotal[] = "VmallocTotal:",
-            pszVmallocUsed[] = "VmallocUsed:";
+                      pszSwapTotal[] = "SwapTotal:",
+                      pszSwapFree[] = "SwapFree:",
+                      pszVmallocTotal[] = "VmallocTotal:",
+                      pszVmallocUsed[] = "VmallocUsed:";
 
     /* Read each line untill we got all we ned */
     while(fgets(buffer, sizeof(buffer), meminfo)) {
@@ -441,10 +411,23 @@ void TVPGetMemoryInfo(TVPMemoryInfo& m)
     fclose(meminfo);
 }
 
+// int gettimeofday(struct timeval * val, struct timezone *)
+// {
+// 	if (val)
+// 	{
+// 		LARGE_INTEGER liTime, liFreq;
+// 		QueryPerformanceFrequency(&liFreq);
+// 		QueryPerformanceCounter(&liTime);
+// 		val->tv_sec = (long)(liTime.QuadPart / liFreq.QuadPart);
+// 		val->tv_usec = (long)(liTime.QuadPart * 1000000.0 / liFreq.QuadPart - val->tv_sec * 1000000.0);
+// 	}
+// 	return 0;
+// }
+
 //extern "C" __declspec(dllimport) int __cdecl __wgetmainargs(int * _Argc, wchar_t *** _Argv, wchar_t *** _Env, int _DoWildCard, void * _StartInfo);
-std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
+#define PATH_MAX 260
 std::string TVPGetDefaultFileDir() {
-    char buffer[PATH_MAX];
+	char buffer[PATH_MAX];
     ssize_t len = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
     if(len == -1) {
         // 错误处理（例如抛出异常或返回空字符串）
@@ -461,9 +444,14 @@ std::string TVPGetDefaultFileDir() {
     return std::string(buffer);
 }
 
+void TVPCheckAndSendDumps(const std::string& dumpdir, const std::string& packageName, const std::string& versionStr);
+bool TVPCheckStartupArg() {
+	return false;
+}
+
 int TVPShowSimpleMessageBox(const ttstr& text, const ttstr& caption, const std::vector<ttstr>& vecButtons)
 {
-    std::vector<SDL_MessageBoxButtonData> sdlButtons;
+	std::vector<SDL_MessageBoxButtonData> sdlButtons;
     sdlButtons.reserve(vecButtons.size());
 
     for (size_t i = 0; i < vecButtons.size(); ++i) {
@@ -485,7 +473,7 @@ int TVPShowSimpleMessageBox(const ttstr& text, const ttstr& caption, const std::
             SDL_MESSAGEBOX_INFORMATION,
             nullptr,
             caption.AsNarrowStdString().c_str(),
-            text.AsNarrowStdString().c_str(),
+            text.AsStdString().c_str(),
             static_cast<int>(vecButtons.size()),
             vecButtons.empty() ? nullptr : sdlButtons.data(),
             nullptr
@@ -509,89 +497,16 @@ int TVPShowSimpleMessageBox(const ttstr& text, const ttstr& caption, const std::
     return buttonid;
 }
 
-int TVPShowSimpleMessageBox(const char* pszText, const char* pszTitle, unsigned int nButton, const char** btnText)
-{
-    std::vector<ttstr> vecButtons;
+int TVPShowSimpleMessageBox(const char* pszText, const char* pszTitle, unsigned int nButton, const char** btnText) {
+	std::vector<ttstr> vecButtons;
     for (unsigned int i = 0; i < nButton; ++i) {
         vecButtons.emplace_back(btnText[i]);
     }
     return TVPShowSimpleMessageBox(pszText, pszTitle, vecButtons);
 }
 
-static std::vector<std::string> &split(const std::string &s, char delim,
-                                       std::vector<std::string> &elems) {
-    std::stringstream ss(s);
-    std::string item;
-    while(std::getline(ss, item, delim)) {
-        elems.emplace_back(item);
-    }
-    return elems;
-}
-
-static jobject GetKR2ActInstance() {
-    JniMethodInfo methodInfo;
-    std::string strtmp("()L");
-    strtmp += KR2ActJavaPath;
-    strtmp += ";";
-    if(JniHelper::getStaticMethodInfo(methodInfo, KR2ActJavaPath, "GetInstance",
-                                      strtmp.c_str())) {
-        jobject ret = methodInfo.env->CallStaticObjectMethod(
-                methodInfo.classID, methodInfo.methodID);
-        methodInfo.env->DeleteLocalRef(methodInfo.classID);
-        return ret;
-    }
-    return 0;
-}
 std::vector<std::string> TVPGetDriverPath() {
-    std::vector<std::string> ret;
-    jobject sInstance = GetKR2ActInstance();
-    JniMethodInfo methodInfo;
-    if(JniHelper::getMethodInfo(methodInfo, KR2ActJavaPath, "getStoragePath",
-                                "()[Ljava/lang/String;")) {
-        jobjectArray PathObjs = (jobjectArray)methodInfo.env->CallObjectMethod(
-                sInstance, methodInfo.methodID);
-        if(PathObjs) {
-            int count = methodInfo.env->GetArrayLength(PathObjs);
-            for(int i = 0; i < count; ++i) {
-                jstring path =
-                        (jstring)methodInfo.env->GetObjectArrayElement(PathObjs, i);
-                if(path)
-                    ret.emplace_back(JniHelper::jstring2string(path));
-            }
-        }
-    }
-
-    if(!ret.empty())
-        return ret;
-
-    char buffer[256] = { 0 };
-
-    // enum all mounted storages
-    FILE *fp = fopen("/proc/mounts", "r");
-    std::set<std::string> mounted;
-    while(fgets(buffer, sizeof(buffer), fp)) {
-        std::vector<std::string> tabs;
-        split(buffer, ' ', tabs);
-        if(tabs.size() < 4)
-            continue;
-        if(mounted.find(tabs[0]) != mounted.end())
-            continue;
-        const std::string &path = tabs[1];
-        if(tabs[3].find("rw,") != std::string::npos &&
-           (tabs[2] == "vfat" || path.find("/mnt") != std::string::npos)) {
-            if(path.find("/mnt/secure") != std::string::npos ||
-               path.find("/mnt/asec") != std::string::npos ||
-               path.find("/mnt/mapper") != std::string::npos ||
-               path.find("/mnt/obb") != std::string::npos ||
-               tabs[0] == "tmpfs" || tabs[2] == "tmpfs") {
-                continue;
-            }
-            mounted.insert(tabs[0]);
-            ret.emplace_back(path);
-        }
-    }
-
-    return ret;
+	return { "/" };
 }
 
 std::vector<std::string> TVPGetAppStoragePath() {
@@ -615,7 +530,7 @@ void TVPForceSwapBuffer() {}
 //---------------------------------------------------------------------------
 static bool _TVPCreateFolders(const ttstr& folder)
 {
-    // create directories along with "folder"
+	// create directories along with "folder"
     if(folder.IsEmpty())
         return true;
 
@@ -644,6 +559,7 @@ static bool _TVPCreateFolders(const ttstr& folder)
         return false;
 
     return !std::filesystem::create_directory(folder.AsStdString().c_str());
+
 }
 //---------------------------------------------------------------------------
 
@@ -661,81 +577,51 @@ bool TVPCreateFolders(const ttstr& folder)
 	return _TVPCreateFolders(ttstr(p, i + 1));
 }
 
-static bool TVPWriteDataToFileJava(const std::string &filename,
-                                   const void *data, unsigned int size) {
-    JniMethodInfo methodInfo;
-    if(JniHelper::getStaticMethodInfo(methodInfo,
-                                      KR2ActJavaPath,
-                                      "WriteFile", "(Ljava/lang/String;[B)Z")) {
-        bool ret = false;
-        int retry = 3;
-        do {
-            jstring jstr = methodInfo.env->NewStringUTF(filename.c_str());
-            jbyteArray arr = methodInfo.env->NewByteArray(size);
-            methodInfo.env->SetByteArrayRegion(arr, 0, size, (jbyte *)data);
-            ret = methodInfo.env->CallStaticBooleanMethod(
-                    methodInfo.classID, methodInfo.methodID, jstr, arr);
-            methodInfo.env->DeleteLocalRef(arr);
-            methodInfo.env->DeleteLocalRef(jstr);
-            methodInfo.env->DeleteLocalRef(methodInfo.classID);
-        } while(!std::filesystem::exists(filename) && --retry);
+bool TVPWriteDataToFile(const ttstr& filepath, const void* data, unsigned int len) {
+	FILE *handle = fopen(filepath.AsStdString().c_str(), "wb");
+    if(handle) {
+        bool ret = fwrite(data, 1, len, handle) == len;
+        fclose(handle);
         return ret;
     }
     return false;
 }
 
-bool TVPWriteDataToFile(const ttstr& filepath, const void* data, unsigned int len) {
-    std::string filename = filepath.AsStdString();
-    while(std::filesystem::exists(filename)) {
-        // for number filename suffix issue
-        time_t t = time(nullptr);
-        std::vector<char> buffer;
-        buffer.resize(filename.size() + 32);
-        sprintf(&buffer.front(), "%s.%d.bak", filename.c_str(), (int)t);
-        std::string tempname = &buffer.front();
-        if(rename(filename.c_str(), tempname.c_str()) == 0) {
-            // file api is OK
-            FILE *fp = fopen(filename.c_str(), "wb");
-            if(fp) {
-                bool ret = fwrite(data, 1, len, fp) == len;
-                fclose(fp);
-                remove(tempname.c_str());
-                return ret;
+std::string TVPGetCurrentLanguage() {
+	const char *lang_env = std::getenv("LANG");
+    if(!lang_env) {
+        lang_env = std::getenv("LC_ALL");
+        if(!lang_env) {
+            lang_env = std::getenv("LC_MESSAGES");
+            if(!lang_env) {
+                return "en_US";
             }
         }
-        bool ret = TVPWriteDataToFileJava(filename, data, len);
-        if(std::filesystem::exists(tempname.c_str())) {
-            TVPDeleteFile(tempname);
+    }
+
+    std::string locale(lang_env);
+    size_t dot_pos = locale.find('.');
+    if(dot_pos != std::string::npos) {
+        locale = locale.substr(0, dot_pos);
+    }
+
+    size_t underscore_pos = locale.find('_');
+    if(underscore_pos != std::string::npos) {
+        std::string language = locale.substr(0, underscore_pos);
+        std::string country = locale.substr(underscore_pos + 1);
+
+        for(char &c : country) {
+            if(c >= 'A' && c <= 'Z') {
+                c += 'a' - 'A';
+            }
         }
-        return ret;
+        return language + "_" + country;
     }
-    FILE *fp = fopen(filename.c_str(), "wb");
-    if(fp) {
-        // file api is OK
-        int writed = fwrite(data, 1, len, fp);
-        fclose(fp);
-        return writed == len;
-    }
-    return TVPWriteDataToFileJava(filename, data, len);
+
+    return locale;
 }
 
-std::string TVPGetCurrentLanguage() {
-    JniMethodInfo t;
-    std::string ret("");
-
-    if(JniHelper::getStaticMethodInfo(t, KR2ActJavaPath,
-                                      "getLocaleName",
-                                      "()Ljava/lang/String;")) {
-        jstring str =
-                (jstring)t.env->CallStaticObjectMethod(t.classID, t.methodID);
-        t.env->DeleteLocalRef(t.classID);
-        ret = JniHelper::jstring2string(str);
-        t.env->DeleteLocalRef(str);
-    }
-
-    return ret;
-}
-
+void TVPReleaseFontLibrary();
 void TVPExitApplication(int code) {
 	// clear some static data for memory leak detect
 	TVPDeliverCompactEvent(TVP_COMPACT_LEVEL_MAX);
@@ -782,10 +668,9 @@ bool TVPCopyFolder(const std::string& from, const std::string& to)
                });
     return success;
 }
-
 bool TVPCopyFile(const std::string& from, const std::string& to)
 {
-    FILE* fFrom = fopen(from.c_str(), "rb");
+     FILE* fFrom = fopen(from.c_str(), "rb");
     if (!fFrom)
     {
         return TVPCopyFolder(from, to);
@@ -817,7 +702,7 @@ void TVPRelinquishCPU() { sched_yield(); }
 
 tjs_uint32 TVPGetRoughTickCount32()
 {
-    tjs_uint32 uptime = 0;
+	tjs_uint32 uptime = 0;
     struct timespec on;
     if(clock_gettime(CLOCK_MONOTONIC, &on) == 0)
         uptime = on.tv_sec * 1000 + on.tv_nsec / 1000000;
@@ -832,7 +717,7 @@ bool TVP_stat(const tjs_char* name, tTVP_stat& s) {
 	tTJSNarrowStringHolder holder(name);
 	return TVP_stat(holder, s);
 }
-extern std::string utf8_to_gbk(const std::string& str);
+
 bool TVP_stat(const char* name, tTVP_stat& s) {
     struct stat t;
     // static_assert(sizeof(t.st_size) == 4, "");
@@ -847,7 +732,7 @@ bool TVP_stat(const char* name, tTVP_stat& s) {
 }
 
 bool TVP_utime(const char* name, time_t modtime) {
-    timeval mt[2];
+	timeval mt[2];
     mt[0].tv_sec = modtime;
     mt[0].tv_usec = 0;
     mt[1].tv_sec = modtime;
@@ -913,33 +798,19 @@ void TVPGetLocalFileListAt(const ttstr& name, const std::function<void(const tts
 	}
 }
 
-#include <android/asset_manager.h>
-#include <android/asset_manager_jni.h>
-AAssetManager* mgr = NULL;
-extern "C"
-JNIEXPORT void JNICALL
-Java_org_tvp_krkrsdl3_KRKRActivity_setNativeAssetManager(
-        JNIEnv *env,
-        jobject instance,
-        jobject assetManager) {
-    mgr = AAssetManager_fromJava(env, assetManager);
-}
 tTVPMemoryStream* GetResourceStream(const ttstr& filename)
 {
-    AAsset *assetFile = AAssetManager_open(mgr, filename.AsStdString().c_str(), AASSET_MODE_BUFFER);
-    if(assetFile) {
-        size_t fileLength = AAsset_getLength(assetFile);
-        tTVPMemoryStream* ret = new tTVPMemoryStream(nullptr, fileLength);
-        AAsset_read(assetFile, ret->GetInternalBuffer(), fileLength);
-        AAsset_close(assetFile);
-        return ret;
-    }
-    return nullptr;
+    tTJSBinaryStream* tmp =
+        TVPCreateBinaryStreamForRead(ExePath() + ttstr("/") + filename, 0);
+    tTVPMemoryStream* ret = new tTVPMemoryStream(nullptr, tmp->GetSize());
+    tmp->ReadBuffer(ret->GetInternalBuffer(), tmp->GetSize());
+    delete tmp;
+    return ret;
 }
 
 void TVPPreNormalizeStorageName(ttstr& name)
 {
-    // if the name is an OS's native expression, change it according
+	// if the name is an OS's native expression, change it according
     // with the TVP storage system naming rule.
     tjs_int namelen = name.GetLen();
     if(namelen == 0)

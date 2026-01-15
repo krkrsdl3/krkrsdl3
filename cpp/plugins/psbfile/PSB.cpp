@@ -1,8 +1,8 @@
 #include "tjsCommHead.h"
-#include "psbfile.h"
+#include "PSBFile.h"
 #include "ncbind/ncbind.hpp"
 
-#include "psbMedia.h"
+#include "PSBMedia.h"
 #include "Log.h"
 
 #define NCB_MODULE_NAME TJS_W("psbfile.dll")

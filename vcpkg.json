@@ -24,7 +24,7 @@
 		    {
             "name": "glad",
             "features": ["loader"],
-            "platform": "windows"
+            "platform": "windows | linux"
         },
         {
             "name": "glad",

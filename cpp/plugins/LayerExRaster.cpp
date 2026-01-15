@@ -5,7 +5,7 @@
 
 #define NCB_MODULE_NAME TJS_W("layerExRaster.dll")
 
-#include "layerExBase.hpp"
+#include "LayerExBase.hpp"
 
 /*
  * アウトラインベースのテキスト描画メソッドの追加

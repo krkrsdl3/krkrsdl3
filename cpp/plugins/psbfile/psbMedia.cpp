@@ -2,7 +2,7 @@
 
 #include "PSBMedia.h"
 #include "UtilStreams.h"
-#include "psbfile.h"
+#include "PSBFile.h"
 
 PSB::PSBMedia* psbVar = nullptr;
 

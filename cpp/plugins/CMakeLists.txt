@@ -52,9 +52,9 @@ set(KRKRSDL_PLUGINS_SRC
 	${KRKRSDL_PLUGINS_PATH}/KAGParserEx/KAG.cpp
 	${KRKRSDL_PLUGINS_PATH}/KAGParserEx/KAGParserEx.cpp
 	${KRKRSDL_PLUGINS_PATH}/psbfile/PSB.cpp
-	${KRKRSDL_PLUGINS_PATH}/psbfile/psbData.cpp
+	${KRKRSDL_PLUGINS_PATH}/psbfile/PSBData.cpp
 	${KRKRSDL_PLUGINS_PATH}/psbfile/PSBFile.cpp
-	${KRKRSDL_PLUGINS_PATH}/psbfile/psbMedia.cpp
+	${KRKRSDL_PLUGINS_PATH}/psbfile/PSBMedia.cpp
 	${KRKRSDL_PLUGINS_PATH}/psdfile/psdclass.cpp
 	${KRKRSDL_PLUGINS_PATH}/psdfile/psdclass_loadmem.cpp
 	${KRKRSDL_PLUGINS_PATH}/psdfile/psdclass_loadstream.cpp

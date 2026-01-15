@@ -227,6 +227,8 @@ if(ANDROID)
     endif()
     # egl
     target_link_libraries(${PROJECT_NAME} PRIVATE EGL GLESv3)
+elseif(LINUX)
+    target_link_libraries(${PROJECT_NAME} PRIVATE GL)
 endif()
 
 #

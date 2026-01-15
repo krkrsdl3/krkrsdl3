@@ -1,3 +1,4 @@
+#include "tjsCommHead.h"
 #include "tjsNativeMenuItem.h"
 
 #include "TVPScript.h"

@@ -24,6 +24,20 @@
 					"hostOS": ["Windows"]
 				}
 			}
+		},
+		{
+			"name": "Linux Config",
+			"generator": "Ninja",
+			"cacheVariables": {
+				"LINUX": true,
+				"CMAKE_EXPORT_COMPILE_COMMANDS": true
+			},
+			"condition": {
+				"type": "equals",
+				"lhs": "${hostSystemName}",
+				"rhs": "Linux"
+			},
+			"binaryDir": "${sourceDir}/out/linux"
 		}
 	],
 	"buildPresets": [{
@@ -34,6 +48,16 @@
 		{
 			"name": "Windows Release Build",
 			"configurePreset": "Windows Config",
+			"configuration": "Release"
+		},
+		{
+			"name": "Linux Debug Build",
+			"configurePreset": "Linux Config",
+			"configuration": "Debug"
+		},
+		{
+			"name": "Linux Release Build",
+			"configurePreset": "Linux Config",
 			"configuration": "Release"
 		}
 	]

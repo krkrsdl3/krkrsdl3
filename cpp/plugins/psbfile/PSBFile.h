@@ -3,8 +3,8 @@
 #include "tjsNative.h"
 #include "tjsDictionary.h"
 
-#include "psbMedia.h"
-#include "psbData.h"
+#include "PSBMedia.h"
+#include "PSBData.h"
 
 //---------------------------------------------------------------------------
 // tTJSNI_PsbFile

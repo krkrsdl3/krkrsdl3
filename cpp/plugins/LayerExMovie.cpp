@@ -2,7 +2,7 @@
 #include <stdint.h>
 #include "tjsCommHead.h"
 #include "TVPEvent.h"
-#include "layerExBase.hpp"
+#include "LayerExBase.hpp"
 #include "ncbind/ncbind.hpp"
 #include "TVPApplication.h"
 #include "LayerBitmap.h"

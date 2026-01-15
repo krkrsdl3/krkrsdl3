@@ -11,6 +11,7 @@
 #include <math.h>
 #include <assert.h>
 
+#include <climits>
 #include <sstream>
 #include <memory>
 #include <algorithm>

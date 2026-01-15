@@ -2,7 +2,7 @@
 #define __CHARACTER_DATA_H__
 
 #include "tjsCommHead.h"
-#include "tvpfontstruc.h"
+#include "TVPFontstruc.h"
 
 /**
  * １グリフのメトリックを表す構造体
