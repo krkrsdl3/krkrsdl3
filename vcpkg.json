@@ -1,27 +1,21 @@
 {
     "dependencies": [
         "oniguruma",
-        "unrar",
         "zlib",
         "libarchive",
-        "7zip",
         "ffmpeg",
         "opencv4",
-        "jxrlib",
-        "libbpg",
         "libpng",
         "libwebp",
         "libjpeg-turbo",
-        "libogg",
+        "miniaudio",
         "libvorbis",
-        "opus",
         "opusfile",
         "freetype",
 
-        "openal-soft",
         "sdl3",
-		"sdl3-ttf",
-		    {
+        "sdl3-ttf",
+        {
             "name": "glad",
             "features": ["loader"],
             "platform": "windows | linux"
@@ -32,12 +26,8 @@
             "platform": "android"
         },
         "glm",
-		"blend2d",
-		
-		"boost-iostreams",
-        "boost-locale",
-        "boost-phoenix",
-        "boost-spirit"
+        "bgfx",
+        "blend2d"
     ],
     "overrides": [
         {

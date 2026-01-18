@@ -35,5 +35,8 @@ Kirikiri Z 64bit Project Contributors
 Thanks for many libraries to contributors and other supporters that were not
 listed here.
 
+----------------------------------------------------------------------------
 krkrsdl3补充条例
 分发以此软件运行的不基于此软件开发的商业游戏的移植版的二进制文件时，不论以哪种形式，如果存在修改部分，则必须全部开源。
+When distributing binary files of ported versions of commercial games that run on, but were not originally developed with, the KRKRSDL3 software, you must, if you have made any modifications to the KRKRSDL3 code itself, make the complete and corresponding source code of those modifications publicly available under the same terms as this license.
+KRKRSDL3上で動作する、かつKRKRSDL3を基に開発されていない商業ゲームの移植版バイナリを配布する者は、KRKRSDL3本体に対して何らかの修正を行った場合、当該修正部分の完全な対応ソースコードを、本ライセンスと同一の条件の下、公に利用可能にしなければならない。

@@ -5,8 +5,7 @@
 #include "SDL3/SDL.h"
 #include "TickCount.h"
 
-#include <opencv2/opencv.hpp>
-
+#include "tjsCommHead.h"
 #include "tjsNativeLayer.h"
 
 // 渲染混用太tm痛苦了，下一版预计只能统一使用bgfx渲染，然后SDL只充当硬件接口且不参与渲染了

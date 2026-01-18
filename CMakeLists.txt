@@ -94,21 +94,6 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 find_package(lz4 CONFIG REQUIRED)
 target_link_libraries(${PROJECT_NAME} PRIVATE lz4::lz4)
 
-find_package(7zip CONFIG REQUIRED)
-target_link_libraries(${PROJECT_NAME} PRIVATE 7zip::7zip)
-
-find_package(boost_iostreams CONFIG REQUIRED)
-target_link_libraries(${PROJECT_NAME} PRIVATE Boost::iostreams)
-
-find_package(boost_locale CONFIG REQUIRED)
-target_link_libraries(${PROJECT_NAME} PRIVATE Boost::locale)
-
-find_package(boost_phoenix CONFIG REQUIRED)
-target_link_libraries(${PROJECT_NAME} PRIVATE Boost::phoenix)
-
-find_package(boost_spirit CONFIG REQUIRED)
-target_link_libraries(${PROJECT_NAME} PRIVATE Boost::spirit)
-
 find_package(FFMPEG REQUIRED)
 target_include_directories(${PROJECT_NAME} PRIVATE ${FFMPEG_INCLUDE_DIRS})
 target_link_directories(${PROJECT_NAME} PRIVATE ${FFMPEG_LIBRARY_DIRS})
@@ -129,24 +114,14 @@ target_link_libraries(${PROJECT_NAME} PRIVATE glm::glm)
 find_package(glm CONFIG REQUIRED)
 target_link_libraries(${PROJECT_NAME} PRIVATE glm::glm-header-only)
 
-find_package(JXR REQUIRED)
-target_include_directories(${PROJECT_NAME} PRIVATE ${JXR_INCLUDE_DIRS})
-target_link_libraries(${PROJECT_NAME} PRIVATE ${JXR_LIBRARIES})
-
 find_package(LibArchive REQUIRED)
 target_link_libraries(${PROJECT_NAME} PRIVATE LibArchive::LibArchive)
-
-find_package(libbpg CONFIG REQUIRED)
-target_link_libraries(${PROJECT_NAME} PRIVATE libbpg::libbpg)
 
 find_package(JPEG REQUIRED)
 target_link_libraries(${PROJECT_NAME} PRIVATE JPEG::JPEG)
 
 find_package(libjpeg-turbo CONFIG REQUIRED)
 target_link_libraries(${PROJECT_NAME} PRIVATE $<IF:$<TARGET_EXISTS:libjpeg-turbo::turbojpeg>,libjpeg-turbo::turbojpeg,libjpeg-turbo::turbojpeg-static>)
-
-find_package(Ogg CONFIG REQUIRED)
-target_link_libraries(${PROJECT_NAME} PRIVATE Ogg::ogg)
 
 find_package(Vorbis CONFIG REQUIRED)
 target_link_libraries(${PROJECT_NAME} PRIVATE Vorbis::vorbis)
@@ -162,9 +137,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE WebP::webp WebP::webpdecoder WebP:
 
 find_package(oniguruma CONFIG REQUIRED)
 target_link_libraries(${PROJECT_NAME} PRIVATE oniguruma::onig)
-
-find_package(OpenAL CONFIG REQUIRED)
-target_link_libraries(${PROJECT_NAME} PRIVATE OpenAL::OpenAL)
 
 set(OpenCV_DIR "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/opencv4")
 find_package(OpenCV REQUIRED)
@@ -187,9 +159,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE SDL3::SDL3)
 
 find_package(SDL3_ttf CONFIG REQUIRED)
 target_link_libraries(${PROJECT_NAME} PRIVATE SDL3_ttf::SDL3_ttf)
-
-find_package(unrar CONFIG REQUIRED)
-target_link_libraries(${PROJECT_NAME} PRIVATE unrar::unrar)
 
 find_package(blend2d CONFIG REQUIRED)
 target_link_libraries(${PROJECT_NAME} PRIVATE blend2d::blend2d)

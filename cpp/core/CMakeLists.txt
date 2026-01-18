@@ -1,19 +1,14 @@
 set(KRKRSDL_CORE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cpp/core)
 
 set(KRKRSDL_CORE_SRC
-    ${KRKRSDL_CORE_PATH}/archive/7zArchive.cpp
     ${KRKRSDL_CORE_PATH}/archive/TARArchive.cpp
 	${KRKRSDL_CORE_PATH}/archive/TextStream.cpp
 	${KRKRSDL_CORE_PATH}/archive/TVPArchive.cpp
 	${KRKRSDL_CORE_PATH}/archive/TVPStorage.cpp
 	${KRKRSDL_CORE_PATH}/archive/UtilStreams.cpp
 	${KRKRSDL_CORE_PATH}/archive/XP3Archive.cpp
-	${KRKRSDL_CORE_PATH}/archive/ZIPArchive.cpp
-	${KRKRSDL_CORE_PATH}/archive/7zArchive.cpp
 	${KRKRSDL_CORE_PATH}/archive/encoding/gbk2unicode.c
 	${KRKRSDL_CORE_PATH}/archive/encoding/jis2unicode.c
-	${KRKRSDL_CORE_PATH}/archive/minizip/unzip.c
-	${KRKRSDL_CORE_PATH}/archive/minizip/zip.c
 	${KRKRSDL_CORE_PATH}/main/NativeEventQueue.cpp
 	${KRKRSDL_CORE_PATH}/main/SystemControl.cpp
 	${KRKRSDL_CORE_PATH}/main/TVPApplication.cpp
@@ -39,9 +34,7 @@ set(KRKRSDL_CORE_SRC
 	${KRKRSDL_CORE_PATH}/media/graphics/public/WeightFunctor.cpp
 	${KRKRSDL_CORE_PATH}/media/image/BitmapInfomation.cpp
 	${KRKRSDL_CORE_PATH}/media/image/GraphicsLoadThread.cpp
-	${KRKRSDL_CORE_PATH}/media/image/LoadBPG.cpp
 	${KRKRSDL_CORE_PATH}/media/image/LoadJPEG.cpp
-	${KRKRSDL_CORE_PATH}/media/image/LoadJXR.cpp
 	${KRKRSDL_CORE_PATH}/media/image/LoadPNG.cpp
 	${KRKRSDL_CORE_PATH}/media/image/LoadTLG.cpp
 	${KRKRSDL_CORE_PATH}/media/image/LoadWEBP.cpp

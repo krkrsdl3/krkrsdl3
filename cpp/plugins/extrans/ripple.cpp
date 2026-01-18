@@ -435,6 +435,7 @@ static void TVPRippleTransform_c_b(
 }
 //---------------------------------------------------------------------------
 #if _MSC_VER
+#include <intrin.h>
 static void TVPRippleTransform_sse2_f(
 	const tjs_uint16 *displacemap, const tjs_uint16 *driftmap, tjs_uint32 *dest,
 	tjs_int num, tjs_int pitch, const tjs_uint8 * src1, const tjs_uint8 * src2, tjs_int ratio) {

@@ -55,18 +55,6 @@ set(KRKRSDL_PLUGINS_SRC
 	${KRKRSDL_PLUGINS_PATH}/psbfile/PSBData.cpp
 	${KRKRSDL_PLUGINS_PATH}/psbfile/PSBFile.cpp
 	${KRKRSDL_PLUGINS_PATH}/psbfile/PSBMedia.cpp
-	${KRKRSDL_PLUGINS_PATH}/psdfile/psdclass.cpp
-	${KRKRSDL_PLUGINS_PATH}/psdfile/psdclass_loadmem.cpp
-	${KRKRSDL_PLUGINS_PATH}/psdfile/psdclass_loadstream.cpp
-	${KRKRSDL_PLUGINS_PATH}/psdfile/psdclass_loadstreambase.cpp
-	${KRKRSDL_PLUGINS_PATH}/psdfile/psdfileinit.cpp
-	${KRKRSDL_PLUGINS_PATH}/psdfile/psdparse/bmp.cpp
-	${KRKRSDL_PLUGINS_PATH}/psdfile/psdparse/psddesc.cpp
-	${KRKRSDL_PLUGINS_PATH}/psdfile/psdparse/psdfile.cpp
-	${KRKRSDL_PLUGINS_PATH}/psdfile/psdparse/psdimage.cpp
-	${KRKRSDL_PLUGINS_PATH}/psdfile/psdparse/psdlayer.cpp
-	${KRKRSDL_PLUGINS_PATH}/psdfile/psdparse/psdparse.cpp
-	${KRKRSDL_PLUGINS_PATH}/psdfile/psdparse/psdresource.cpp
     )
 	
 if(ANDROID OR LINUX)

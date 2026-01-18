@@ -27,6 +27,7 @@
 📁Res/   # 程序资源文件
 📁vcpkg/ # 自定义vcpkg依赖
 📄.clang-format # 格式化代码风格定义文件
+📄build-linux.sh # linux构建脚本
 📄build-windows.bat # windows构建脚本
 📄CMakeLists.txt/CMakePresets.json # CMake配置文件
 📄vcpkg.json/vcpkg-configuration.json # vcpkg配置文件
@@ -34,14 +35,13 @@
 
 # 依赖库说明
 
-- oniguruma:用于tjs2语言内核的正则表达式匹配。
-- unrar/zlib/libarchive/7zip:归档压缩包格式
+- oniguruma:用于tjs2语言内核的正则表达式匹配
+- zlib/libarchive:归档压缩包格式
 - ffmpeg:音视频解码
-- opencv4/jxrlib/libbpg/libpng/libwebp/libjpeg-turbo:图片解码
-- libogg/libvorbis/opus/opusfile:音频解码
+- libpng/libwebp/libjpeg-turbo:图片解码
+- miniaudio/libvorbis/opusfile:音频解码
 - freetype:字体
 - sdl3/bgfx/blend2d:跨平台核心
-- boost:psdfile插件固有依赖
 
 # 外部环境依赖
 

@@ -10,7 +10,6 @@
 
 #include <zlib.h>
 #include <SDL3/SDL.h>
-#include <opencv2/opencv.hpp>
 
 #include <sstream>
 #include <algorithm>
