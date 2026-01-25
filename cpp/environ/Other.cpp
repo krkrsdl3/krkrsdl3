@@ -31,6 +31,7 @@ ttstr TVPLocalExtractFilePath(const ttstr& name)
     }
     return ttstr(p, i + 1);
 }
+#ifndef _KRKRSDL3_ANDROID
 bool TVPWriteDataToFile(const ttstr& filepath, const void* data, unsigned int len) {
     FILE *handle = fopen(filepath.AsStdString().c_str(), "wb");
     if(handle) {
@@ -40,6 +41,9 @@ bool TVPWriteDataToFile(const ttstr& filepath, const void* data, unsigned int le
     }
     return false;
 }
+#else
+extern bool TVPWriteDataToFile(const ttstr& filepath, const void* data, unsigned int len);
+#endif
 //---------------------------------------------------------------------------
 
 //---------------------------------------------------------------------------

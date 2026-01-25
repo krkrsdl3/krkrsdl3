@@ -1,7 +1,7 @@
 #pragma once
 #include "tjs.h"
 #include "tjsHashSearch.h"
-#include "TVPfontstruc.h"
+#include "TVPFontstruc.h"
 
 void TVPGetAllFontList(std::vector<ttstr> &list);
 void TVPInitFontNames();

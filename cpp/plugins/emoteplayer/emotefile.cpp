@@ -1741,19 +1741,11 @@ namespace emoteplayer
             totalOpa *= renderMethod.at(i).opa;
             // transform
             char uniformName[32];
-#if defined(_KRKRSDL3_GL)
-            sprintf_s(uniformName, 32, "transforms[%d]", idxCnt);
-#else
             sprintf(uniformName, "transforms[%d]", idxCnt);
-#endif
             glUniformMatrix4fv(glGetUniformLocation(emotenodeprogram, uniformName), 1, GL_FALSE,
                                glm::value_ptr(renderMethod.at(i).matTrans));
             // controlPoints
-#if defined(_KRKRSDL3_GL)
-            sprintf_s(uniformName, 32, "controlPoints[%d]", idxCnt);
-#else
             sprintf(uniformName, "controlPoints[%d]", idxCnt);
-#endif
             if (renderMethod.at(i).type == 1)
                 glUniform2fv(glGetUniformLocation(emotenodeprogram, uniformName), 16,
                              renderMethod.at(i).controlPts);
@@ -1808,8 +1800,9 @@ namespace emoteplayer
     {
         if (data != nullptr)
             delete data;
-        data = new uint8_t[width * height * 4];
-        memset(data, 0, width * height * 4);
+        int datasize = width * height * 4;
+        data = new uint8_t[datasize];
+        memset(data, 0, datasize);
     }
     void emotenode::resizeOpenGL()
     {

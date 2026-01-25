@@ -15,7 +15,7 @@
 #include "TVPColor.h"
 #include "ComplexRect.h"
 #include "BitmapInfomation.h"
-#include "TVPfontstruc.h"
+#include "TVPFontstruc.h"
 #include "drawable.h"
 #include "FontRasterizer.h"
 

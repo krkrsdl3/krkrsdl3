@@ -9,7 +9,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <dirent.h>
-#include "io_public.h"
 
 #include "TVPSystem.h"
 #include "TVPEvent.h"
@@ -19,163 +18,10 @@
 #include "TVPApplication.h"
 
 #include <SDL3/SDL.h>
-#include <SDL3/SDL_messagebox.h>
 
 #include "JniHelper.h"
 #define KR2ActJavaPath "org/tvp/krkrsdl3/KRKRActivity"
 #define PATH_MAX 260
-
-//---------------------------------------------------------------------------
-// TVPLocalExtrectFilePath
-//---------------------------------------------------------------------------
-ttstr TVPLocalExtractFilePath(const ttstr& name)
-{
-	// this extracts given name's path under local filename rule
-	const tjs_char* p = name.c_str();
-	tjs_int i = name.GetLen() - 1;
-	for (; i >= 0; i--)
-	{
-		if (p[i] == TJS_W(':') || p[i] == TJS_W('/') ||
-			p[i] == TJS_W('\\'))
-			break;
-	}
-	return ttstr(p, i + 1);
-}
-//---------------------------------------------------------------------------
-
-//---------------------------------------------------------------------------
-// tTVPLocalFileStream
-//---------------------------------------------------------------------------
-tTVPLocalFileStream::tTVPLocalFileStream(const ttstr& origname,
-	const ttstr& localname, tjs_uint32 flag)
-	: MemBuffer(nullptr), FileName(localname), Handle(-1)
-{
-	tjs_uint32 access = flag & TJS_BS_ACCESS_MASK;
-	if (access == TJS_BS_WRITE) {
-		if (TVPCheckExistentLocalFile(localname)) {
-		}
-		else {
-			ttstr dirpath = TVPLocalExtractFilePath(localname);
-			const tjs_char* p = dirpath.c_str();
-			tjs_int i = dirpath.GetLen();
-			if (p[i - 1] == TJS_W('/') || p[i - 1] == TJS_W('\\')) i--;
-			dirpath = dirpath.SubString(0, i);
-			if (!TVPCheckExistentLocalFolder(dirpath) && !TVPCreateFolders(dirpath)) {
-				TVPThrowExceptionMessage(TVPCannotOpenStorage, origname);
-			}
-			//			_lastFileSystemChanged = true;
-		}
-		MemBuffer = new tTVPMemoryStream();
-		return;
-	}
-
-	unsigned int rw = 0;
-	switch (access)
-	{
-	case TJS_BS_READ:
-		rw |= O_RDONLY;				break;
-	case TJS_BS_WRITE:
-		rw |= O_RDWR | O_CREAT | O_TRUNC;	break;
-	case TJS_BS_APPEND:
-		rw |= O_APPEND;	    break;
-	case TJS_BS_UPDATE:
-		rw |= O_RDWR;			    break;
-	}
-
-    tTJSNarrowStringHolder holder(localname.c_str());
-    Handle = open(holder, rw, 0666);
-
-	if (Handle < 0) {
-		if (access == TJS_BS_APPEND || access == TJS_BS_UPDATE) {
-			// use whole file writing
-			Handle = open(holder, O_RDONLY);
-			if (Handle >= 0) {
-				tjs_uint64 size = GetSize();
-				if (size < 4 * 1024 * 1024) { // only support file size <= 4M
-					MemBuffer = new tTVPMemoryStream();
-					MemBuffer->SetSize(size);
-					read(Handle, MemBuffer->GetInternalBuffer(), size);
-				}
-				close(Handle);
-				Handle = -1;
-			}
-			if (!MemBuffer)
-				TVPThrowExceptionMessage(TVPCannotOpenStorage, origname);
-		}
-	}
-
-	// push current tick as an environment noise
-	uint32_t tick = TVPGetRoughTickCount32();
-	TVPPushEnvironNoise(&tick, sizeof(tick));
-}
-//---------------------------------------------------------------------------
-bool TVPWriteDataToFile(const ttstr& filepath, const void* data, unsigned int len);
-tTVPLocalFileStream::~tTVPLocalFileStream()
-{
-	if (MemBuffer) {
-		if (!TVPWriteDataToFile(FileName, MemBuffer->GetInternalBuffer(), MemBuffer->GetSize())) {
-			delete MemBuffer;
-			ttstr filename(FileName);
-			FileName.~tTJSString();
-			free(this);
-			TVPThrowExceptionMessage(TJS_W("File Writing Error: %1"), filename);
-		}
-		delete MemBuffer;
-	}
-	if (Handle >= 0) {
-		close(Handle);
-	}
-
-	// push current tick as an environment noise
-	// (timing information from file accesses may be good noises)
-	uint32_t tick = TVPGetRoughTickCount32();
-	TVPPushEnvironNoise(&tick, sizeof(tick));
-}
-//---------------------------------------------------------------------------
-tjs_uint64 TJS_INTF_METHOD tTVPLocalFileStream::Seek(tjs_int64 offset, tjs_int whence)
-{
-	if (MemBuffer) {
-		return MemBuffer->Seek(offset, whence);
-	}
-	return lseek64(Handle, offset, whence);
-}
-//---------------------------------------------------------------------------
-tjs_uint TJS_INTF_METHOD tTVPLocalFileStream::Read(void* buffer, tjs_uint read_size)
-{
-	if (MemBuffer) {
-		return MemBuffer->Read(buffer, read_size);
-	}
-	return read(Handle, buffer, read_size);
-}
-//---------------------------------------------------------------------------
-tjs_uint TJS_INTF_METHOD tTVPLocalFileStream::Write(const void* buffer, tjs_uint write_size)
-{
-	if (MemBuffer) {
-		return MemBuffer->Write(buffer, write_size);
-	}
-	return write(Handle, buffer, write_size);
-}
-//---------------------------------------------------------------------------
-void TJS_INTF_METHOD tTVPLocalFileStream::SetEndOfStorage()
-{
-	if (MemBuffer) {
-		return MemBuffer->SetEndOfStorage();
-	}
-	lseek64(Handle, 0, SEEK_END);
-}
-//---------------------------------------------------------------------------
-tjs_uint64 TJS_INTF_METHOD tTVPLocalFileStream::GetSize()
-{
-	if (MemBuffer) {
-		return MemBuffer->GetSize();
-	}
-	tjs_uint64 ret;
-	tjs_int64 curpos = lseek64(Handle, 0, SEEK_CUR);
-	ret = lseek64(Handle, 0, SEEK_END);
-	lseek64(Handle, curpos, SEEK_SET);
-	return ret;
-}
-//---------------------------------------------------------------------------
 
 //---------------------------------------------------------------------------
 // tTVPFileMedia
