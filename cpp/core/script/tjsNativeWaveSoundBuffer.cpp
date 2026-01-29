@@ -3137,19 +3137,6 @@ tjs_int tTJSNI_WaveSoundBuffer::GetVisBuffer(tjs_int16* dest,
 }
 //---------------------------------------------------------------------------
 
-#ifdef WIN32
-IDirectSound* TVPGetDirectSound()
-{
-    try
-    {
-        TVPInitDirectSound();
-    }
-    catch (...)
-    {
-        return NULL;
-    }
-}
-#endif
 
 
 //---------------------------------------------------------------------------

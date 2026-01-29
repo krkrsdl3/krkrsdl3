@@ -197,46 +197,7 @@ bool tTVPApplication::StartApplication(int argc, char* argv[])
             TVPInitializeStartupScript();
             _project_startup = true;
     } catch( const EAbort & ) {
-            // nothing to do
-#if !(defined(_MSC_VER) && defined(_DEBUG))
-    } catch (const Exception &exception) {
-            TVPOnError();
-            if(!TVPSystemUninitCalled)
-                    ShowException(exception.what());
-    } catch( const TJS::eTJSScriptError &e ) {
-            TVPOnError();
-            if (!TVPSystemUninitCalled) {
-                    ttstr msg;
-                    if (!title_.IsEmpty()) {
-                            msg += title_;
-                            msg += "\n";
-                    }
-                    msg += e.GetMessage();
-                    const tjs_char *pszBlockName = e.GetBlockName();
-                    if (pszBlockName && *pszBlockName) {
-                            msg += TJS_W("\n@line(");
-                            tjs_char tmp[34];
-                            msg += TJS_int_to_str(e.GetSourceLine(), tmp);
-                            msg += TJS_W(") ");
-                            msg += pszBlockName;
-                    }
-                    msg += TJS_W("\n");
-                    msg += e.GetTrace();
-                    ShowException(msg);
-            }
-    } catch( const TJS::eTJS &e) {
-            TVPOnError();
-            if(!TVPSystemUninitCalled)
-                    ShowException( e.GetMessage() );
-    } catch( const std::exception &e ) {
-            ShowException( e.what() );
-    } catch( const char* e ) {
-            ShowException( e );
-    } catch( const tjs_char* e ) {
-            ShowException( e );
-    } catch(...) {
-            ShowException( (const tjs_char*)TVPUnknownError );
-#endif
+        // nothing to do
     }
 
     return true;
@@ -301,45 +262,6 @@ void tTVPApplication::Run() {
 		if (TVPSystemControl) TVPSystemControl->SystemWatchTimerTimer();
 	} catch (const EAbort &) {
 		// nothing to do
-#if !(defined(_MSC_VER) && defined(_DEBUG))
-	} catch (const Exception &exception) {
-		TVPOnError();
-		if(!TVPSystemUninitCalled)
-			ShowException(exception.what());
-	} catch( const TJS::eTJSScriptError &e ) {
-		TVPOnError();
-		if (!TVPSystemUninitCalled) {
-			ttstr msg;
-			if (!title_.IsEmpty()) {
-				msg += title_;
-				msg += "\n";
-			}
-			msg += e.GetMessage();
-			const tjs_char *pszBlockName = e.GetBlockName();
-			if (pszBlockName && *pszBlockName) {
-				msg += TJS_W("\n@line(");
-				tjs_char tmp[34];
-				msg += TJS_int_to_str(e.GetSourceLine(), tmp);
-				msg += TJS_W(") ");
-				msg += pszBlockName;
-			}
-			msg += TJS_W("\n");
-			msg += e.GetTrace();
-			ShowException(msg);
-		}
-	} catch( const TJS::eTJS &e) {
-		TVPOnError();
-		if(!TVPSystemUninitCalled)
-			ShowException( e.GetMessage() );
-	} catch( const std::exception &e ) {
-		ShowException( e.what() );
-	} catch( const char* e ) {
-		ShowException( e );
-	} catch( const tjs_char* e ) {
-		ShowException( e );
-	} catch (...) {
-		ShowException((const tjs_char*)TVPUnknownError);
-#endif
 	}
 }
 

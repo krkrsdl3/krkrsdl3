@@ -11,7 +11,6 @@ static const int MAX_LOG_LENGTH = 16 * 1024;
 
 namespace TJS
 {
-#ifndef _MSC_VER
 std::string TVP_codecvt_utf8_utf16(const tjs_char* indata)
 {
 	std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> converter;
@@ -23,7 +22,6 @@ std::u16string TVP_codecvt_utf16_utf8(const char* indata)
 	std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> converter;
     return converter.from_bytes(indata);
 }
-#endif
 }
 
 void TVPConsoleLog(const tjs_char* l)

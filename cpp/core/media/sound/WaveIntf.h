@@ -167,7 +167,6 @@ class iTVPSoundBuffer;
 //---------------------------------------------------------------------------
 
 extern void TVPReleaseDirectSound();
-extern IDirectSound* TVPGetDirectSound();
 extern void TVPResetVolumeToAllSoundBuffer();
 extern void TVPSetWaveSoundBufferUse3DMode(bool b);
 extern bool TVPGetWaveSoundBufferUse3DMode();

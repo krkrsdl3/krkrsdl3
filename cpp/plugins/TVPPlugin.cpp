@@ -36,6 +36,7 @@
 #pragma pack(pop)
 
 #include "TVPApplication.h"
+#include "SDL3/SDL.h"
 #include <set>
 
 //---------------------------------------------------------------------------
@@ -72,7 +73,7 @@ static void TVPSearchPluginsAt(std::vector<tTVPFoundPlugin> &list, std::string f
 {
 	TVPListDir(folder, [&](const std::string &filename, int mask){
 		if (mask & S_IFREG) {
-			if (!strcasecmp(filename.c_str() + filename.length() - 4, ".tpm")) {
+			if (!SDL_strcasecmp(filename.c_str() + filename.length() - 4, ".tpm")) {
 				tTVPFoundPlugin fp;
 				fp.Path = folder;
 				fp.Name = filename;

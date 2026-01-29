@@ -20,6 +20,7 @@
 #include "CharacterSet.h"
 
 #include "WaveIntf.h"
+#include "SDL3/SDL.h"
 
 //---------------------------------------------------------------------------
 const int TVPWaveLoopLinkGiveUpCount = 10;
@@ -953,23 +954,23 @@ bool tTVPWaveLoopManager::GetInt64(char *s, tjs_int64 &v)
 bool tTVPWaveLoopManager::GetBool(char *s, bool &v)
 {
 	// convert string to boolean
-	if(!strcasecmp(s, "True"))		{	v = true;	return true;	}
-	if(!strcasecmp(s, "False"))		{	v = false;	return true;	}
-	if(!strcasecmp(s, "Yes"))		{	v = true;	return true;	}
-	if(!strcasecmp(s, "No"))		{	v = false;	return true;	}
+	if(!SDL_strcasecmp(s, "True"))		{	v = true;	return true;	}
+	if(!SDL_strcasecmp(s, "False"))		{	v = false;	return true;	}
+	if(!SDL_strcasecmp(s, "Yes"))		{	v = true;	return true;	}
+	if(!SDL_strcasecmp(s, "No"))		{	v = false;	return true;	}
 	return false;
 }
 //---------------------------------------------------------------------------
 bool tTVPWaveLoopManager::GetCondition(char *s, tTVPWaveLoopLinkCondition &v)
 {
 	// get condition value
-	if(!strcasecmp(s, "no"))		{ v = llcNone;				return true;	}
-	if(!strcasecmp(s, "eq"))		{ v = llcEqual;				return true;	}
-	if(!strcasecmp(s, "ne"))		{ v = llcNotEqual;			return true;	}
-	if(!strcasecmp(s, "gt"))		{ v = llcGreater;			return true;	}
-	if(!strcasecmp(s, "ge"))		{ v = llcGreaterOrEqual;	return true;	}
-	if(!strcasecmp(s, "lt"))		{ v = llcLesser;			return true;	}
-	if(!strcasecmp(s, "le"))		{ v = llcLesserOrEqual;		return true;	}
+	if(!SDL_strcasecmp(s, "no"))		{ v = llcNone;				return true;	}
+	if(!SDL_strcasecmp(s, "eq"))		{ v = llcEqual;				return true;	}
+	if(!SDL_strcasecmp(s, "ne"))		{ v = llcNotEqual;			return true;	}
+	if(!SDL_strcasecmp(s, "gt"))		{ v = llcGreater;			return true;	}
+	if(!SDL_strcasecmp(s, "ge"))		{ v = llcGreaterOrEqual;	return true;	}
+	if(!SDL_strcasecmp(s, "lt"))		{ v = llcLesser;			return true;	}
+	if(!SDL_strcasecmp(s, "le"))		{ v = llcLesserOrEqual;		return true;	}
 	return false;
 }
 //---------------------------------------------------------------------------
@@ -1088,17 +1089,17 @@ bool tTVPWaveLoopManager::ReadLinkInformation(char * & p, tTVPWaveLoopLink &link
 		if(!GetEntityToken(p, &name, &value))
 			return false;
 
-		if(!strcasecmp(name, "From"))
+		if (!SDL_strcasecmp(name, "From"))
 		{	if(!GetInt64(value, link.From))					return false;}
-		else if(!strcasecmp(name, "To"))
+                else if (!SDL_strcasecmp(name, "To"))
 		{	if(!GetInt64(value, link.To))					return false;}
-		else if(!strcasecmp(name, "Smooth"))
+                else if (!SDL_strcasecmp(name, "Smooth"))
 		{	if(!GetBool(value, link.Smooth))				return false;}
-		else if(!strcasecmp(name, "Condition"))
+                else if (!SDL_strcasecmp(name, "Condition"))
 		{	if(!GetCondition(value, link.Condition))		return false;}
-		else if(!strcasecmp(name, "RefValue"))
+                else if (!SDL_strcasecmp(name, "RefValue"))
 		{	if(!GetInt(value, link.RefValue))				return false;}
-		else if(!strcasecmp(name, "CondVar"))
+                else if (!SDL_strcasecmp(name, "CondVar"))
 		{	if(!GetInt(value, link.CondVar))				return false;}
 		else
 		{													return false;}
@@ -1141,9 +1142,9 @@ bool tTVPWaveLoopManager::ReadLabelInformation(char * & p, tTVPWaveLabel &label)
 		if(!GetEntityToken(p, &name, &value))
 			return false;
 
-		if(!strcasecmp(name, "Position"))
+		if (!SDL_strcasecmp(name, "Position"))
 		{	if(!GetInt64(value, label.Position))			return false;}
-		else if(!strcasecmp(name, "Name"))
+                else if (!SDL_strcasecmp(name, "Name"))
 		{	if(!GetString(value, label.Name))				return false;}
 		else
 		{													return false;}
@@ -1222,7 +1223,7 @@ bool tTVPWaveLoopManager::ReadInformation(char * p)
 			if(!*p) break;
 
 			// read id (Link or Label)
-			if(!strncasecmp(p, "Link", 4) && !isalpha(p[4]))
+			if(!SDL_strncasecmp(p, "Link", 4) && !isalpha(p[4]))
 			{
 				p += 4;
 				while(isspace(*p)) p++;
@@ -1231,7 +1232,7 @@ bool tTVPWaveLoopManager::ReadInformation(char * p)
 				if(!ReadLinkInformation(p, link)) return false;
 				Links.emplace_back(link);
 			}
-			else if(!strncasecmp(p, "Label", 5) && !isalpha(p[5]))
+			else if(!SDL_strncasecmp(p, "Label", 5) && !isalpha(p[5]))
 			{
 				p += 5;
 				while(isspace(*p)) p++;

@@ -5,10 +5,10 @@
 #include <codecvt>
 #include <algorithm>
 
+#include <SDL3/SDL.h>
 #include <SDL3/SDL_iostream.h>
 #include <sys/utime.h>
 #include <fcntl.h>
-#include <dirent.h>
 
 #include "TVPSystem.h"
 #include "TVPEvent.h"
@@ -177,25 +177,6 @@ void TJS_INTF_METHOD tTVPFileMedia::GetLocallyAccessibleName(ttstr& name)
 		ptr += 2;  // skip "./"
 		newname.Clear();
 	}
-#if CC_TARGET_PLATFORM == CC_PLATFORM_IOS
-	{
-		std::string prefix = "/";
-		prefix += tTJSNarrowStringHolder(ptr).Buf;
-		static const std::vector<ttstr>& prefixPath = _getPrefixPath();
-		static const std::vector<std::string>& homeDir = _getHomeDir();
-		for (int i = 0; i < prefixPath.size(); ++i) {
-			const std::string& dir = homeDir[i];
-			if (prefix.length() < dir.length()) continue;
-			std::string actualPrefix = prefix.substr(0, dir.length());
-			if (!_utf8_strcasecmp(actualPrefix.c_str(), dir.c_str())) {
-				newname = prefixPath[i];
-				ptr += prefixPath[i].length();
-				while (*ptr && *ptr == TJS_W('/')) ++ptr;
-				break;
-			}
-		}
-	}
-#endif
 	while (*ptr) {
 		const tjs_char* ptr_end = ptr;
 		while (*ptr_end && *ptr_end != TJS_W('/')) ++ptr_end;
@@ -307,8 +288,6 @@ extern "C" int usleep(unsigned long us) {
 	Sleep(us / 1000);
 	return 0;
 }
-
-//extern "C" __declspec(dllimport) int __cdecl __wgetmainargs(int * _Argc, wchar_t *** _Argv, wchar_t *** _Env, int _DoWildCard, void * _StartInfo);
 std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
 std::string TVPGetDefaultFileDir() {
 	wchar_t buf[MAX_PATH];
@@ -541,11 +520,7 @@ void TVPRelinquishCPU() { Sleep(0); }
 
 tjs_uint32 TVPGetRoughTickCount32()
 {
-    tjs_uint32 uptime = 0;
-    struct timespec on;
-    if(clock_gettime(CLOCK_MONOTONIC, &on) == 0)
-        uptime = on.tv_sec * 1000 + on.tv_nsec / 1000000;
-    return uptime;
+    return SDL_GetTicks();
 }
 
 void TVPPrintLog(const char* str) {
@@ -581,56 +556,49 @@ void TVPSendToOtherApp(const std::string& filename) {
 }
 
 void TVPListDir(const std::string& folder, std::function<void(const std::string&, int)> cb) {
-    DIR* dirp;
-    struct dirent* direntp;
-    tTVP_stat stat_buf;
-    if ((dirp = opendir(folder.c_str())))
+    for (const auto& entry : std::filesystem::directory_iterator(folder))
     {
-        while ((direntp = readdir(dirp)) != NULL)
-        {
-            std::string fullpath = folder + "/" + direntp->d_name;
-            if (!TVP_stat(fullpath.c_str(), stat_buf))
-                continue;
-            cb(direntp->d_name, stat_buf.tvp_mode);
-        }
-        closedir(dirp);
+        std::string filename = entry.path().filename().string();
+        int mode = entry.is_directory() ? 0x4000 : 0x8000;
+        cb(filename, mode);
     }
 }
 void TVPGetLocalFileListAt(const ttstr& name, const std::function<void(const ttstr&, tTVPLocalFileInfo*)>& cb) {
-    DIR* dirp;
-    struct dirent* direntp;
-    tTVP_stat stat_buf;
-    std::string folder(name.AsNarrowStdString());
-    if ((dirp = opendir(folder.c_str())))
+    std::string folder(name.AsStdString());
+
+    for (const auto& entry : std::filesystem::directory_iterator(folder))
     {
-        while ((direntp = readdir(dirp)) != NULL)
+        std::string filename = entry.path().filename().string();
+
+        // 跳过 "." 和 ".."
+        if (filename == "." || filename == "..")
         {
-            std::string fullpath = folder + "/" + direntp->d_name;
-            if (!TVP_stat(fullpath.c_str(), stat_buf))
-                continue;
-            ttstr file(direntp->d_name);
-            if (file.length() <= 2) {
-                if (file == TJS_W(".") || file == TJS_W(".."))
-                    continue;
-            }
-            tjs_char* p = file.Independ();
-            while (*p)
-            {
-                // make all characters small
-                if (*p >= TJS_W('A') && *p <= TJS_W('Z'))
-                    *p += TJS_W('a') - TJS_W('A');
-                p++;
-            }
-            tTVPLocalFileInfo info;
-            info.NativeName = direntp->d_name;
-            info.Mode = stat_buf.tvp_mode;
-            info.Size = stat_buf.tvp_size;
-            info.AccessTime = stat_buf.tvp_atime;
-            info.ModifyTime = stat_buf.tvp_mtime;
-            info.CreationTime = stat_buf.tvp_ctime;
-            cb(file, &info);
+            continue;
         }
-        closedir(dirp);
+
+        // 创建小写文件名
+        ttstr lowerFilename(filename);
+
+        // 获取文件状态
+        auto status = entry.status();
+        auto ftime = std::filesystem::last_write_time(entry);
+
+        // 转换为time_t
+        auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+            ftime - std::filesystem::file_time_type::clock::now() +
+            std::chrono::system_clock::now());
+        std::time_t cftime = std::chrono::system_clock::to_time_t(sctp);
+
+        // 填充文件信息
+        tTVPLocalFileInfo info;
+        info.NativeName = filename.c_str();
+        info.Mode = std::filesystem::is_directory(status) ? 0x4000 : 0x8000;
+        info.Size = entry.is_directory() ? 0 : std::filesystem::file_size(entry);
+        info.AccessTime = cftime; // 简化为使用修改时间
+        info.ModifyTime = cftime;
+        info.CreationTime = cftime; // C++标准库不直接支持创建时间
+
+        cb(lowerFilename, &info);
     }
 }
 

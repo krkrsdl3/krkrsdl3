@@ -13,12 +13,6 @@
 
 #include "eventCallbackFun.h"
 
-#ifndef _DEBUG
-#ifdef _MSC_VER
-#include <windows.h>
-#endif
-#endif
-
 SDL_Window* tvp_window;
 SDL_Renderer* tvp_renderer;
 SDL_GLContext tvp_glContext = NULL;
@@ -76,13 +70,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[])
         SDL_Log("Game Start Failed.");
         return SDL_APP_FAILURE;
     }
-
-    // 隐藏命令行
-#ifndef _DEBUG
-#ifdef _MSC_VER
-    ShowWindow(GetConsoleWindow(), SW_HIDE);
-#endif
-#endif
+    
     SDL_ShowWindow(tvp_window);
 
     // 初始帧数

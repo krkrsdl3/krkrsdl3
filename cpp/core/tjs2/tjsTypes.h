@@ -42,104 +42,20 @@
 #define TJS_METHOD_RET_EMPTY
 #define TJS_METHOD_RET(type)
 
-
-
-#if defined(_WIN32)  && !defined(__GNUC__)
-
-/* VC++/BCC */
-
-/*[*/
-typedef __int8 tjs_int8;
-typedef unsigned __int8 tjs_uint8;
-typedef __int16 tjs_int16;
-typedef unsigned __int16 tjs_uint16;
-typedef __int32 tjs_int32;
-typedef unsigned __int32 tjs_uint32;
-typedef __int64 tjs_int64;
-typedef unsigned __int64 tjs_uint64;
-typedef int tjs_int;    /* at least 32bits */
-typedef unsigned int tjs_uint;    /* at least 32bits */
-
-#ifdef __cplusplus
-typedef wchar_t tjs_char;
-#else
-typedef unsigned short tjs_char;
-#endif
-
-#define TJS_W(X) L##X
-#define TJS_N(X) X
-
-typedef char tjs_nchar;
-typedef double tjs_real;
-
-#define TJS_HOST_IS_BIG_ENDIAN 0
-#define TJS_HOST_IS_LITTLE_ENDIAN 1
-
-#ifndef TJS_INTF_METHOD
-#ifdef WIN32
-#define TJS_INTF_METHOD __cdecl
-#else
-#define TJS_INTF_METHOD
-/* TJS_INTF_METHOD is "cdecl" (by default)
-	since TJS2 2.4.14 (kirikir2 2.25 beta 1) */
-#endif
-#endif
-
-#define TJS_USERENTRY __cdecl
-
-#define TJS_I64_VAL(x) ((tjs_int64)(x##i64))
-#define TJS_UI64_VAL(x) ((tjs_uint64)(x##i64))
-
-#ifdef _M_X64
-#define TJS_64BIT_OS	/* 64bit windows */
-#endif
-
-typedef intptr_t tjs_intptr_t;
-typedef uintptr_t tjs_uintptr_t;
-
-/*]*/
-
-#else
-
-/* gcc ? */
-
-#ifndef __GNUC__
- #error "GNU C++ required."
-#endif
-/*
-#ifndef HAVE_CONFIG_H
- #error "-DHAVE_CONFIG_H and config.h required."
-#endif
-*/
 #include <sys/types.h>
 #include <stdint.h>
 
+typedef int8_t tjs_int8;
+typedef uint8_t tjs_uint8;
+typedef int16_t tjs_int16;
+typedef uint16_t tjs_uint16;
+typedef int32_t tjs_int32;
+typedef uint32_t tjs_uint32;
+typedef int64_t tjs_int64;
+typedef uint64_t tjs_uint64;
 
-#if defined(__linux__)
-	typedef int8_t tjs_int8;
-	typedef u_int8_t tjs_uint8;
-	typedef int16_t tjs_int16;
-	typedef u_int16_t tjs_uint16;
-	typedef int32_t tjs_int32;
-	typedef u_int32_t tjs_uint32;
-	typedef int64_t tjs_int64;
-	typedef u_int64_t tjs_uint64;
-#elif defined(__GNUC__)
-	typedef int8_t tjs_int8;
-	typedef uint8_t tjs_uint8;
-	typedef int16_t tjs_int16;
-	typedef uint16_t tjs_uint16;
-	typedef int32_t tjs_int32;
-	typedef uint32_t tjs_uint32;
-	typedef int64_t tjs_int64;
-	typedef uint64_t tjs_uint64;
-#endif
 
-#ifdef __cplusplus
-    typedef char16_t tjs_char;
-#else
-    typedef unsigned short tjs_char;
-#endif
+typedef char16_t tjs_char;
 #define TJS_W(X) u##X
 #define TJS_N(X) X
 
@@ -167,7 +83,7 @@ typedef uintptr_t tjs_uintptr_t;
 #define TJS_USERENTRY
 
 
-#endif /* end of defined(_WIN32) && !defined(__GNUC__) */
+//#endif /* end of defined(_WIN32) && !defined(__GNUC__) */
 
 /*[*/
 

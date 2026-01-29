@@ -630,9 +630,6 @@ tjs_char* TJS_strrchr(const tjs_char* s, int c)
 
 double TJS_strtod(const tjs_char* string, tjs_char** endPtr)
 {
-#if defined (_MSC_VER) && defined(_DEBUG)
-    double testret = wcstod(string, endPtr);
-#endif
     int sign, expSign = false;
     double fraction, dblExp;
     const double* d;
@@ -828,9 +825,6 @@ done:
     if (sign) {
         return -fraction;
     }
-#if defined (_MSC_VER) && defined(_DEBUG)
-    assert(fraction == testret);
-#endif
     return fraction;
 }
 

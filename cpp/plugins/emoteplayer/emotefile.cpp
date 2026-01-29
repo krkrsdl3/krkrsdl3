@@ -3703,14 +3703,14 @@ namespace emoteplayer
         filePtr->Read(sign, 5);
         sign[4] = '\0';
         char lzfs[] = {0x04, 0x22, 0x4d, 0x18, 0x00};
-        if (strcasecmp(sign, lzfs) == 0) // lzfs
+        if (SDL_strcasecmp(sign, lzfs) == 0) // lzfs
         {
             filePtr = GetLz4Stream(filePtr);
         }
         else
         {
             sign[3] = '\0';
-            if (strcasecmp(sign, "MDF") == 0)
+            if (SDL_strcasecmp(sign, "MDF") == 0)
             {
                 // uncompress data
                 uLongf uncompressedSize = filePtr->ReadI32LE();
