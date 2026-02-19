@@ -1508,7 +1508,6 @@ LayerExDraw::~LayerExDraw()
         delete bitmap;
 }
 
-static int cnt = 0;
 void
 LayerExDraw::reset()
 {
@@ -1528,7 +1527,7 @@ LayerExDraw::reset()
         bitmap->createFromData(width, height, BL_FORMAT_PRGB32, buffer, pitch);
         context = new BLContext;
         context->setCompOp(BL_COMP_OP_SRC_OVER);
-        calcTransform = BLMatrix2D::makeTranslation(250, 0);
+        calcTransform = BLMatrix2D::makeIdentity();
         context->setTransform(calcTransform);
         
         //cv::Mat rgba(height, width, CV_8UC4, buffer, pitch);

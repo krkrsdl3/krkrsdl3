@@ -606,6 +606,18 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
           }
           break;
       }
+      case 'n':
+      {
+          int n = 0;
+          read_integer(text, i, n);
+          if (n == 0)
+              n = 1;
+          flush();
+          performLinebreak();
+          for (int i = 0; i < n; i++)
+              performLinebreak();
+          break;
+      }
       case 'p':
       {
         int value = 0;
@@ -820,6 +832,12 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all,
       // TODO: implement eval
 
       break;
+    }
+    case '\n':
+    {
+        flush();
+        performLinebreak();
+        break;
     }
     default:
     __draw_normal:

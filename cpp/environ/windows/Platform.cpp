@@ -556,49 +556,55 @@ void TVPSendToOtherApp(const std::string& filename) {
 }
 
 void TVPListDir(const std::string& folder, std::function<void(const std::string&, int)> cb) {
-    for (const auto& entry : std::filesystem::directory_iterator(folder))
-    {
-        std::string filename = entry.path().filename().string();
-        int mode = entry.is_directory() ? 0x4000 : 0x8000;
-        cb(filename, mode);
+    try {
+        for (const auto& entry : std::filesystem::directory_iterator(folder))
+        {
+            std::string filename = entry.path().filename().string();
+            int mode = entry.is_directory() ? 0x4000 : 0x8000;
+            cb(filename, mode);
+        }
+    } catch (...) {
     }
 }
 void TVPGetLocalFileListAt(const ttstr& name, const std::function<void(const ttstr&, tTVPLocalFileInfo*)>& cb) {
     std::string folder(name.AsStdString());
 
-    for (const auto& entry : std::filesystem::directory_iterator(folder))
-    {
-        std::string filename = entry.path().filename().string();
-
-        // 跳过 "." 和 ".."
-        if (filename == "." || filename == "..")
+    try {
+        for (const auto& entry : std::filesystem::directory_iterator(folder))
         {
-            continue;
+            std::string filename = entry.path().filename().string();
+
+            // 跳过 "." 和 ".."
+            if (filename == "." || filename == "..")
+            {
+                continue;
+            }
+
+            // 创建小写文件名
+            ttstr lowerFilename(filename);
+
+            // 获取文件状态
+            auto status = entry.status();
+            auto ftime = std::filesystem::last_write_time(entry);
+
+            // 转换为time_t
+            auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+                ftime - std::filesystem::file_time_type::clock::now() +
+                std::chrono::system_clock::now());
+            std::time_t cftime = std::chrono::system_clock::to_time_t(sctp);
+
+            // 填充文件信息
+            tTVPLocalFileInfo info;
+            info.NativeName = filename.c_str();
+            info.Mode = std::filesystem::is_directory(status) ? 0x4000 : 0x8000;
+            info.Size = entry.is_directory() ? 0 : std::filesystem::file_size(entry);
+            info.AccessTime = cftime; // 简化为使用修改时间
+            info.ModifyTime = cftime;
+            info.CreationTime = cftime; // C++标准库不直接支持创建时间
+
+            cb(lowerFilename, &info);
         }
-
-        // 创建小写文件名
-        ttstr lowerFilename(filename);
-
-        // 获取文件状态
-        auto status = entry.status();
-        auto ftime = std::filesystem::last_write_time(entry);
-
-        // 转换为time_t
-        auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
-            ftime - std::filesystem::file_time_type::clock::now() +
-            std::chrono::system_clock::now());
-        std::time_t cftime = std::chrono::system_clock::to_time_t(sctp);
-
-        // 填充文件信息
-        tTVPLocalFileInfo info;
-        info.NativeName = filename.c_str();
-        info.Mode = std::filesystem::is_directory(status) ? 0x4000 : 0x8000;
-        info.Size = entry.is_directory() ? 0 : std::filesystem::file_size(entry);
-        info.AccessTime = cftime; // 简化为使用修改时间
-        info.ModifyTime = cftime;
-        info.CreationTime = cftime; // C++标准库不直接支持创建时间
-
-        cb(lowerFilename, &info);
+    } catch (...) {
     }
 }
 

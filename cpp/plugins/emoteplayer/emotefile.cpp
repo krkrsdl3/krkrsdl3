@@ -1421,7 +1421,7 @@ namespace emoteplayer
             }
 
             // 有模板信息时，穿透到最顶层
-            if (renderMethod.size() > 0 && type == 12)
+            if (renderMethod.size() > 0 && stencilCompositeMaskLayerList.size() > 0 && type == 12)
             {
                 renderMethod.at(0).hasStencil = true;
                 for (auto nodeName : stencilCompositeMaskLayerList)
@@ -1673,7 +1673,7 @@ namespace emoteplayer
             SDL_Log("render:%s failed!!!", label.c_str());
             return;
         }
-
+        
         //static tjs_uint8* enoughData = new tjs_uint8[lim.width * lim.height * 4];
         //static GLfloat* enoughDepthData = new GLfloat[lim.width * lim.height];
         //if (frame != nullptr && strcmp(frame->src.c_str(), "src/tex/0066") == 0)
@@ -1777,7 +1777,7 @@ namespace emoteplayer
             glUniform1i(glGetUniformLocation(emotenodeprogram, "enableMask"), false);
             glDrawArrays(GL_PATCHES, 0, 16);
         }
-
+        
         //if (frame != nullptr && strcmp(frame->src.c_str(), "src/tex/0066") == 0)
         //{
         //  static tjs_uint8* enoughData = new tjs_uint8[lim.width * lim.height * 4];
