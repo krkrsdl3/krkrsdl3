@@ -30,7 +30,7 @@ endif()
 
 
 # 建立项目
-project(krkrsdl3 VERSION "0.0.5" LANGUAGES C CXX)
+project(krkrsdl3 VERSION "0.0.6" LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD 17)
@@ -70,6 +70,7 @@ set(KRKRSDL_SRC
     ${KRKRSDL_CORE_SRC}
     ${KRKRSDL_ENVIRON_SRC}
     ${KRKRSDL_PLUGINS_SRC}
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp/krkrsdl_gl.cpp
     )
 
 #

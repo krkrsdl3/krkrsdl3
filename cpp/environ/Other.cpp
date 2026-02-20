@@ -734,7 +734,7 @@ int TVPShowSimpleMessageBox(const ttstr& text, const ttstr& caption, const std::
     }
 
     int buttonid = -1;
-    if (SDL_ShowMessageBox(&msgboxData, &buttonid) < 0) {
+    if (!SDL_ShowMessageBox(&msgboxData, &buttonid)) {
         SDL_Log("SDL_ShowMessageBox failed: %s",  SDL_GetError());
         return -1;
     }

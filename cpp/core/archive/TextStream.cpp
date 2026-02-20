@@ -733,7 +733,7 @@ public:
 					}
 					delete[] CompressionBuffer;
 					delete Stream;
-					throw;
+					return;
 				}
 			}
 			// delete zlib compress stream

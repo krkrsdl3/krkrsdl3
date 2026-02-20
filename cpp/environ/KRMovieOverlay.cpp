@@ -13,11 +13,6 @@ extern "C" {
 
 #include "tjsNativeVideoOverlay.h"
 
-extern std::thread::id TVPMainThreadID;
-extern std::vector<SDL_Sprite*> renderTexture;
-extern SDL_Renderer* tvp_renderer;
-extern std::mutex sdlRenderMtx;
-
 NS_KRMOVIE_BEGIN
 #define DRAW_VIDEO_FRAME 30
 
@@ -35,16 +30,8 @@ VideoPresentOverlay::~VideoPresentOverlay()
     {
         if (pSprite->texture != NULL)
         {
-            for (size_t i = 0; i < renderTexture.size(); i++)
-            {
-                if (renderTexture.at(i)->texture == pSprite->texture)
-                {
-                    renderTexture.erase(renderTexture.begin() + i);
-                    SDL_DestroyTexture(pSprite->texture);
-                    break;
-                }
-            }
-            pSprite->texture = NULL;
+            krkrsdl3::SDL_GL_DepartTexture(pSprite);
+            krkrsdl3::SDL_GL_DestroyTexture(pSprite);
         }
         delete pSprite;
     }
@@ -99,10 +86,10 @@ void VideoPresentOverlay::OnContinuousCallback(tjs_uint64 tick)
         return;
     {
         if(pSprite->texture == NULL) {
-            pSprite->texture =
-                SDL_CreateTexture(tvp_renderer, SDL_PIXELFORMAT_ABGR8888,
-                SDL_TEXTUREACCESS_STREAMING, pic.width, pic.height);
-            renderTexture.push_back(pSprite);
+            pSprite->width = pic.width;
+            pSprite->height = pic.height;
+            krkrsdl3::SDL_GL_CreateTexture(*pSprite);
+            krkrsdl3::SDL_GL_JoinTexture(pSprite);
         }
         int picSize = pic.height * pic.width * 4;
         int pitch = pic.width * 4;
@@ -110,7 +97,7 @@ void VideoPresentOverlay::OnContinuousCallback(tjs_uint64 tick)
             bufferData = (uint8_t *)malloc(picSize);
         }
         memcpy(bufferData, pic.rgba, picSize);
-        SDL_UpdateTexture(pSprite->texture, nullptr, bufferData, pitch);
+        krkrsdl3::SDL_GL_UpdateTexture(pSprite, bufferData, pic.width, pic.height);
     }
 }
 

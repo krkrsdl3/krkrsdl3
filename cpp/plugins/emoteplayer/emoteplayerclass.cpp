@@ -8,12 +8,6 @@
 #include "tjsCommHead.h"
 #include "tjsNativeLayer.h"
 
-// 渲染混用太tm痛苦了，下一版预计只能统一使用bgfx渲染，然后SDL只充当硬件接口且不参与渲染了
-#if _KRKRSDL3_OGL
-extern SDL_Window* tvp_window;
-extern SDL_GLContext tvp_glContext;
-#endif
-
 namespace emoteplayer
 {
 extern GLuint createEmptyTexture(int width, int height);
@@ -162,9 +156,6 @@ void SeparateLayerAdaptor::assign(iTJSDispatch2* anotherAdaptor)
 }
 void SeparateLayerAdaptor::clear()
 {
-#if _KRKRSDL3_OGL
-    SDL_GL_MakeCurrent(tvp_window, tvp_glContext);
-#endif
     if (fbotexture != 0 && glIsTexture(fbotexture) == GL_TRUE)
         glDeleteTextures(1, &fbotexture);
     if (fbodepthtexture != 0 && glIsTexture(fbodepthtexture) == GL_TRUE)
@@ -183,9 +174,6 @@ void SeparateLayerAdaptor::clear()
         delete _this;
         _this = nullptr;
     }
-#if _KRKRSDL3_OGL
-    SDL_GL_MakeCurrent(tvp_window, NULL);
-#endif
 }
 void SeparateLayerAdaptor::set_absolute(tjs_int v)
 {
@@ -274,9 +262,6 @@ void SeparateLayerAdaptor::checkDrawArea(tjs_int width, tjs_int height)
 #define getprop(d, p) getprop_t(d, p, )
 EmotePlayer::~EmotePlayer()
 {
-#if _KRKRSDL3_OGL
-    SDL_GL_MakeCurrent(tvp_window, tvp_glContext);
-#endif
     if (fbotexture != 0 && glIsTexture(fbotexture) == GL_TRUE)
         glDeleteTextures(1, &fbotexture);
     if (fbodepthtexture != 0 && glIsTexture(fbodepthtexture) == GL_TRUE)
@@ -293,9 +278,6 @@ EmotePlayer::~EmotePlayer()
         delete (tTVPBaseTexture*)m_BmpBits;
     if (m_bmpData != nullptr)
         delete[] m_bmpData;
-#if _KRKRSDL3_OGL
-    SDL_GL_MakeCurrent(tvp_window, NULL);
-#endif
 }
 int32_t EmotePlayer::get_loopTime()
 {
@@ -457,18 +439,12 @@ void EmotePlayer::clear(iTJSDispatch2* layer, tjs_uint32 neutralColor)
     if (ths == NULL)
         return;
 
-#if _KRKRSDL3_OGL
-    SDL_GL_MakeCurrent(tvp_window, tvp_glContext);
-#endif
     if (withoutAdaptor)
         glBindFramebuffer(GL_FRAMEBUFFER, fbo);
     else
         if (self && self->fbo)
             glBindFramebuffer(GL_FRAMEBUFFER, self->fbo);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-#if _KRKRSDL3_OGL
-    SDL_GL_MakeCurrent(tvp_window, NULL);
-#endif
 }
 void EmotePlayer::progress(tjs_real mstime)
 {
@@ -495,13 +471,7 @@ void EmotePlayer::progress(tjs_real mstime)
             //物理玩不明白，就不开起来污染眼睛了
             //_currentfile->updatePhysics(clockPassed);
             // 将子对象画到自己身上
-#if _KRKRSDL3_OGL
-            SDL_GL_MakeCurrent(tvp_window, tvp_glContext);
-#endif
             _currmotion->progress(0, empty, _limitArea);
-#if _KRKRSDL3_OGL
-            SDL_GL_MakeCurrent(tvp_window, NULL);
-#endif
         }
         else
         {
@@ -521,13 +491,7 @@ void EmotePlayer::progress(tjs_real mstime)
                 _allplaying = false;
             }
             // 将子对象画到自己身上
-#if _KRKRSDL3_OGL
-            SDL_GL_MakeCurrent(tvp_window, tvp_glContext);
-#endif
             _currmotion->progress(clockPassed, empty, _limitArea);
-#if _KRKRSDL3_OGL
-            SDL_GL_MakeCurrent(tvp_window, NULL);
-#endif
         }
     }
 }
@@ -551,9 +515,6 @@ void EmotePlayer::draw(iTJSDispatch2* objthis)
 
     if (_currentfile != nullptr && _currmotion != nullptr)
     {
-#if _KRKRSDL3_OGL
-        SDL_GL_MakeCurrent(tvp_window, tvp_glContext);
-#endif
         ResetDrawArea(ths->GetWidth(), ths->GetHeight());
         if (withoutAdaptor)
             glBindFramebuffer(GL_FRAMEBUFFER, fbo);
@@ -605,9 +566,6 @@ void EmotePlayer::draw(iTJSDispatch2* objthis)
             //cv::cvtColor(rgba, bgra, cv::COLOR_RGBA2BGRA);
             //cv::imshow(name, bgra);
         }
-#if _KRKRSDL3_OGL
-        SDL_GL_MakeCurrent(tvp_window, NULL);
-#endif
     }
 }
 void EmotePlayer::assign(iTJSDispatch2* anotherAdaptor)

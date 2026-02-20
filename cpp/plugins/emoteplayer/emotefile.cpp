@@ -571,34 +571,6 @@ namespace emoteplayer
             }
         )";
 #endif
-    void checkGLError(const char* location)
-    {
-        GLenum error = glGetError();
-        while (error != GL_NO_ERROR)
-        {
-            const char* errorStr = "";
-            switch (error)
-            {
-                case GL_INVALID_ENUM:
-                    errorStr = "GL_INVALID_ENUM";
-                    break;
-                case GL_INVALID_VALUE:
-                    errorStr = "GL_INVALID_VALUE";
-                    break;
-                case GL_INVALID_OPERATION:
-                    errorStr = "GL_INVALID_OPERATION";
-                    break;
-                case GL_INVALID_FRAMEBUFFER_OPERATION:
-                    errorStr = "GL_INVALID_FRAMEBUFFER_OPERATION";
-                    break;
-                case GL_OUT_OF_MEMORY:
-                    errorStr = "GL_OUT_OF_MEMORY";
-                    break;
-            }
-            SDL_Log("OpenGL ES Error at %s: %s (0x%04X)\n", location, errorStr, error);
-            error = glGetError();
-        }
-    }
     GLuint compileShader(GLenum type, const char* src)
     {
         GLuint shader = glCreateShader(type);

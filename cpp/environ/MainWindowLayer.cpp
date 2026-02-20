@@ -11,13 +11,12 @@
 #include <thread>
 
 #include "SDL3/SDL.h"
+#include <opencv2/opencv.hpp>
 
 #include "KeyCodeConv.h"
 #include "../eventCallbackFun.h"
 
 extern SDL_Window* tvp_window;
-extern std::vector<SDL_Sprite*> renderTexture;
-extern SDL_Renderer* tvp_renderer;
 
 extern std::map<SDL_Sprite*, callbackOnMouseDownEvent> sdl_mouseDownCallback;
 extern std::map<SDL_Sprite*, callbackOnMouseUpEvent> sdl_mouseUpCallback;
@@ -161,16 +160,8 @@ public:
         {
             if (pSprite->texture != NULL)
             {
-                for (size_t i = 0; i < renderTexture.size(); i++)
-                {
-                    if (renderTexture.at(i)->texture == pSprite->texture)
-                    {
-                        renderTexture.erase(renderTexture.begin() + i);
-                        SDL_DestroyTexture(pSprite->texture);
-                        break;
-                    }
-                }
-                pSprite->texture = NULL;
+                krkrsdl3::SDL_GL_DepartTexture(pSprite);
+                krkrsdl3::SDL_GL_DestroyTexture(pSprite);
             }
             sdl_mouseDownCallback.erase(pSprite);
             sdl_mouseUpCallback.erase(pSprite);
@@ -195,17 +186,10 @@ public:
                     SDL_GetWindowSize(tvp_window, &w, &h);
                 }
                 pSprite = new SDL_Sprite;
-                pSprite->texture = SDL_CreateTexture(tvp_renderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, w, h);
-                SDL_BlendMode customBlendMode = SDL_ComposeCustomBlendMode(
-                    SDL_BLENDFACTOR_ONE,                 // 源因子
-                    SDL_BLENDFACTOR_ZERO,                // 目标因子
-                    SDL_BLENDOPERATION_ADD,              // 混合操作
-                    SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, // 源因子（Alpha）
-                    SDL_BLENDFACTOR_SRC_ALPHA,           // 目标因子（Alpha）
-                    SDL_BLENDOPERATION_ADD               // 混合操作（Alpha）
-                );
-                SDL_SetTextureBlendMode(pSprite->texture, customBlendMode);
-                renderTexture.push_back(pSprite);
+                pSprite->width = w;
+                pSprite->height = h;
+                krkrsdl3::SDL_GL_CreateTexture(*pSprite);
+                krkrsdl3::SDL_GL_JoinTexture(pSprite);
             }
         }
 
@@ -448,24 +432,15 @@ public:
     }
 
     void ResetDrawSprite() {
-        if (pSprite->texture->w != LayerWidth || pSprite->texture->h != LayerHeight)
+        if (pSprite->width != LayerWidth || pSprite->height != LayerHeight)
         {
-            SDL_DestroyTexture(pSprite->texture);
-            pSprite->texture =
-                SDL_CreateTexture(tvp_renderer, SDL_PIXELFORMAT_ABGR8888,
-                                  SDL_TEXTUREACCESS_STREAMING, LayerWidth, LayerHeight);
-            SDL_BlendMode customBlendMode =
-                SDL_ComposeCustomBlendMode(SDL_BLENDFACTOR_ONE,                 // 源因子
-                                           SDL_BLENDFACTOR_ZERO,                // 目标因子
-                                           SDL_BLENDOPERATION_ADD,              // 混合操作
-                                           SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, // 源因子（Alpha）
-                                           SDL_BLENDFACTOR_SRC_ALPHA,           // 目标因子（Alpha）
-                                           SDL_BLENDOPERATION_ADD               // 混合操作（Alpha）
-                );
-            SDL_SetTextureBlendMode(pSprite->texture, customBlendMode);
+            krkrsdl3::SDL_GL_DestroyTexture(pSprite);
+            pSprite->width = LayerWidth;
+            pSprite->height = LayerHeight;
+            krkrsdl3::SDL_GL_CreateTexture(*pSprite);
         }
-        pSprite->texture->w = LayerWidth;
-        pSprite->texture->h = LayerHeight;
+        pSprite->width = LayerWidth;
+        pSprite->height = LayerHeight;
         if (this == _firstWindowLayer)
         {
             SDL_SetWindowSize(tvp_window, LayerWidth, LayerHeight);
@@ -539,7 +514,7 @@ public:
             return;
 
         {
-            if (pSprite->texture->w != tex->GetWidth() || pSprite->texture->h != tex->GetHeight())
+            if (pSprite->width != tex->GetWidth() || pSprite->height != tex->GetHeight())
             {
                 SetSize(tex->GetWidth(), tex->GetHeight());
             }
@@ -547,7 +522,11 @@ public:
             tjs_uint8* picData = nullptr;
             tjs_int pic_pitch;
             bool isNeedFree = tex->GetTextureData(&picData, pic_pitch);
-            SDL_UpdateTexture(pSprite->texture, nullptr, picData, pic_pitch);
+            //cv::Mat rgba(pSprite->height, pSprite->width, CV_8UC4, picData);
+            //cv::Mat bgra;
+            //cv::cvtColor(rgba, bgra, cv::COLOR_RGBA2BGRA);
+            //cv::imshow("main", bgra);
+            krkrsdl3::SDL_GL_UpdateTexture(pSprite, picData, pSprite->width, pSprite->height);
             if (isNeedFree) free(picData);
         }
     }

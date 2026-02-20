@@ -30,9 +30,6 @@
 
         {
             "name": "opencv4",
-            "features": [
-                "highgui"
-            ],
             "default-features": false
         }
     ],

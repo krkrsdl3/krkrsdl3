@@ -10,8 +10,21 @@ typedef void (*callbackOnMouseMoveEvent)(int, int);
 
 struct SDL_Sprite
 {
-	SDL_Texture* texture = NULL;
-	int xPos = 0, yPos = 0;
+	uint64_t texture = NULL;
+    int xPos = 0, yPos = 0;
+    float scale = 1.0;
+	int width = 0, height = 0;
 	bool isVisible = false;
     bool isModal = false;
 };
+
+namespace krkrsdl3
+{
+void SDL_GL_BaseSet(int w, int h);
+void SDL_GL_DrawTexture(SDL_Sprite* sp, int w, int h);
+void SDL_GL_CreateTexture(SDL_Sprite& sp);
+void SDL_GL_JoinTexture(SDL_Sprite* sp);
+void SDL_GL_UpdateTexture(SDL_Sprite* sp, uint8_t* buff, int width, int height);
+void SDL_GL_DepartTexture(SDL_Sprite* sp);
+void SDL_GL_DestroyTexture(SDL_Sprite* sp);
+}

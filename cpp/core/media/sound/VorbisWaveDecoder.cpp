@@ -221,7 +221,7 @@ bool VorbisWaveDecoder::SetStream( const ttstr & url )
     Format.Channels = vi->channels;
     Format.IsFloat = FloatExtraction;
     Format.SamplesPerSec = vi->rate;
-    Format.Seekable = 2;
+    Format.Seekable = true;
     Format.SpeakerConfig = 0;
 //	Format.Signed = true;
 //	Format.BigEndian = false;

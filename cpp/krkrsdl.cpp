@@ -19,12 +19,11 @@
 #endif
 
 SDL_Window* tvp_window;
-SDL_Renderer* tvp_renderer;
 static SDL_GLContext tvp_glContext = NULL;
 
 SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[])
 {
-	if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) < 0) { // for format converter
+	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) { // for format converter
 		SDL_Log("Fail to initialize SDL.");
 		return SDL_APP_FAILURE;
 	}
@@ -53,12 +52,11 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[])
         SDL_Log("Failed to initialize GLAD");
         return SDL_APP_FAILURE;
     }
+    SDL_GL_MakeCurrent(tvp_window, tvp_glContext);
 
     // 初始化时不显示
     SDL_HideWindow(tvp_window);
     SDL_DestroyProperties(props);
-    // 渲染器
-    tvp_renderer = SDL_CreateRenderer(tvp_window, NULL);
 
     // 启动游戏
     if (argc < 2)
@@ -101,7 +99,6 @@ std::mutex sdlCallbackMtx;
 std::vector<SDL_Sprite*> renderTexture;
 std::mutex sdlRenderMtx;
 static SDL_FRect rectBuff;
-static float currScale = 1.0f;
 
 SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
     switch (event->type)
@@ -206,15 +203,16 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 if(hasModal)
                 {
                     if(callback.first->isModal) {
-                        callback.second(tmp, (event->button.x - callback.first->xPos) / currScale,
-                                        (event->button.y - callback.first->yPos) / currScale);
+                        callback.second(tmp,
+                                        (event->button.x - callback.first->xPos) / callback.first->scale,
+                                        (event->button.y - callback.first->yPos) / callback.first->scale);
                         break;
                     }
                 } else {
                     if(callback.first->isVisible) {
                         callback.second(tmp,
-                                        (event->button.x - callback.first->xPos) / currScale,
-                                        (event->button.y - callback.first->yPos) / currScale);
+                                        (event->button.x - callback.first->xPos) / callback.first->scale,
+                                        (event->button.y - callback.first->yPos) / callback.first->scale);
                     }
                 }
                 
@@ -254,15 +252,15 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 if(hasModal) {
                     if(callback.first->isModal) {
                         callback.second(tmp,
-                                        (event->button.x - callback.first->xPos)/ currScale,
-                                        (event->button.y - callback.first->yPos)/ currScale);
+                                        (event->button.x - callback.first->xPos)/ callback.first->scale,
+                                        (event->button.y - callback.first->yPos)/ callback.first->scale);
                         break;
                     }
                 } else {
                     if(callback.first->isVisible) {
                         callback.second(tmp,
-                                        (event->button.x - callback.first->xPos)/ currScale,
-                                        (event->button.y - callback.first->yPos)/ currScale);
+                                        (event->button.x - callback.first->xPos)/ callback.first->scale,
+                                        (event->button.y - callback.first->yPos)/ callback.first->scale);
                     }
                 }
             }
@@ -282,14 +280,14 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         for(auto callback : sdl_mouseMoveCallback) {
             if(hasModal) {
                 if(callback.first->isModal) {
-                    callback.second((event->motion.x - callback.first->xPos)/ currScale,
-                                    (event->motion.y - callback.first->yPos)/ currScale);
+                    callback.second((event->motion.x - callback.first->xPos)/ callback.first->scale,
+                                    (event->motion.y - callback.first->yPos)/ callback.first->scale);
                     break;
                 }
             } else {
                 if(callback.first->isVisible) {
-                    callback.second((event->motion.x - callback.first->xPos)/ currScale,
-                                    (event->motion.y - callback.first->yPos)/ currScale);
+                    callback.second((event->motion.x - callback.first->xPos)/ callback.first->scale,
+                                    (event->motion.y - callback.first->yPos)/ callback.first->scale);
                 }
             }
         }
@@ -332,36 +330,20 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
     iTVPTexture2D::RecycleProcess();
 
     // 写入缓冲区
-    SDL_SetRenderDrawColor(tvp_renderer, 0, 0, 0, 0);
-    SDL_RenderClear(tvp_renderer);
+    int RW = 1280, RH = 720;
+    SDL_GetWindowSize(tvp_window, &RW, &RH);
+    krkrsdl3::SDL_GL_BaseSet(RW, RH);
     {
         std::lock_guard<std::mutex> lock(sdlRenderMtx);
         for(auto texture : renderTexture) {
-            if(texture->isVisible) {
-                rectBuff.w = texture->texture->w;
-                rectBuff.h = texture->texture->h;
-                rectBuff.x = texture->xPos;
-                rectBuff.y = texture->yPos;
-                int RW = 0, RH = 0; 
-                if (SDL_GetWindowSize(tvp_window, &RW, &RH))
-                {
-                    currScale = SDL_min(((float)RW) / texture->texture->w,
-                                        ((float)RH) / texture->texture->h);
-                    rectBuff.w = currScale * texture->texture->w;
-                    rectBuff.h = currScale * texture->texture->h;
-                    if(RW - rectBuff.w > 0)
-                        texture->xPos = (RW - rectBuff.w) / 2;
-                    if(RH - rectBuff.h > 0)
-                        texture->yPos = (RH - rectBuff.h) / 2;
-                }
-                // 素材
-                SDL_RenderTexture(tvp_renderer, texture->texture, NULL,
-                                    &rectBuff);
+            if(texture->isVisible)
+            {
+                krkrsdl3::SDL_GL_DrawTexture(texture, RW, RH);
             }
         }
     }
     // 渲染
-    SDL_RenderPresent(tvp_renderer);
+    SDL_GL_SwapWindow(tvp_window);
 
     return SDL_APP_CONTINUE;
 }
@@ -374,7 +356,6 @@ SDL_AppResult SDL_Fail() {
 
 void SDL_AppQuit(void* appstate, SDL_AppResult result)
 {
-    SDL_DestroyRenderer(tvp_renderer);
     SDL_DestroyWindow(tvp_window);
     SDL_Log("Game quit successfully!");
     SDL_Quit();
