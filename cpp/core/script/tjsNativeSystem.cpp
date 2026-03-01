@@ -90,8 +90,8 @@ tTJSNC_System::tTJSNC_System() : inherited(TJS_N("System"))
         // return false if the user selects "cancel", otherwise return true.
         // implement in each platform.
         std::vector<ttstr> btns;
-        btns.emplace_back(GameSetting::msgbox_ok);
-        btns.emplace_back(GameSetting::cancel);
+        btns.emplace_back("OK");
+        btns.emplace_back("Cancel");
         int ret = TVPShowSimpleInputBox(value, caption, prompt, btns);
         bool b = ret == 0; // the left button clicked
 

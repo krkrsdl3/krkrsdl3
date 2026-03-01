@@ -306,7 +306,7 @@ bool TVPCheckStartupPath(const std::string& path)
 
 std::string TVPGetPackageVersionString()
 {
-    return "win32";
+    return "linux";
 }
 
 void TVPControlAdDialog(int adType, int arg1, int arg2)
@@ -369,48 +369,6 @@ bool TVPCreateFolders(const ttstr& folder)
         i--;
 
     return _TVPCreateFolders(ttstr(p, i + 1));
-}
-
-std::string TVPGetCurrentLanguage()
-{
-    const char* lang_env = std::getenv("LANG");
-    if (!lang_env)
-    {
-        lang_env = std::getenv("LC_ALL");
-        if (!lang_env)
-        {
-            lang_env = std::getenv("LC_MESSAGES");
-            if (!lang_env)
-            {
-                return "en_US";
-            }
-        }
-    }
-
-    std::string locale(lang_env);
-    size_t dot_pos = locale.find('.');
-    if (dot_pos != std::string::npos)
-    {
-        locale = locale.substr(0, dot_pos);
-    }
-
-    size_t underscore_pos = locale.find('_');
-    if (underscore_pos != std::string::npos)
-    {
-        std::string language = locale.substr(0, underscore_pos);
-        std::string country = locale.substr(underscore_pos + 1);
-
-        for (char& c : country)
-        {
-            if (c >= 'A' && c <= 'Z')
-            {
-                c += 'a' - 'A';
-            }
-        }
-        return language + "_" + country;
-    }
-
-    return locale;
 }
 
 void TVPReleaseFontLibrary();

@@ -1621,15 +1621,6 @@ void emotenode::progress(float tick, std::vector<emoteRender>& renderList, emote
 }
 void emotenode::draw(GLuint targetFbo, emotelimit lim, GLuint exFbo, GLuint exTex)
 {
-    // if (frame != nullptr && !frame->src.empty() && ic != nullptr)
-    //{
-    //     SDL_Log("%s with depth:%f and bm:%d", frame->src.c_str(), getCurrentRenderZ(), currbm);
-    // }
-    // if (frame != nullptr && strcmp(frame->src.c_str(), "src/tex/0066") == 0)
-    //{
-    //     cv::Mat rgba(height, width, CV_8UC4, data);
-    //     cv::imshow("org", rgba);
-    // }
     if (emot != nullptr) // 对于motion直接穿透绘制
     {
         emot->draw(targetFbo, lim, exFbo, exTex);
@@ -1638,15 +1629,6 @@ void emotenode::draw(GLuint targetFbo, emotelimit lim, GLuint exFbo, GLuint exTe
     if (!isNeedDraw || !isIcon || renderMethod.size() < 1 || removed)
         return; // 跳过无需绘制的 和 非icon的 和 无method 的节点
 
-    // if (frame != nullptr && !frame->src.empty() && ic != nullptr)
-    //{
-    //     //SDL_Log("%s with depth:%f and bm:%d with tick:%f", frame->src.c_str(),
-    //     getCurrentRenderZ(), currbm, currTick);
-    //     //cv::Mat rgba(height, width, CV_8UC4, data);
-    //     //cv::Mat bgra;
-    //     //cv::cvtColor(rgba, bgra, cv::COLOR_RGBA2BGRA);
-    //     //cv::imshow(frame->src, bgra);
-    // }
     //  提前绘制好蒙版texture
     if (renderMethod.at(0).hasStencil && exFbo != 0) // 进行Stencil过滤 不考虑复合蒙版的情况了
     {
@@ -1672,26 +1654,6 @@ void emotenode::draw(GLuint targetFbo, emotelimit lim, GLuint exFbo, GLuint exTe
         SDL_Log("render:%s failed!!!", label.c_str());
         return;
     }
-
-    // static tjs_uint8* enoughData = new tjs_uint8[lim.width * lim.height * 4];
-    // static GLfloat* enoughDepthData = new GLfloat[lim.width * lim.height];
-    // if (frame != nullptr && strcmp(frame->src.c_str(), "src/tex/0066") == 0)
-    //{
-    //     glReadPixels(0, 0, lim.width, lim.height, GL_RGBA, GL_UNSIGNED_BYTE, enoughData);
-    //     cv::Mat rgba(lim.height, lim.width, CV_8UC4, enoughData);
-    //     cv::imshow("before", rgba);
-    //
-    //     glReadPixels(0, 0, lim.width, lim.height, GL_DEPTH_COMPONENT, GL_FLOAT,
-    //                  enoughDepthData);
-    //     cv::Mat depthMat(height, width, CV_32FC1, enoughDepthData);
-    //     cv::Mat normalized;
-    //     cv::normalize(depthMat, normalized, 0.0, 1.0, cv::NORM_MINMAX);
-    //     cv::Mat displayMat;
-    //     normalized.convertTo(displayMat, CV_8UC1, 255.0);
-    //     cv::Mat colorMap;
-    //     cv::applyColorMap(displayMat, colorMap, cv::COLORMAP_JET);
-    //     cv::imshow("depth", colorMap);
-    // }
 
     // bm
     bool enableColor = false;
@@ -1796,16 +1758,6 @@ void emotenode::draw(GLuint targetFbo, emotelimit lim, GLuint exFbo, GLuint exTe
                     uniformColor[1], uniformColor[2], uniformColor[3]);
         glDrawArrays(GL_PATCHES, 0, 16);
     }
-
-    // if (frame != nullptr && strcmp(frame->src.c_str(), "src/tex/0066") == 0)
-    //{
-    //   static tjs_uint8* enoughData = new tjs_uint8[lim.width * lim.height * 4];
-    //   glReadPixels(0, 0, lim.width, lim.height, GL_RGBA, GL_UNSIGNED_BYTE, enoughData);
-    //   cv::Mat rgba(lim.height, lim.width, CV_8UC4, enoughData);
-    //   cv::Mat bgra;
-    //   cv::cvtColor(rgba, bgra, cv::COLOR_RGBA2BGRA);
-    //   cv::imshow(frame->src, bgra);
-    // }
 }
 float emotenode::getCurrentRenderZ()
 {

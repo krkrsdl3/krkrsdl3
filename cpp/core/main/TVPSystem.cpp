@@ -1283,7 +1283,7 @@ void TVPBeforeSystemInit()
             TVPFormatMessage(TVPInfoTotalPhysicalMemory, tjs_int64(TVPTotalPhysMemory)));
         if (TVPTotalPhysMemory > 256 * 1024 * 1024)
         {
-            std::string str = GameSetting::memusage;
+            std::string str = "unlimited";
             if (str == ("low"))
                 TVPTotalPhysMemory = 0; // assumes zero
             else if (str == ("medium"))

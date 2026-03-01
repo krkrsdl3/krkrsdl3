@@ -12,6 +12,7 @@
 
 #include <thread>
 #include <mutex>
+#include <unordered_set>
 
 extern std::thread::id TVPMainThreadID;
 extern std::vector<SDL_Sprite*> renderTexture;
@@ -19,6 +20,35 @@ extern std::mutex sdlRenderMtx;
 
 namespace krkrsdl3
 {
+// base
+static std::unordered_set<std::string> sTVPGLExtensions;
+void fetchGLInfo()
+{
+    const GLubyte* vendor = glGetString(GL_VENDOR);
+    const GLubyte* renderer = glGetString(GL_RENDERER);
+    const GLubyte* version = glGetString(GL_VERSION);
+    const GLubyte* glslVersion = glGetString(GL_SHADING_LANGUAGE_VERSION);
+
+    SDL_Log("OpenGL Vendor    : %s\n", vendor);
+    SDL_Log("OpenGL Renderer  : %s\n", renderer);
+    SDL_Log("OpenGL Version   : %s\n", version);
+    SDL_Log("GLSL Version     : %s\n", glslVersion);
+
+    GLint numExtensions;
+    glGetIntegerv(GL_NUM_EXTENSIONS, &numExtensions);
+    SDL_Log("Supported Extensions (%d):\n", numExtensions);
+    for (int i = 0; i < numExtensions; i++)
+    {
+        const GLubyte* ext = glGetStringi(GL_EXTENSIONS, i);
+        sTVPGLExtensions.emplace(std::string((const char*)ext));
+        SDL_Log("  %s\n", ext);
+    }
+}
+bool checkGLExtension(const std::string& extname)
+{
+    return sTVPGLExtensions.find(extname) != sTVPGLExtensions.end();
+}
+
 // 全部都在这里搞定
 static GLuint krkrsdl3_program = 0, krkrsdl3_vao = 0, krkrsdl3_vbo = 0, krkrsdl3_ebo = 0;
 #if _KRKRSDL3_GL

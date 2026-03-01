@@ -979,12 +979,11 @@ void TVPExecuteStartupScript()
 
     if (!strPatchError.IsEmpty())
     {
-        ttstr msg = GameSetting::startup_patch_fail;
-        msg += "\n";
+        ttstr msg = "startup_patch_fail\n";
         msg += strPatchError;
         std::vector<ttstr> btns;
-        btns.emplace_back(GameSetting::msgbox_ok);
-        btns.emplace_back(GameSetting::browse_patch_lib);
+        btns.emplace_back("忽略");
+        btns.emplace_back("浏览补丁");
         if (TVPShowSimpleMessageBox(msg, TVPGetPackageVersionString(), btns) == 1)
         {
             TVPOpenPatchLibUrl();

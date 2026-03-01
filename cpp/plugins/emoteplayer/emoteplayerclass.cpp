@@ -558,14 +558,6 @@ void EmotePlayer::draw(iTJSDispatch2* objthis)
             // }
             memcpy(buff, m_bmpData, _width * _height * 4);
             ths->Update();
-
-            // cv::Mat rgba(_height, _width, CV_8UC4, buff);
-            // char buffs[100];
-            // sprintf(buffs, "%p", this);
-            // std::string name = buffs;
-            // cv::Mat bgra;
-            // cv::cvtColor(rgba, bgra, cv::COLOR_RGBA2BGRA);
-            // cv::imshow(name, bgra);
         }
     }
 }

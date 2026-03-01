@@ -19,28 +19,6 @@
 #endif
 #endif
 
-void printGLInfo()
-{
-    const GLubyte* vendor = glGetString(GL_VENDOR);
-    const GLubyte* renderer = glGetString(GL_RENDERER);
-    const GLubyte* version = glGetString(GL_VERSION);
-    const GLubyte* glslVersion = glGetString(GL_SHADING_LANGUAGE_VERSION);
-
-    SDL_Log("OpenGL Vendor    : %s\n", vendor);
-    SDL_Log("OpenGL Renderer  : %s\n", renderer);
-    SDL_Log("OpenGL Version   : %s\n", version);
-    SDL_Log("GLSL Version     : %s\n", glslVersion);
-
-    GLint numExtensions;
-    glGetIntegerv(GL_NUM_EXTENSIONS, &numExtensions);
-    SDL_Log("Supported Extensions (%d):\n", numExtensions);
-    for (int i = 0; i < numExtensions; i++)
-    {
-        const GLubyte* ext = glGetStringi(GL_EXTENSIONS, i);
-        SDL_Log("  %s\n", ext);
-    }
-}
-
 SDL_Window* tvp_window;
 static SDL_GLContext tvp_glContext = NULL;
 
@@ -77,8 +55,8 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[])
         return SDL_APP_FAILURE;
     }
     SDL_GL_MakeCurrent(tvp_window, tvp_glContext);
-    // info
-    printGLInfo();
+    // GL相关信息初始化
+    krkrsdl3::fetchGLInfo();
 
     // 初始化时不显示
     SDL_HideWindow(tvp_window);

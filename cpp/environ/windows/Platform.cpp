@@ -367,31 +367,6 @@ bool TVPCreateFolders(const ttstr& folder)
     return _TVPCreateFolders(ttstr(p, i + 1));
 }
 
-std::string TVPGetCurrentLanguage()
-{
-    LANGID lid = GetUserDefaultUILanguage();
-    const LCID locale_id = MAKELCID(lid, SORT_DEFAULT);
-    char code[10] = {0};
-    char country[10] = {0};
-    GetLocaleInfoA(locale_id, LOCALE_SISO639LANGNAME, code, sizeof(code));
-    GetLocaleInfoA(locale_id, LOCALE_SISO3166CTRYNAME, country, sizeof(country));
-    std::string ret = code;
-    if (country[0])
-    {
-        for (int i = 0; i < sizeof(country) && country[i]; ++i)
-        {
-            char c = country[i];
-            if (c <= 'Z' && c >= 'A')
-            {
-                country[i] += 'a' - 'A';
-            }
-        }
-        ret += "_";
-        ret += country;
-    }
-    return ret;
-}
-
 void TVPReleaseFontLibrary();
 void TVPExitApplication(int code)
 {
@@ -399,7 +374,6 @@ void TVPExitApplication(int code)
     TVPDeliverCompactEvent(TVP_COMPACT_LEVEL_MAX);
     if (!TVPIsSoftwareRenderManager())
         iTVPTexture2D::RecycleProcess();
-
     exit(code);
 }
 

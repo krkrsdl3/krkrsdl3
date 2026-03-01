@@ -2666,25 +2666,6 @@ public:
                              const tTVPRect& rctar,
                              const tRenderTexRectArray& textures) override
     {
-#ifdef _DEBUG
-        static bool check = false;
-        cv::Mat _src[3], _tar;
-        if (check)
-        {
-            for (int i = 0; i < textures.size(); ++i)
-            {
-                iTVPTexture2D* tex = textures[i].first;
-                unsigned int fmt = tex->GetFormat() == TVPTextureFormat::RGBA ? CV_8UC4 : CV_8UC1;
-                _src[i] = cv::Mat(tex->GetHeight(), tex->GetWidth(), fmt,
-                                  (void*)tex->GetPixelData(), tex->GetPitch());
-            }
-            unsigned int fmt = tar->GetFormat() == TVPTextureFormat::RGBA ? CV_8UC4 : CV_8UC1;
-            _tar = cv::Mat(tar->GetHeight(), tar->GetWidth(), fmt, (void*)tar->GetPixelData(),
-                           tar->GetPitch());
-            _tar.type();
-        }
-#endif
-
         for (int i = 0; i < textures.size(); ++i)
         {
             textures[i].first->GetScanLineForRead(0); // prepare pixel data for compressed texture

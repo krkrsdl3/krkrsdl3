@@ -139,21 +139,16 @@ void TVPCheckMemory()
 int TVPShowSimpleMessageBox(const ttstr& text, const ttstr& caption)
 {
     std::vector<ttstr> normal;
-    normal.emplace_back(GameSetting::msgbox_ok);
+    normal.emplace_back("OK");
     return TVPShowSimpleMessageBox(text, caption, normal);
 }
 
 int TVPShowSimpleMessageBoxYesNo(const ttstr& text, const ttstr& caption)
 {
     std::vector<ttstr> normal;
-    normal.emplace_back(GameSetting::msgbox_yes);
-    normal.emplace_back(GameSetting::msgbox_no);
+    normal.emplace_back("Yes");
+    normal.emplace_back("No");
     return TVPShowSimpleMessageBox(text, caption, normal);
-}
-
-ttstr TVPGetMessageByLocale(const std::string& key)
-{
-    return GameSetting::unkown;
 }
 
 tTVPApplication::tTVPApplication()
@@ -175,10 +170,10 @@ bool tTVPApplication::StartApplication(int argc, char* argv[])
     SetCommandlineArguments(argc, argv);
 
     TVPTerminateCode = 0;
-    _retry = GameSetting::retry;
-    _cancel = GameSetting::cancel;
-    _msg = GameSetting::err_no_memory;
-    _title = GameSetting::err_occured;
+    _retry = "retry";
+    _cancel = "cancel";
+    _msg = "内存不足";
+    _title = "发生异常";
 
 #ifdef _KRKRSDL3_LIB
     TVPNativeProjectDir = std::string(argv[1]);

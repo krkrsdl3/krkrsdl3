@@ -172,9 +172,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE SDL3::SDL3)
 find_package(SDL3_ttf CONFIG REQUIRED)
 target_link_libraries(${PROJECT_NAME} PRIVATE SDL3_ttf::SDL3_ttf)
 
-find_package(hwy CONFIG REQUIRED)
-    target_link_libraries(${PROJECT_NAME} PRIVATE hwy::hwy)
-
 find_package(blend2d CONFIG REQUIRED)
 target_link_libraries(${PROJECT_NAME} PRIVATE blend2d::blend2d)
 

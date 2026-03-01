@@ -923,11 +923,7 @@ void tTJSNI_Window::ResetDrawDevice()
 //---------------------------------------------------------------------------
 void tTJSNI_Window::FullScreenGuard() const
 {
-    if (Form)
-    {
-        if (Form->GetFullScreenMode())
-            TVPThrowExceptionMessage(TVPInvalidPropertyInFullScreen);
-    }
+    
 }
 //---------------------------------------------------------------------------
 void tTJSNI_Window::PostInputEvent(const ttstr& name, iTJSDispatch2* params)

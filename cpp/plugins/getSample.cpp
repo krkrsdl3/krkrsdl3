@@ -1,6 +1,5 @@
 #include "ncbind/ncbind.hpp"
 #include <algorithm>
-#include <cstdlib>
 
 #define NCB_MODULE_NAME TJS_N("getSample.dll")
 //------------------------------------------------------------------------------------------------

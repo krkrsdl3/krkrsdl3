@@ -7,7 +7,6 @@
 #include "tjsArray.h"
 
 #include <zlib.h>
-#include <cstring>
 
 //---------------------------------------------------------------------------
 // tTJSNI_PsbFile : PsbFile TJS native instance

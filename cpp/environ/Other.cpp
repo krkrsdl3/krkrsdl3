@@ -30,7 +30,6 @@ ttstr TVPLocalExtractFilePath(const ttstr& name)
     }
     return ttstr(p, i + 1);
 }
-#ifndef _KRKRSDL3_ANDROID
 bool TVPWriteDataToFile(const ttstr& filepath, const void* data, unsigned int len)
 {
     FILE* handle = fopen(filepath.AsStdString().c_str(), "wb");
@@ -42,9 +41,6 @@ bool TVPWriteDataToFile(const ttstr& filepath, const void* data, unsigned int le
     }
     return false;
 }
-#else
-extern bool TVPWriteDataToFile(const ttstr& filepath, const void* data, unsigned int len);
-#endif
 //---------------------------------------------------------------------------
 
 //---------------------------------------------------------------------------
@@ -995,6 +991,33 @@ ttstr TVPGetOSName()
 #endif
 }
 
+std::string TVPGetCurrentLanguage()
+{
+    SDL_Locale **locales;
+    int count;
+    locales = SDL_GetPreferredLocales(&count);
+    for (int i = 0; i < count; i++) {
+        SDL_Log("Preferred locale %d: %s_%s\n", i + 1, 
+            locales[i]->language, 
+            locales[i]->country ? locales[i]->country : "ANY");
+    }
+    std::string ret = "";
+    if( count > 0)
+    {
+        ret += std::string(locales[0]->language);
+        if(locales[0]->country)
+        {
+             ret += std::string("_") + std::string(locales[0]->country);
+        }
+        else
+        {
+            ret += std::string("_ANY");
+        }
+    }
+    SDL_free(locales);
+    return ret;
+}
+
 void TVPShowPopMenu(tTJSNI_MenuItem* menu)
 {
 }
@@ -1028,4 +1051,32 @@ std::vector<std::string> TVPGetAppStoragePath()
     std::vector<std::string> ret;
     ret.emplace_back(TVPGetDefaultFileDir());
     return ret;
+}
+#include "TVPScreen.h"
+int tTVPScreen::GetWidth()
+{
+    return 1920;
+}
+int tTVPScreen::GetHeight()
+{
+    int w = GetWidth();
+    int h = (w * 720) / 1280;
+    return h;
+}
+
+int tTVPScreen::GetDesktopLeft()
+{
+    return 0;
+}
+int tTVPScreen::GetDesktopTop()
+{
+    return 0;
+}
+int tTVPScreen::GetDesktopWidth()
+{
+    return GetWidth();
+}
+int tTVPScreen::GetDesktopHeight()
+{
+    return GetHeight();
 }

@@ -18,6 +18,7 @@
 //---------------------------------------------------------------------------
 // Extraction filter related
 //---------------------------------------------------------------------------
+#pragma pack(push, 4)
 struct tTVPXP3ExtractionFilterInfo
 {
     const tjs_uint SizeOfSelf; // structure size of tTVPXP3ExtractionFilterInfo itself
@@ -42,6 +43,7 @@ struct tTVPXP3ExtractionFilterInfo
         ;
     }
 };
+#pragma pack(pop)
 
 typedef void (*tTVPXP3ArchiveExtractionFilter)(tTVPXP3ExtractionFilterInfo* info, tTJSVariant* ctx);
 typedef tjs_int (*tTVPXP3ArchiveContentFilter)(const ttstr& filepath,

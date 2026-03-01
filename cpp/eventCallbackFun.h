@@ -20,6 +20,10 @@ struct SDL_Sprite
 
 namespace krkrsdl3
 {
+//
+void fetchGLInfo();
+
+// 
 void SDL_GL_BaseSet(int w, int h);
 void SDL_GL_DrawTexture(SDL_Sprite* sp, int w, int h);
 void SDL_GL_CreateTexture(SDL_Sprite& sp);

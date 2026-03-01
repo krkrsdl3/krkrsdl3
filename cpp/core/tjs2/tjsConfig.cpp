@@ -14,7 +14,6 @@
 #include "Log.h"
 
 #include <ctime>
-#include <cstring>
 
 /*
  * core/utils/cp932_uni.cpp

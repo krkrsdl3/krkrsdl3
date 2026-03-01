@@ -1,6 +1,6 @@
 # 介绍
 
-基于[krkr2](https://github.com/2468785842/krkr2)/[krkrz](https://github.com/krkrz/krkrz/)/[kirikiroid2](https://github.com/zeas2/Kirikiroid2)等开发出的krkr视觉小说引擎(支持windows/linux/android)，使用SDL3统一跨平台管理、highway进行图像处理SIMD加速、blend2d统一绘图。
+基于[krkr2](https://github.com/2468785842/krkr2)/[krkrz](https://github.com/krkrz/krkrz/)/[kirikiroid2](https://github.com/zeas2/Kirikiroid2)等开发出的krkr视觉小说引擎(支持windows/linux/android)，使用SDL3统一跨平台管理、opengl进行gpu渲染、blend2d进行cpu绘图。
 
 # 目录结构说明
 
@@ -41,7 +41,7 @@
 - libpng/libwebp/libjpeg-turbo:图片解码
 - miniaudio/libvorbis/opusfile:音频解码
 - freetype:字体
-- sdl3/highway/blend2d:跨平台核心
+- sdl3/glad/blend2d:跨平台核心
 
 使用说明：对于api稳定的库默认采用最新版本，对于api有较大改动的库采用能兼容的最高版本。
 

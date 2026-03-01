@@ -135,4 +135,5 @@ set(KRKRSDL_CORE_SRC
 	${KRKRSDL_CORE_PATH}/utils/math/md5.c
 	${KRKRSDL_CORE_PATH}/utils/math/xxhash.c
 	${KRKRSDL_CORE_PATH}/utils/math/xxtea.cpp
+	${KRKRSDL_CORE_PATH}/utils/simd/simd_image.cpp
     )
