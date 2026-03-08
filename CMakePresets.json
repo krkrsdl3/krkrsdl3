@@ -1,65 +1,67 @@
 {
-	"version": 6,
-	"cmakeMinimumRequired": {
-		"major": 3,
-		"minor": 28,
-		"patch": 0
-	},
-	"configurePresets": [{
-			"name": "Windows Config",
-			"generator": "Ninja Multi-Config",
-			"cacheVariables": {
-				"WINDOWS": true,
-				"CMAKE_SYSTEM_NAME": "Windows",
-				"CMAKE_MAKE_PROGRAM": "ninja",
-				"CMAKE_C_COMPILER": "clang",
-				"CMAKE_CXX_COMPILER": "clang++",
-				"CMAKE_EXPORT_COMPILE_COMMANDS": true
-			},
-			"condition": {
-				"type": "equals",
-				"lhs": "${hostSystemName}",
-				"rhs": "Windows"
-			},
-			"binaryDir": "${sourceDir}/out/windows"
-		},
-		{
-			"name": "Linux Config",
-			"generator": "Ninja Multi-Config",
-			"cacheVariables": {
-				"LINUX": true,
-				"CMAKE_MAKE_PROGRAM": "ninja",
-				"CMAKE_C_COMPILER": "gcc",
-				"CMAKE_CXX_COMPILER": "g++",
-				"CMAKE_EXPORT_COMPILE_COMMANDS": true
-			},
-			"condition": {
-				"type": "equals",
-				"lhs": "${hostSystemName}",
-				"rhs": "Linux"
-			},
-			"binaryDir": "${sourceDir}/out/linux"
-		}
-	],
-	"buildPresets": [{
-			"name": "Windows Debug Build",
-			"configurePreset": "Windows Config",
-			"configuration": "Debug"
-		},
-		{
-			"name": "Windows Release Build",
-			"configurePreset": "Windows Config",
-			"configuration": "Release"
-		},
-		{
-			"name": "Linux Debug Build",
-			"configurePreset": "Linux Config",
-			"configuration": "Debug"
-		},
-		{
-			"name": "Linux Release Build",
-			"configurePreset": "Linux Config",
-			"configuration": "Release"
-		}
-	]
+    "version": 6,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 28,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "Windows Config",
+            "generator": "Ninja Multi-Config",
+            "cacheVariables": {
+                "WINDOWS": true,
+                "CMAKE_SYSTEM_NAME": "Windows",
+                "CMAKE_MAKE_PROGRAM": "ninja",
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": true
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            },
+            "binaryDir": "${sourceDir}/out/windows"
+        },
+        {
+            "name": "Linux Config",
+            "generator": "Ninja Multi-Config",
+            "cacheVariables": {
+                "LINUX": true,
+                "CMAKE_MAKE_PROGRAM": "ninja",
+                "CMAKE_C_COMPILER": "gcc",
+                "CMAKE_CXX_COMPILER": "g++",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": true
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            },
+            "binaryDir": "${sourceDir}/out/linux"
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "Windows Debug Build",
+            "configurePreset": "Windows Config",
+            "configuration": "Debug"
+        },
+        {
+            "name": "Windows Release Build",
+            "configurePreset": "Windows Config",
+            "configuration": "Release"
+        },
+        {
+            "name": "Linux Debug Build",
+            "configurePreset": "Linux Config",
+            "configuration": "Debug"
+        },
+        {
+            "name": "Linux Release Build",
+            "configurePreset": "Linux Config",
+            "configuration": "Release"
+        }
+    ]
 }

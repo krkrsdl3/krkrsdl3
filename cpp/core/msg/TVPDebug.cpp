@@ -18,6 +18,7 @@
 #include "Log.h"
 
 #include <deque>
+#include <SDL3/SDL_iostream.h>
 
 //---------------------------------------------------------------------------
 // global variables
@@ -218,7 +219,7 @@ void TVPRemoveLoggingHandler(tTJSVariantClosure clo)
 //---------------------------------------------------------------------------
 class tTVPLogStreamHolder
 {
-    FILE* Stream;
+    SDL_IOStream* Stream;
     bool Alive;
     bool OpenFailed;
 
@@ -232,7 +233,7 @@ public:
     ~tTVPLogStreamHolder()
     {
         if (Stream)
-            fclose(Stream);
+            SDL_CloseIO(Stream);
         Alive = false;
     }
 
@@ -246,7 +247,7 @@ public:
     void Reopen()
     {
         if (Stream)
-            fclose(Stream);
+            SDL_CloseIO(Stream);
         Stream = NULL;
         Alive = false;
         OpenFailed = false;
@@ -273,15 +274,15 @@ void tTVPLogStreamHolder::Open(const tjs_char* mode)
             filename = TVPNativeLogLocation + TJS_N("/krkr.console.log");
             TVPEnsureDataPathDirectory();
             std::string _filename = filename.AsStdString();
-            Stream = fopen(_filename.c_str(), mode);
+            Stream = SDL_IOFromFile(_filename.c_str(), mode);
             if (!Stream)
                 OpenFailed = true;
         }
 
         if (Stream)
         {
-            fseek(Stream, 0, SEEK_END);
-            if (ftell(Stream) == 0)
+            SDL_SeekIO(Stream, 0, SDL_IO_SEEK_END);
+            if (SDL_TellIO(Stream) == 0)
             {
                 // write BOM
                 // TODO: 32-bit unicode support
@@ -317,7 +318,7 @@ void tTVPLogStreamHolder::Clear()
 {
     // clear log text
     if (Stream)
-        fclose(Stream);
+        SDL_CloseIO(Stream);
 
     Open("wb");
 }
@@ -332,21 +333,21 @@ void tTVPLogStreamHolder::Log(const ttstr& text)
         if (Stream)
         {
             size_t len = text.GetLen() * sizeof(tjs_char);
-            if (len != fwrite(text.c_str(), 1, len, Stream))
+            if (len != SDL_WriteIO(Stream, text.c_str(), len))
             {
                 // cannot write
-                fclose(Stream);
+                SDL_CloseIO(Stream);
                 OpenFailed = true;
                 return;
             }
 #ifdef TJS_TEXT_OUT_CRLF
-            fwrite(TJS_N("\r\n"), 1, 2 * sizeof(tjs_char), Stream);
+            SDL_WriteIO(Stream, TJS_N("\r\n"), 2 * sizeof(tjs_char));
 #else
-            fwrite(TJS_N("\n"), 1, 1 * sizeof(tjs_char), Stream);
+            SDL_WriteIO(Stream, TJS_N("\n"),  1 * sizeof(tjs_char));
 #endif
 
             // flush
-            fflush(Stream);
+            SDL_FlushIO(Stream);
         }
     }
     catch (...)
@@ -354,7 +355,7 @@ void tTVPLogStreamHolder::Log(const ttstr& text)
         try
         {
             if (Stream)
-                fclose(Stream);
+                SDL_CloseIO(Stream);
         }
         catch (...)
         {

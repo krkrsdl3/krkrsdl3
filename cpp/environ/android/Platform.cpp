@@ -441,64 +441,6 @@ void TVPSendToOtherApp(const std::string& filename)
 {
 }
 
-void TVPListDir(const std::string& folder, std::function<void(const std::string&, int)> cb)
-{
-    DIR* dirp;
-    struct dirent* direntp;
-    tTVP_stat stat_buf;
-    if ((dirp = opendir(folder.c_str())))
-    {
-        while ((direntp = readdir(dirp)) != NULL)
-        {
-            std::string fullpath = folder + "/" + direntp->d_name;
-            if (!TVP_stat(fullpath.c_str(), stat_buf))
-                continue;
-            cb(direntp->d_name, stat_buf.tvp_mode);
-        }
-        closedir(dirp);
-    }
-}
-void TVPGetLocalFileListAt(const ttstr& name,
-                           const std::function<void(const ttstr&, tTVPLocalFileInfo*)>& cb)
-{
-    DIR* dirp;
-    struct dirent* direntp;
-    tTVP_stat stat_buf;
-    std::string folder(name.AsStdString());
-    if ((dirp = opendir(folder.c_str())))
-    {
-        while ((direntp = readdir(dirp)) != NULL)
-        {
-            std::string fullpath = folder + "/" + direntp->d_name;
-            if (!TVP_stat(fullpath.c_str(), stat_buf))
-                continue;
-            ttstr file(direntp->d_name);
-            if (file.length() <= 2)
-            {
-                if (file == TJS_N(".") || file == TJS_N(".."))
-                    continue;
-            }
-            tjs_char* p = file.Independ();
-            while (*p)
-            {
-                // make all characters small
-                if (*p >= TJS_N('A') && *p <= TJS_N('Z'))
-                    *p += TJS_N('a') - TJS_N('A');
-                p++;
-            }
-            tTVPLocalFileInfo info;
-            info.NativeName = direntp->d_name;
-            info.Mode = stat_buf.tvp_mode;
-            info.Size = stat_buf.tvp_size;
-            info.AccessTime = stat_buf.tvp_atime;
-            info.ModifyTime = stat_buf.tvp_mtime;
-            info.CreationTime = stat_buf.tvp_ctime;
-            cb(file, &info);
-        }
-        closedir(dirp);
-    }
-}
-
 #include <android/asset_manager.h>
 #include <android/asset_manager_jni.h>
 AAssetManager* mgr = NULL;

@@ -22,6 +22,8 @@
 #include "XP3Archive.h"
 #include "Platform.h"
 
+#include <filesystem>
+
 #define TVP_DEFAULT_ARCHIVE_CACHE_NUM 64
 #define TVP_DEFAULT_AUTOPATH_CACHE_NUM 256
 
@@ -1189,12 +1191,10 @@ ttstr TVPGetAppPath()
 //---------------------------------------------------------------------------
 bool TVPCheckExistentLocalFile(const ttstr& name)
 {
-    tTVP_stat s;
-    if (!TVP_stat(name.c_str(), s))
-    {
-        return false; // not exist
-    }
-    return s.tvp_mode & S_IFREG;
+    std::error_code ec;
+    std::filesystem::path path = std::filesystem::u8path(name.c_str());
+    return std::filesystem::exists(path, ec) && 
+           std::filesystem::is_regular_file(path, ec);
 }
 //---------------------------------------------------------------------------
 
@@ -1203,13 +1203,10 @@ bool TVPCheckExistentLocalFile(const ttstr& name)
 //---------------------------------------------------------------------------
 bool TVPCheckExistentLocalFolder(const ttstr& name)
 {
-    tTVP_stat s;
-    if (!TVP_stat(name.c_str(), s))
-    {
-        return false; // not exist
-    }
-
-    return s.tvp_mode & S_IFDIR;
+    std::error_code ec;
+    std::filesystem::path path = std::filesystem::u8path(name.c_str());
+    return std::filesystem::exists(path, ec) && 
+           std::filesystem::is_directory(path, ec);
 }
 //---------------------------------------------------------------------------
 

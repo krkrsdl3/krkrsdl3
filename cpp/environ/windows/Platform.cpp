@@ -391,27 +391,33 @@ bool TVPCopyFolder(const std::string& from, const std::string& to)
 }
 bool TVPCopyFile(const std::string& from, const std::string& to)
 {
-    FILE* fFrom = fopen(from.c_str(), "rb");
-    if (!fFrom)
-    {
+    SDL_IOStream* fFrom = SDL_IOFromFile(from.c_str(), "rb");
+    if (!fFrom) {
         return TVPCopyFolder(from, to);
     }
-    FILE* fTo = fopen(to.c_str(), "wb");
-    if (!fTo)
-    {
-        fclose(fFrom);
+    SDL_IOStream* fTo = SDL_IOFromFile(to.c_str(), "wb");
+    if (!fTo) {
+        SDL_CloseIO(fFrom);
         return false;
     }
     const int bufSize = 1 * 1024 * 1024;
-    std::vector<char> buffer;
-    buffer.resize(bufSize);
-    size_t index = 0;
-    while ((index = fread(&buffer.front(), 1, bufSize, fFrom)))
-    {
-        fwrite(&buffer.front(), 1, index, fTo);
+    std::vector<char> buffer(bufSize);
+    size_t bytesRead;
+    while ((bytesRead = SDL_ReadIO(fFrom, buffer.data(), bufSize)) > 0) {
+        if (SDL_WriteIO(fTo, buffer.data(), bytesRead) != bytesRead) {
+            SDL_CloseIO(fFrom);
+            SDL_CloseIO(fTo);
+            return false;
+        }
     }
-    fclose(fFrom);
-    fclose(fTo);
+    if (SDL_GetIOStatus(fFrom) != SDL_IO_STATUS_EOF) {
+        SDL_CloseIO(fFrom);
+        SDL_CloseIO(fTo);
+        return false;
+    }
+    
+    SDL_CloseIO(fFrom);
+    SDL_CloseIO(fTo);
     return true;
 }
 
@@ -463,68 +469,6 @@ bool TVP_utime(const char* name, time_t modtime)
 
 void TVPSendToOtherApp(const std::string& filename)
 {
-}
-
-void TVPListDir(const std::string& folder, std::function<void(const std::string&, int)> cb)
-{
-    try
-    {
-        for (const auto& entry : std::filesystem::directory_iterator(folder))
-        {
-            std::string filename = entry.path().filename().string();
-            int mode = entry.is_directory() ? 0x4000 : 0x8000;
-            cb(filename, mode);
-        }
-    }
-    catch (...)
-    {
-    }
-}
-void TVPGetLocalFileListAt(const ttstr& name,
-                           const std::function<void(const ttstr&, tTVPLocalFileInfo*)>& cb)
-{
-    std::string folder(name.AsStdString());
-
-    try
-    {
-        for (const auto& entry : std::filesystem::directory_iterator(folder))
-        {
-            std::string filename = entry.path().filename().string();
-
-            // 跳过 "." 和 ".."
-            if (filename == "." || filename == "..")
-            {
-                continue;
-            }
-
-            // 创建小写文件名
-            ttstr lowerFilename(filename);
-
-            // 获取文件状态
-            auto status = entry.status();
-            auto ftime = std::filesystem::last_write_time(entry);
-
-            // 转换为time_t
-            auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
-                ftime - std::filesystem::file_time_type::clock::now() +
-                std::chrono::system_clock::now());
-            std::time_t cftime = std::chrono::system_clock::to_time_t(sctp);
-
-            // 填充文件信息
-            tTVPLocalFileInfo info;
-            info.NativeName = filename.c_str();
-            info.Mode = std::filesystem::is_directory(status) ? 0x4000 : 0x8000;
-            info.Size = entry.is_directory() ? 0 : std::filesystem::file_size(entry);
-            info.AccessTime = cftime; // 简化为使用修改时间
-            info.ModifyTime = cftime;
-            info.CreationTime = cftime; // C++标准库不直接支持创建时间
-
-            cb(lowerFilename, &info);
-        }
-    }
-    catch (...)
-    {
-    }
 }
 
 tTVPMemoryStream* GetResourceStream(const ttstr& filename)

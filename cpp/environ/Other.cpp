@@ -33,14 +33,13 @@ ttstr TVPLocalExtractFilePath(const ttstr& name)
 }
 bool TVPWriteDataToFile(const ttstr& filepath, const void* data, unsigned int len)
 {
-    FILE* handle = fopen(filepath.AsStdString().c_str(), "wb");
-    if (handle)
-    {
-        bool ret = fwrite(data, 1, len, handle) == len;
-        fclose(handle);
-        return ret;
+    SDL_IOStream* handle = SDL_IOFromFile(filepath.c_str(), "wb");
+    if (!handle) {
+        return false;
     }
-    return false;
+    size_t written = SDL_WriteIO(handle, data, len);
+    SDL_CloseIO(handle);
+    return written == len;
 }
 //---------------------------------------------------------------------------
 //---------------------------------------------------------------------------
@@ -1098,6 +1097,60 @@ std::string TVPGetDefaultFileDir()
     std::string result(path);
     SDL_free(path);
     return result;
+}
+
+void TVPListDir(const std::string& folder, std::function<void(const std::string&, int)> cb)
+{
+    try
+    {
+        for (const auto& entry : std::filesystem::directory_iterator(folder))
+        {
+            std::string filename = entry.path().filename().string();
+            int mode = entry.is_directory() ? 0x4000 : 0x8000;
+            cb(filename, mode);
+        }
+    }
+    catch (...)
+    {
+    }
+}
+void TVPGetLocalFileListAt(const ttstr& name,
+                           const std::function<void(const ttstr&, tTVPLocalFileInfo*)>& cb)
+{
+    std::string folder(name.AsStdString());
+    try
+    {
+        for (const auto& entry : std::filesystem::directory_iterator(folder))
+        {
+            std::string filename = entry.path().filename().string();
+            if (filename == "." || filename == "..")
+            {
+                continue;
+            }
+
+            ttstr lowerFilename(filename);
+
+            auto status = entry.status();
+            auto ftime = std::filesystem::last_write_time(entry);
+
+            auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+                ftime - std::filesystem::file_time_type::clock::now() +
+                std::chrono::system_clock::now());
+            std::time_t cftime = std::chrono::system_clock::to_time_t(sctp);
+
+            tTVPLocalFileInfo info;
+            info.NativeName = filename.c_str();
+            info.Mode = std::filesystem::is_directory(status) ? 0x4000 : 0x8000;
+            info.Size = entry.is_directory() ? 0 : std::filesystem::file_size(entry);
+            info.AccessTime = cftime;
+            info.ModifyTime = cftime;
+            info.CreationTime = cftime;
+            cb(lowerFilename, &info);
+        }
+    }
+    catch (...)
+    {
+    }
 }
 
 std::vector<std::string> TVPGetAppStoragePath()
