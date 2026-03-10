@@ -27,8 +27,7 @@
 📁Res/   # 程序资源文件
 📁vcpkg/ # 自定义vcpkg依赖
 📄.clang-format # 格式化代码风格定义文件
-📄build-linux.sh # linux构建脚本
-📄build-windows.bat # windows构建脚本
+📄build-*** # 各平台的程序构建脚本
 📄CMakeLists.txt/CMakePresets.json # CMake配置文件
 📄vcpkg.json/vcpkg-configuration.json # vcpkg配置文件
 ```
@@ -49,7 +48,7 @@
 
 - cmake/ninja:跨平台构建工具
 - vcpkg:包管理工具
-- LLVM-MinGW:windows构建工具链
+- LLVM-MinGW/Visual Studio 2022:windows构建工具链
 - Android SDK/Android NDK:安卓构建工具链
 
 # 补充说明

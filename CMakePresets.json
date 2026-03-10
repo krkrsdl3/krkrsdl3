@@ -11,6 +11,7 @@
             "generator": "Ninja Multi-Config",
             "cacheVariables": {
                 "WINDOWS": true,
+                "MINGW": true,
                 "CMAKE_SYSTEM_NAME": "Windows",
                 "CMAKE_MAKE_PROGRAM": "ninja",
                 "CMAKE_C_COMPILER": "clang",
@@ -23,6 +24,26 @@
                 "rhs": "Windows"
             },
             "binaryDir": "${sourceDir}/out/windows"
+        },
+        {
+            "name": "Windows Config MSVC",
+            "generator": "Visual Studio 17 2022",
+            "cacheVariables": {
+                "WINDOWS": true,
+                "MSVC": true,
+                "CMAKE_EXPORT_COMPILE_COMMANDS": true
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            },
+            "binaryDir": "${sourceDir}/out/windows-msvc",
+            "vendor": {
+				"microsoft.com/VisualStudioSettings/CMake/1.0": {
+					"hostOS": ["Windows"]
+				}
+			}
         },
         {
             "name": "Linux Config",
@@ -51,6 +72,16 @@
         {
             "name": "Windows Release Build",
             "configurePreset": "Windows Config",
+            "configuration": "Release"
+        },
+        {
+            "name": "Windows Debug Build MSVC",
+            "configurePreset": "Windows Config MSVC",
+            "configuration": "Debug"
+        },
+        {
+            "name": "Windows Release Build MSVC",
+            "configurePreset": "Windows Config MSVC",
             "configuration": "Release"
         },
         {

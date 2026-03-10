@@ -184,8 +184,21 @@ tjs_int tTJSPPExprParser::GetNext(tjs_int32& value)
     }
 
     const tjs_char* st = Current;
-    while ((TJS_iswalpha(Current) || TJS_iswdigit(Current) || *Current == TJS_N('_')) && *Current)
-        Current++;
+    while (true)
+    {
+        if ((TJS_iswdigit(Current) || *Current == TJS_N('_')) && *Current)
+        {
+            Current++;
+            continue;
+        }
+        int alphaLen = TJS_iswalpha(Current);
+        if (alphaLen > 0 && *Current)
+        {
+            Current += alphaLen;
+            continue;
+        }
+        break;
+    }
 
     ttstr str(st, (int)(Current - st));
 

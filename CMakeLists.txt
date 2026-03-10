@@ -4,11 +4,6 @@ cmake_minimum_required(VERSION 3.28)
 # 1. 准备阶段
 #
 
-# 不支持MSVC
-if(MSVC)
-    message(FATAL_ERROR "不支持MSVC，Windows请使用llvm-mingw体系编译！")
-endif()
-
 # 使用vcpkg进行包管理
 if(ANDROID)
     if (ANDROID_ABI MATCHES "arm64-v8a")
@@ -25,7 +20,11 @@ if(ANDROID)
 elseif(LINUX)
     set(VCPKG_TARGET_TRIPLET "x64-linux-release")
 elseif(WINDOWS)
-    set(VCPKG_TARGET_TRIPLET "x64-mingw-dynamic")
+    if(MSVC)
+        set(VCPKG_TARGET_TRIPLET "x64-windows")
+    else()
+        set(VCPKG_TARGET_TRIPLET "x64-mingw-dynamic")
+    endif()
 endif()
 set(CMAKE_TOOLCHAIN_FILE $ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake)
 
