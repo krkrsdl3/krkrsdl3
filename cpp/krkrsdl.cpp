@@ -113,6 +113,13 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event)
             // 键盘事件
         case SDL_EVENT_KEY_DOWN:
         {
+            if (event->key.scancode == SDL_SCANCODE_F1)
+            {
+                int x = 0, y = 0;
+                SDL_GetWindowPosition(tvp_window, &x, &y);
+                krkrsdl3::SDL_Invoke_Menu(x, y);
+                break;
+            }
             std::lock_guard<std::mutex> lock(sdlCallbackMtx);
             // 检查modal对象
             bool hasModal = false;

@@ -71,6 +71,7 @@ set(KRKRSDL_SRC
     ${KRKRSDL_ENVIRON_SRC}
     ${KRKRSDL_PLUGINS_SRC}
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp/krkrsdl_gl.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp/krkrsdl_menu.cpp
     )
 
 #

@@ -937,3 +937,8 @@ void refreshWindow()
         pWin = pWin->_prevWindow;
     }
 }
+
+tTJSNI_Window *TVPGetActiveWindow() {
+	if (!_currentWindowLayer) return nullptr;
+	return _currentWindowLayer->GetWindow();
+}

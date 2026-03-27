@@ -101,6 +101,7 @@ enum TouchState
     STATE_IDLE,
     STATE_SINGLE_FINGER, // 单指状态（处理左键和移动）
     STATE_MULTI_FINGER,  // 多指状态（处理右键）
+    STATE_MENU
 };
 struct Finger
 {
@@ -120,27 +121,6 @@ static Uint64 rightClickStartTime;
 static const Uint32 RIGHT_CLICK_CONFIRM_DELAY = 150;
 void sendMouseEvent(int button, int eventType, float pX, float pY);
 void sendMouseMotion(float pX, float pY);
-void calculateCenter(float& centerX, float& centerY)
-{
-    float sumX = 0, sumY = 0;
-    int count = 0;
-
-    for (const auto& pair : fingers)
-    {
-        if (pair.second.active)
-        {
-            sumX += pair.second.x;
-            sumY += pair.second.y;
-            count++;
-        }
-    }
-
-    if (count > 0)
-    {
-        centerX = sumX / count;
-        centerY = sumY / count;
-    }
-}
 void handleFingerDown(const SDL_TouchFingerEvent& e)
 {
     Finger f;
@@ -158,10 +138,22 @@ void handleFingerDown(const SDL_TouchFingerEvent& e)
         // 单击->左键
         _state = STATE_SINGLE_FINGER;
     }
-    else if (fingers.size() >= 2)
+    else if (fingers.size() == 2)
     {
         // 双击->右键
         _state = STATE_MULTI_FINGER;
+    }
+    else
+    {
+        // 三击->菜单
+        _state = STATE_MENU;
+        int windowWidth, windowHeight;
+        SDL_GetWindowSize(tvp_window, &windowWidth, &windowHeight);
+        int pixelX = static_cast<int>(f.x * windowWidth);
+        int pixelY = static_cast<int>(f.y * windowHeight);
+        krkrsdl3::SDL_Invoke_Menu(pixelX, pixelY);
+        fingers.clear();
+        _state = STATE_IDLE;
     }
 }
 void handleFingerUp(const SDL_TouchFingerEvent& e)
@@ -218,16 +210,7 @@ void handleFingerMotion(const SDL_TouchFingerEvent& e)
         }
     }
 }
-int getActiveFingerCount()
-{
-    int count = 0;
-    for (const auto& pair : fingers)
-    {
-        if (pair.second.active)
-            count++;
-    }
-    return count;
-}
+
 void sendMouseEvent(int button, int eventType, float pX, float pY)
 {
     int windowWidth, windowHeight;
@@ -380,6 +363,10 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event)
             break;
         case SDL_EVENT_FINGER_MOTION:
             handleFingerMotion(event->tfinger);
+            break;
+            // 菜单点击
+        case SDL_EVENT_MENU_CLICK:
+            krkrsdl3::SDL_Trig_Menu(event->user.data1);
             break;
         default:
             break;
