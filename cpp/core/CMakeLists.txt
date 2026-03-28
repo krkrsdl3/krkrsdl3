@@ -7,8 +7,11 @@ set(KRKRSDL_CORE_SRC
     ${KRKRSDL_CORE_PATH}/archive/TVPStorage.cpp
     ${KRKRSDL_CORE_PATH}/archive/UtilStreams.cpp
     ${KRKRSDL_CORE_PATH}/archive/XP3Archive.cpp
+    ${KRKRSDL_CORE_PATH}/archive/ZIPArchive.cpp
     ${KRKRSDL_CORE_PATH}/archive/encoding/gbk2unicode.c
     ${KRKRSDL_CORE_PATH}/archive/encoding/jis2unicode.c
+	${KRKRSDL_CORE_PATH}/archive/minizip/unzip.c
+	${KRKRSDL_CORE_PATH}/archive/minizip/ioapi.cpp
     ${KRKRSDL_CORE_PATH}/main/NativeEventQueue.cpp
     ${KRKRSDL_CORE_PATH}/main/SystemControl.cpp
     ${KRKRSDL_CORE_PATH}/main/TVPApplication.cpp

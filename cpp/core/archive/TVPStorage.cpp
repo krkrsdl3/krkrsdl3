@@ -1255,10 +1255,13 @@ ttstr TVPStringFromBMPUnicode(const tjs_uint16* src, tjs_int maxlen)
 //---------------------------------------------------------------------------
 
 tTVPArchive* TVPOpenTARArchive(const ttstr& name, tTJSBinaryStream* st, bool normalizeFileName);
+tTVPArchive* TVPOpenZIPArchive(const ttstr& name, tTJSBinaryStream* st, bool normalizeFileName);
 static tTVPArchive* (*ArchiveCreators[])(const ttstr& name,
                                          tTJSBinaryStream* st,
-                                         bool normalizeFileName) = {TVPOpenTARArchive,
-                                                                    tTVPXP3Archive::Create};
+                                         bool normalizeFileName) = {
+                                                                    tTVPXP3Archive::Create,
+                                                                    TVPOpenZIPArchive,
+                                                                    TVPOpenTARArchive};
 
 //---------------------------------------------------------------------------
 // TVPOpenArchive
