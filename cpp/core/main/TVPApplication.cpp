@@ -55,6 +55,13 @@ void TVPResetApplicationForReentry()
 {
     _project_startup = false;
     TVPAppScriptEngine = nullptr;
+
+    // Reset plugin registration state so all plugins re-register cleanly into
+    // the new TJS engine on re-entry. Without this, TVPRegisteredPlugins still
+    // contains names from the previous run, causing ncbAutoRegister::LoadModule
+    // to skip all plugins → TJS engine missing every plugin class → game fails.
+    TVPResetPluginsForReentry();
+
     if (!_reservedMem)
         _reservedMem = malloc(1024 * 1024 * 4);
     if (!Application)
@@ -244,20 +251,40 @@ bool tTVPApplication::StartApplication(int argc, char* argv[])
 #endif
             SDL_Log("[krkr2-diag] arg1='%s' isDir=%d", arg1.c_str(), isDir);
             if (isDir) {
-                // look for data.xp3 first, then any *.xp3
+                // Startup XP3 detection priority:
+                // 1. Chinese-named XP3 with "启动" keyword (e.g. "启动游戏.xp3")
+                // 2. Any other Chinese-named (non-ASCII filename) XP3
+                // 3. data.xp3 / run.xp3 (well-known names)
+                // 4. Any other .xp3
                 std::string found;
-                std::string candidate = arg1 + "/data.xp3";
+                // Helper: does filename contain non-ASCII bytes (UTF-8 CJK etc.)
+                auto hasNonAscii = [](const std::string& s) -> bool {
+                    for (unsigned char c : s) if (c > 0x7F) return true;
+                    return false;
+                };
+                // Helper: does filename contain UTF-8 bytes for "启动" (e3 90 af or E5 90 AF E5 8A A8)
+                // UTF-8 for 启: E5 90 AF  动: E5 8A A8
+                auto hasStartupKeyword = [](const std::string& s) -> bool {
+                    // Search for UTF-8 sequence of 启动 (E5 90 AF E5 8A A8)
+                    static const unsigned char qidong[] = {0xE5, 0x90, 0xAF, 0xE5, 0x8A, 0xA8};
+                    if (s.size() < 6) return false;
+                    for (size_t i = 0; i + 6 <= s.size(); ++i) {
+                        if ((unsigned char)s[i]   == qidong[0] &&
+                            (unsigned char)s[i+1] == qidong[1] &&
+                            (unsigned char)s[i+2] == qidong[2] &&
+                            (unsigned char)s[i+3] == qidong[3] &&
+                            (unsigned char)s[i+4] == qidong[4] &&
+                            (unsigned char)s[i+5] == qidong[5])
+                            return true;
+                    }
+                    return false;
+                };
 #ifdef _KRKRSDL3_OHOS
                 {
-                    struct stat st;
-                    int rc = stat(candidate.c_str(), &st);
-                    SDL_Log("[krkr2-diag] stat('%s') rc=%d errno=%d isreg=%d",
-                            candidate.c_str(), rc, rc != 0 ? errno : 0,
-                            rc == 0 ? S_ISREG(st.st_mode) : -1);
-                    if (rc == 0 && S_ISREG(st.st_mode))
-                        found = candidate;
-                }
-                if (found.empty()) {
+                    // Scan directory: collect all .xp3 files categorised
+                    static const char* kWellKnown[] = {
+                        "data.xp3", "run.xp3", "plugin.xp3", nullptr };
+                    std::string startup_cn_found, chinese_found, wellknown_found, any_found;
                     DIR* dir = opendir(arg1.c_str());
                     SDL_Log("[krkr2-diag] opendir('%s') = %p", arg1.c_str(), (void*)dir);
                     if (dir) {
@@ -265,32 +292,60 @@ bool tTVPApplication::StartApplication(int argc, char* argv[])
                         int count = 0;
                         while ((ent = readdir(dir)) != nullptr) {
                             std::string fn(ent->d_name);
-                            SDL_Log("[krkr2-diag]   entry[%d]: '%s'", count, fn.c_str());
-                            if (fn.size() > 4 && fn.substr(fn.size() - 4) == ".xp3") {
-                                found = arg1 + "/" + fn;
-                                break;
+                            SDL_Log("[krkr2-diag]   entry[%d]: '%s'", count++, fn.c_str());
+                            if (fn.size() <= 4 || fn.substr(fn.size() - 4) != ".xp3") continue;
+                            std::string full = arg1 + "/" + fn;
+                            struct stat st; int rc = stat(full.c_str(), &st);
+                            if (rc != 0 || !S_ISREG(st.st_mode)) continue;
+                            if (hasNonAscii(fn)) {
+                                if (startup_cn_found.empty() && hasStartupKeyword(fn))
+                                    startup_cn_found = full;
+                                if (chinese_found.empty())
+                                    chinese_found = full;
                             }
-                            count++;
+                            if (wellknown_found.empty()) {
+                                for (int k = 0; kWellKnown[k]; ++k)
+                                    if (fn == kWellKnown[k]) { wellknown_found = full; break; }
+                            }
+                            if (any_found.empty()) any_found = full;
                         }
                         closedir(dir);
                     }
+                    found = !startup_cn_found.empty() ? startup_cn_found
+                          : !chinese_found.empty()    ? chinese_found
+                          : !wellknown_found.empty()  ? wellknown_found
+                          :                             any_found;
+                    SDL_Log("[krkr2-diag] startup pick: startup_cn='%s' chinese='%s' wellknown='%s' any='%s'",
+                            startup_cn_found.c_str(), chinese_found.c_str(),
+                            wellknown_found.c_str(), any_found.c_str());
                 }
 #else
                 {
-                    std::error_code ec;
-                    if (std::filesystem::is_regular_file(
-                            std::filesystem::u8path(candidate), ec))
-                        found = candidate;
-                }
-                if (found.empty()) {
+                    // Non-OHOS: same priority logic via filesystem iterator
+                    static const char* kWellKnown[] = {
+                        "data.xp3", "run.xp3", "plugin.xp3", nullptr };
+                    std::string startup_cn_found, chinese_found, wellknown_found, any_found;
                     std::error_code ec;
                     for (auto& entry : std::filesystem::directory_iterator(
                              std::filesystem::u8path(arg1), ec)) {
-                        if (entry.path().extension() == ".xp3") {
-                            found = entry.path().u8string();
-                            break;
+                        if (entry.path().extension() != ".xp3") continue;
+                        std::string fn = entry.path().filename().u8string();
+                        std::string full = entry.path().u8string();
+                        if (hasNonAscii(fn)) {
+                            if (startup_cn_found.empty() && hasStartupKeyword(fn))
+                                startup_cn_found = full;
+                            if (chinese_found.empty())
+                                chinese_found = full;
                         }
+                        if (wellknown_found.empty())
+                            for (int k = 0; kWellKnown[k]; ++k)
+                                if (fn == kWellKnown[k]) { wellknown_found = full; break; }
+                        if (any_found.empty()) any_found = full;
                     }
+                    found = !startup_cn_found.empty() ? startup_cn_found
+                          : !chinese_found.empty()    ? chinese_found
+                          : !wellknown_found.empty()  ? wellknown_found
+                          :                             any_found;
                 }
 #endif
                 SDL_Log("[krkr2-diag] XP3 found='%s'", found.c_str());
@@ -340,8 +395,36 @@ bool tTVPApplication::StartApplication(int argc, char* argv[])
                     TVPAddAutoPath(parentDir);
                     SDL_Log("[krkr2-diag] Registered parent dir auto-path: '%s'",
                             parentDir.AsStdString().c_str());
-                    // Scan the parent directory for other XP3 archives
-                    // (e.g. when patch.xp3 is passed but data.xp3 has startup.tjs)
+                    // Scan sibling XP3 archives:
+                    // First: Chinese-named (non-ASCII) XP3s found by directory scan
+                    // Then: well-known English names
+                    {
+                        std::string parentDirNative;
+                        // Convert ttstr parentDir to std::string for opendir
+                        parentDirNative = parentDir.AsStdString();
+                        DIR* pdir = opendir(parentDirNative.c_str());
+                        if (pdir) {
+                            struct dirent* ent;
+                            while ((ent = readdir(pdir)) != nullptr) {
+                                std::string fn(ent->d_name);
+                                if (fn.size() <= 4 || fn.substr(fn.size() - 4) != ".xp3") continue;
+                                // Only register Chinese-named ones here (well-known handled below)
+                                bool hasCN = false;
+                                for (unsigned char c : fn) if (c > 0x7F) { hasCN = true; break; }
+                                if (!hasCN) continue;
+                                ttstr siblingArc = parentDir + fn.c_str();
+                                if (siblingArc == TVPProjectDir) continue;
+                                if (TVPIsExistentStorageNoSearchNoNormalize(siblingArc)) {
+                                    ttstr siblingAutoPath = siblingArc + TVPArchiveDelimiter;
+                                    TVPAddAutoPath(siblingAutoPath);
+                                    TVPAddArchiveSubDirAutoPath(TVPNormalizeStorageName(siblingAutoPath));
+                                    SDL_Log("[krkr2-diag] Registered Chinese XP3: '%s'",
+                                            siblingAutoPath.AsStdString().c_str());
+                                }
+                            }
+                            closedir(pdir);
+                        }
+                    }
                     static const char* xp3Names[] = {
                         "data.xp3", "run.xp3", "plugin.xp3",
                         "patch.xp3", "patch2.xp3", "patch3.xp3",
@@ -368,21 +451,48 @@ bool tTVPApplication::StartApplication(int argc, char* argv[])
                 if (dirPath.GetLastChar() != TJS_N('/'))
                     dirPath += TJS_N("/");
                 TVPAddAutoPath(dirPath);
+                SDL_Log("[krkr2-diag] Registered dir auto-path: '%s'",
+                        dirPath.AsStdString().c_str());
+                // First: Chinese-named (non-ASCII) XP3s
+                {
+                    std::string dirNative = dirPath.AsStdString();
+                    DIR* ddir = opendir(dirNative.c_str());
+                    if (ddir) {
+                        struct dirent* ent;
+                        while ((ent = readdir(ddir)) != nullptr) {
+                            std::string fn(ent->d_name);
+                            if (fn.size() <= 4 || fn.substr(fn.size() - 4) != ".xp3") continue;
+                            bool hasCN = false;
+                            for (unsigned char c : fn) if (c > 0x7F) { hasCN = true; break; }
+                            if (!hasCN) continue;
+                            ttstr arcPath = dirPath + fn.c_str();
+                            if (TVPIsExistentStorageNoSearchNoNormalize(arcPath)) {
+                                ttstr arcAutoPath = arcPath + TVPArchiveDelimiter;
+                                TVPAddAutoPath(arcAutoPath);
+                                TVPAddArchiveSubDirAutoPath(TVPNormalizeStorageName(arcAutoPath));
+                                SDL_Log("[krkr2-diag] Chinese XP3: '%s'",
+                                        arcAutoPath.AsStdString().c_str());
+                            }
+                        }
+                        closedir(ddir);
+                    }
+                }
+                // Then: well-known English XP3 names
                 static const char* xp3Names[] = {
                     "data.xp3", "run.xp3", "plugin.xp3",
-                    "patch.xp3", "patch2.xp3", "patch3.xp3", nullptr
+                    "patch.xp3", "patch2.xp3", "patch3.xp3",
+                    "patch4.xp3", "patch5.xp3", nullptr
                 };
                 for (int i = 0; xp3Names[i]; ++i) {
                     ttstr arcPath = dirPath + xp3Names[i];
                     if (TVPIsExistentStorageNoSearchNoNormalize(arcPath)) {
                         ttstr arcAutoPath = arcPath + TVPArchiveDelimiter;
                         TVPAddAutoPath(arcAutoPath);
+                        TVPAddArchiveSubDirAutoPath(TVPNormalizeStorageName(arcAutoPath));
                         SDL_Log("[krkr2-diag] Auto-discovered XP3: '%s'",
                                 arcAutoPath.AsStdString().c_str());
                     }
                 }
-                SDL_Log("[krkr2-diag] Registered dir auto-path: '%s'",
-                        dirPath.AsStdString().c_str());
             }
         } catch (const std::exception& e) {
             SDL_Log("[krkr2-diag] Early auto-path exception: %s", e.what());

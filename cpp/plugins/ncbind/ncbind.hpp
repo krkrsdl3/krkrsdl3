@@ -3081,6 +3081,12 @@ struct ncbAutoRegister
         for (int line = 0; line < LINE_COUNT; line++)
             AllUnregist(static_cast<LineT>(line));
     }
+    // ClearInternalPluginsMap - clear the cached plugin lists map.
+    // Safe to call at any time (does not touch TJS dispatch).
+    static void ClearInternalPluginsMap()
+    {
+        _internal_plugins.clear();
+    }
     static bool LoadModule(const ttstr& _name);
 
 protected:

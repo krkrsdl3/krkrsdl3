@@ -454,18 +454,40 @@ static void TVPCauseAtExit()
     if (!TVPAtExitInfos)
         return;
 
-    std::sort(TVPAtExitInfos->begin(), TVPAtExitInfos->end()); // descending sort
+    std::sort(TVPAtExitInfos->begin(), TVPAtExitInfos->end()); // ascending sort by priority
 
     std::vector<tTVPAtExitInfo>::iterator i;
     for (i = TVPAtExitInfos->begin(); i != TVPAtExitInfos->end(); i++)
     {
+#ifdef _KRKRSDL3_OHOS
+        // On HarmonyOS, isolate each handler so that one crash does not
+        // prevent subsequent thread-join handlers from running.
+        // Without this, a throw in an early handler (e.g. PREPARE priority)
+        // would skip SHUTDOWN handlers that join background threads,
+        // leaving dangling pthreads that SIGSEGV when the .so is unmapped.
+        try {
+            i->Handler();
+        } catch (...) {
+            // Ignore — best-effort cleanup
+        }
+#else
         i->Handler();
+#endif
     }
 
     // Do NOT delete TVPAtExitInfos here: on HarmonyOS the .so stays loaded
     // across game launches and static tTVPAtExit constructors only run once.
     // Keeping the vector alive allows the same handlers to fire on re-entry.
 }
+
+#ifdef _KRKRSDL3_OHOS
+// Exposed so runner_main can call this as a safety net after TVPSystemUninit.
+// Safe to call multiple times — guarded by TVPAtExitShutdown flag.
+void TVPForceCauseAtExit()
+{
+    TVPCauseAtExit();
+}
+#endif
 //---------------------------------------------------------------------------
 
 //---------------------------------------------------------------------------

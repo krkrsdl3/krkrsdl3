@@ -305,10 +305,25 @@ void TVPShutdownArchiveHandleCache()
             delete TVPArchiveHandleCachePool[i].Stream;
     }
     delete[] TVPArchiveHandleCachePool;
+    TVPArchiveHandleCachePool = NULL;
+    TVPArchiveHandleCacheInit = false;
 }
 //---------------------------------------------------------------------------
 static tTVPAtExit TVPShutdownArchiveCacheAtExit(TVP_ATEXIT_PRI_CLEANUP,
                                                 TVPShutdownArchiveHandleCache);
+//---------------------------------------------------------------------------
+#ifdef _KRKRSDL3_OHOS
+void TVPResetArchiveHandleCacheForReentry()
+{
+    // Reset the cache state flags so the pool is freshly allocated on re-entry.
+    // TVPShutdownArchiveHandleCache already deleted the pool and set Init=false;
+    // we just need to re-enable the cache by clearing the shutdown flag.
+    tTJSCriticalSectionHolder cs_holder(TVPArchiveHandleCacheCS);
+    TVPArchiveHandleCacheShutdown = false;
+    TVPArchiveHandleCacheInit = false;
+    TVPArchiveHandleCachePool = NULL;
+}
+#endif
 //---------------------------------------------------------------------------
 
 TArchiveStream::TArchiveStream(tTVPArchive* owner, tjs_uint64 off, tjs_uint64 len)

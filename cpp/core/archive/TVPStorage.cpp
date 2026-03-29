@@ -1304,6 +1304,7 @@ ttstr TVPGetAppPath()
 // TVPResetStorageForReentry - clear all storage state for OHOS re-entry
 //---------------------------------------------------------------------------
 #ifdef _KRKRSDL3_OHOS
+extern void TVPResetArchiveHandleCacheForReentry();
 void TVPResetStorageForReentry()
 {
     tTJSCriticalSectionHolder cs_holder(TVPCreateStreamCS);
@@ -1312,6 +1313,9 @@ void TVPResetStorageForReentry()
     TVPArchiveCache.Clear();
     TVPAppPathCacheInit = false;
     TVPAppPathCache.Clear();
+    // Re-enable the archive handle cache so re-entry can use it (avoids stream leaks).
+    // TVPShutdownArchiveHandleCache() set shutdown=true during exit; reverse that here.
+    TVPResetArchiveHandleCacheForReentry();
 }
 #endif
 //---------------------------------------------------------------------------

@@ -101,6 +101,176 @@ extern void TVPResetApplicationForReentry();
 #endif
 
 // ============================================================
+// Two-finger touch → right-click state machine (SDL2 / HarmonyOS)
+// Single finger  → left click + mouse move
+// Two fingers    → right click
+// ============================================================
+namespace {
+
+enum HarmonyTouchState {
+    HTS_IDLE,
+    HTS_SINGLE,  // 单指 → 左键
+    HTS_MULTI,   // 多指 → 右键
+};
+
+struct HarmonyFinger {
+    SDL_FingerID id;
+    float x, y;
+    float startX, startY;
+    bool active;
+    bool moved;
+    HarmonyFinger() : id(0), x(0), y(0), startX(0), startY(0), active(false), moved(false) {}
+};
+
+static HarmonyTouchState g_hts = HTS_IDLE;
+static std::map<SDL_FingerID, HarmonyFinger> g_hfingers;
+
+static void hts_toPixel(float nx, float ny, int& px, int& py)
+{
+    int w = 1, h = 1;
+    if (tvp_window) SDL_GetWindowSize(tvp_window, &w, &h);
+    px = (int)(nx * w);
+    py = (int)(ny * h);
+}
+
+static void hts_sendDown(tTVPMouseButton btn, int px, int py)
+{
+    std::lock_guard<std::mutex> lock(sdlCallbackMtx);
+    bool hasModal = false;
+    for (auto& cb : sdl_mouseDownCallback)
+        if (cb.first->type == 1 && cb.first->isVisible) hasModal = true;
+    for (auto it = sdl_mouseDownCallback.rbegin(); it != sdl_mouseDownCallback.rend(); ++it) {
+        auto& cb = *it;
+        if (hasModal) {
+            if (cb.first->type == 1) {
+                cb.second(btn, (px - cb.first->xPos) / cb.first->scale,
+                               (py - cb.first->yPos) / cb.first->scale);
+                break;
+            }
+        } else {
+            if (cb.first->isVisible) {
+                cb.second(btn, (px - cb.first->xPos) / cb.first->scale,
+                               (py - cb.first->yPos) / cb.first->scale);
+                break;
+            }
+        }
+    }
+}
+
+static void hts_sendUp(tTVPMouseButton btn, int px, int py)
+{
+    std::lock_guard<std::mutex> lock(sdlCallbackMtx);
+    bool hasModal = false;
+    for (auto& cb : sdl_mouseUpCallback)
+        if (cb.first->type == 1 && cb.first->isVisible) hasModal = true;
+    for (auto it = sdl_mouseUpCallback.rbegin(); it != sdl_mouseUpCallback.rend(); ++it) {
+        auto& cb = *it;
+        if (hasModal) {
+            if (cb.first->type == 1) {
+                cb.second(btn, (px - cb.first->xPos) / cb.first->scale,
+                               (py - cb.first->yPos) / cb.first->scale);
+                break;
+            }
+        } else {
+            if (cb.first->isVisible) {
+                cb.second(btn, (px - cb.first->xPos) / cb.first->scale,
+                               (py - cb.first->yPos) / cb.first->scale);
+                break;
+            }
+        }
+    }
+}
+
+static void hts_sendMove(int px, int py)
+{
+    std::lock_guard<std::mutex> lock(sdlCallbackMtx);
+    bool hasModal = false;
+    for (auto& cb : sdl_mouseMoveCallback)
+        if (cb.first->type == 1 && cb.first->isVisible) hasModal = true;
+    for (auto it = sdl_mouseMoveCallback.rbegin(); it != sdl_mouseMoveCallback.rend(); ++it) {
+        auto& cb = *it;
+        if (hasModal) {
+            if (cb.first->type == 1) {
+                cb.second((px - cb.first->xPos) / cb.first->scale,
+                           (py - cb.first->yPos) / cb.first->scale);
+                break;
+            }
+        } else {
+            if (cb.first->isVisible) {
+                cb.second((px - cb.first->xPos) / cb.first->scale,
+                           (py - cb.first->yPos) / cb.first->scale);
+            }
+        }
+    }
+}
+
+static void handleTouchFingerDown(const SDL_TouchFingerEvent& e)
+{
+    HarmonyFinger f;
+    f.id      = e.fingerId;
+    f.x = f.startX = e.x;
+    f.y = f.startY = e.y;
+    f.active  = true;
+    f.moved   = false;
+    g_hfingers[e.fingerId] = f;
+
+    if (g_hfingers.size() == 1) {
+        g_hts = HTS_SINGLE;
+    } else if (g_hfingers.size() == 2) {
+        g_hts = HTS_MULTI;
+    } else {
+        // 3+ 指 → 暂不处理，清空
+        g_hfingers.clear();
+        g_hts = HTS_IDLE;
+    }
+}
+
+static void handleTouchFingerUp(const SDL_TouchFingerEvent& e)
+{
+    auto it = g_hfingers.find(e.fingerId);
+    if (it == g_hfingers.end()) return;
+
+    HarmonyFinger& f = it->second;
+    f.active = false;
+
+    // 只有最后一根手指抬起时才触发 click
+    if (g_hfingers.size() == 1) {
+        int px, py;
+        hts_toPixel(f.x, f.y, px, py);
+        if (g_hts == HTS_SINGLE) {
+            if (!f.moved) hts_sendDown(mbLeft, px, py);
+            hts_sendUp(mbLeft, px, py);
+        } else if (g_hts == HTS_MULTI) {
+            if (!f.moved) hts_sendDown(mbRight, px, py);
+            hts_sendUp(mbRight, px, py);
+        }
+        g_hts = HTS_IDLE;
+    }
+    g_hfingers.erase(it);
+}
+
+static void handleTouchFingerMotion(const SDL_TouchFingerEvent& e)
+{
+    auto it = g_hfingers.find(e.fingerId);
+    if (it == g_hfingers.end()) return;
+
+    HarmonyFinger& f = it->second;
+    float dx = e.x - f.startX, dy = e.y - f.startY;
+    if (dx * dx + dy * dy > 0.0001f) {
+        f.moved = true;
+        f.x = e.x;
+        f.y = e.y;
+        if (g_hts == HTS_SINGLE) {
+            int px, py;
+            hts_toPixel(f.x, f.y, px, py);
+            hts_sendMove(px, py);
+        }
+    }
+}
+
+} // namespace
+
+// ============================================================
 // SDL event processing (adapted from krkrsdl.cpp for touch)
 // ============================================================
 static void sdl_process_events(bool& running)
@@ -345,6 +515,18 @@ static void sdl_process_events(bool& running)
             break;
         }
 
+        case SDL_FINGERDOWN:
+            handleTouchFingerDown(event.tfinger);
+            break;
+
+        case SDL_FINGERUP:
+            handleTouchFingerUp(event.tfinger);
+            break;
+
+        case SDL_FINGERMOTION:
+            handleTouchFingerMotion(event.tfinger);
+            break;
+
         default:
             break;
         }
@@ -457,9 +639,9 @@ int runner_main(int argc, char** argv)
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 
-    // Touch → mouse event mapping (SDL_OHOS sends SDL_FINGER* events,
-    // this hint makes it also generate SDL_MOUSE* events)
-    SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "1");
+    // 禁用 SDL 自动 touch→mouse 转换，由我们的手势状态机手动处理
+    // （支持双指右键、单指左键+拖动）
+    SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
     SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "0");
 
     tvp_window = SDL_CreateWindow(
@@ -579,6 +761,19 @@ int runner_main(int argc, char** argv)
         } catch (...) {
             KRKR2_ERR("TVPSystemUninit exception");
         }
+    }
+
+    // Safety net: ensure ALL at-exit handlers run (especially thread joins).
+    // TVPSystemUninit calls TVPCauseAtExit internally, but if it threw before
+    // reaching that call, background threads (WatchThread, TimerThread,
+    // WaveSoundBufferThread) would still be alive.  When the host app later
+    // pops the game page, the .so code gets unmapped and those threads
+    // SIGSEGV.  This call is idempotent — guarded by TVPAtExitShutdown flag.
+    KRKR2_LOG("Safety-net: TVPForceCauseAtExit...");
+    try {
+        TVPForceCauseAtExit();
+    } catch (...) {
+        KRKR2_ERR("TVPForceCauseAtExit exception");
     }
 
     if (::Application) {

@@ -66,6 +66,12 @@ extern void TVPMainWindowClosed(); // called from WindowIntf.cpp, caused by clos
 extern bool TVPSystemUninitCalled;
 // whether TVPSystemUninit is called or not
 
+#ifdef _KRKRSDL3_OHOS
+// Safety-net: ensure all at-exit handlers (thread joins) run even if
+// TVPSystemUninit throws partway through.  Safe to call multiple times.
+extern void TVPForceCauseAtExit();
+#endif
+
 //---------------------------------------------------------------------------
 
 //---------------------------------------------------------------------------

@@ -212,11 +212,10 @@ void SDL_GL_DrawTexture(SDL_Sprite* sp, int w, int h)
     float yPos = (h - scaledH) / 2.0;
 #if !_KRKRSDL3_GL
     // Portrait mode: apply TAPIR_PORTRAIT_TOP_OFFSET (0=top, 50=center, 100=bottom)
-    // NDC Y: bottom=-1, top=+1. yPos in screen coords: top=0, bottom=h.
-    // We want pct=0 → game at top → yPos=0, pct=100 → game at bottom → yPos=remaining.
+    // Default is 50 (center) when env var is not set.
     float remainingY = (float)h - scaledH;
-    if (remainingY > 1.0f && h > w) {
-        int pct = 0;
+    if (remainingY > 1.0f) {
+        int pct = 50; // default: center
         const char *env = getenv("TAPIR_PORTRAIT_TOP_OFFSET");
         if (env) pct = atoi(env);
         if (pct < 0) pct = 0;

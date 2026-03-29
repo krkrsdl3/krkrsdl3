@@ -109,6 +109,9 @@ extern void TVPDoTryBlock(tTVPTryBlockFunction tryblock,
 //---------------------------------------------------------------------------
 extern bool TVPPluginUnloadedAtSystemExit;
 extern void TVPLoadPluigins(void);
+#ifdef _KRKRSDL3_OHOS
+extern void TVPResetPluginsForReentry();
+#endif
 //---------------------------------------------------------------------------
 
 #endif

@@ -256,6 +256,26 @@ void TVPLoadInternalPlugins()
     ncbAutoRegister::AllUnregist();
 }
 
+#ifdef _KRKRSDL3_OHOS
+// TVPResetPluginsForReentry - called from TVPResetApplicationForReentry().
+// Resets plugin state so all plugins re-register into the next TJS engine.
+void TVPResetPluginsForReentry()
+{
+    // AllUnregist() clears ncbClassInfo<T>::_info.initialized flags so that
+    // RegistBegin() won't throw "Already registered class" on the next run.
+    // IMPORTANT: only call AllUnregist() when plugins were actually loaded in
+    // a previous run (TVPRegisteredPlugins non-empty).  On the very first
+    // launch the flags are already false and some Unregist() implementations
+    // may crash when invoked before the TJS engine has ever been initialised.
+    if (!TVPRegisteredPlugins.empty()) {
+        ncbAutoRegister::AllUnregist();
+    }
+    TVPRegisteredPlugins.clear();
+    // Clear the cached map so AllRegist() rebuilds it fresh on the next call.
+    ncbAutoRegister::ClearInternalPluginsMap();
+}
+#endif
+
 bool TVPLoadInternalPlugin(const ttstr& _name)
 {
     return ncbAutoRegister::LoadModule(TVPExtractStorageName(_name));
