@@ -1,18 +1,19 @@
 #include "tjsCommHead.h"
 #include "eventCallbackFun.h"
 #if _KRKRSDL3_GL
-#include <glad/glad.h>
+#include <GL/glew.h>
 #else
 #include <GLES3/gl32.h>
 #endif
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#include <SDL3/SDL.h>
+#include <SDL2/SDL.h>
 
 #include <thread>
 #include <mutex>
 #include <unordered_set>
+#include <cstdlib>
 
 extern std::thread::id TVPMainThreadID;
 extern std::vector<SDL_Sprite*> renderTexture;
@@ -53,7 +54,7 @@ bool checkGLExtension(const std::string& extname)
 static GLuint krkrsdl3_program = 0, krkrsdl3_vao = 0, krkrsdl3_vbo = 0, krkrsdl3_ebo = 0;
 #if _KRKRSDL3_GL
 const char* vertexShaderSrc = R"(
-#version 430 core
+#version 330 core
 layout (location = 0) in vec3 aPos;
 layout (location = 1) in vec2 aTexCoord;
 out vec2 TexCoord;
@@ -72,7 +73,7 @@ void main()
 }
 )";
 const char* fragmentShaderSrc = R"(
-#version 430 core
+#version 330 core
 out vec4 FragColor;
 in vec2 TexCoord;
 uniform sampler2D texture1;
@@ -209,6 +210,20 @@ void SDL_GL_DrawTexture(SDL_Sprite* sp, int w, int h)
     float xPos = (w - scaledW) / 2.0;
     sp->xPos = xPos;
     float yPos = (h - scaledH) / 2.0;
+#if !_KRKRSDL3_GL
+    // Portrait mode: apply TAPIR_PORTRAIT_TOP_OFFSET (0=top, 50=center, 100=bottom)
+    // NDC Y: bottom=-1, top=+1. yPos in screen coords: top=0, bottom=h.
+    // We want pct=0 → game at top → yPos=0, pct=100 → game at bottom → yPos=remaining.
+    float remainingY = (float)h - scaledH;
+    if (remainingY > 1.0f && h > w) {
+        int pct = 0;
+        const char *env = getenv("TAPIR_PORTRAIT_TOP_OFFSET");
+        if (env) pct = atoi(env);
+        if (pct < 0) pct = 0;
+        if (pct > 100) pct = 100;
+        yPos = remainingY * pct / 100.0f;
+    }
+#endif
     sp->yPos = yPos;
     glUniform2f(glGetUniformLocation(krkrsdl3_program, "texture_Position"), xPos / w, yPos / h);
     glUniform2f(glGetUniformLocation(krkrsdl3_program, "texture_Size"), scaledW / w, scaledH / h);

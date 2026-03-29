@@ -7,9 +7,11 @@
 #include <unordered_set>
 #include <algorithm>
 #include <Log.h>
+#include <deque>
 
-#include "SDL3/SDL.h"
+#include "SDL2/SDL.h"
 
+// SDL2 callback-pull audio model (following Kirikiroid2 WaveMixer architecture)
 class tTVPSoundBufferSDL : public iTVPSoundBuffer
 {
 public:
@@ -26,50 +28,69 @@ public:
     int queued = 0, processed = 0;
 
     SDL_AudioDeviceID sdl_audio_device = 0;
-    SDL_AudioStream* _stream = NULL;
-    SDL_AudioSpec spec;
+    SDL_AudioSpec obtained_spec;
+    SDL_AudioSpec desired_spec;
     tjs_int BitsPerSample = 0;
     int _frame_size = 0;
 
-    void UpdateQueueData()
+    // Ring buffer for audio data (Kirikiroid2 callback-pull model)
+    std::deque<std::vector<uint8_t>> _buffers;
+    size_t _buf_read_offset = 0; // offset into front buffer
+
+    static void audio_callback(void* userdata, Uint8* stream, int len)
     {
-        int dataVar = SDL_GetAudioStreamQueued(_stream);
-        int newSize = dataVar;
-        int idxVar = _bufferIdx;
-        if (idxVar < 0)
-            return;
-        if (dataVar < _frame_size)
+        tTVPSoundBufferSDL* self = (tTVPSoundBufferSDL*)userdata;
+        std::lock_guard<std::mutex> lk(self->_buffer_mtx);
+
+        int written = 0;
+        while (written < len && !self->_buffers.empty())
         {
-            queued = 0;
-        }
-        else
-        {
-            // queue
-            queued = 0;
-            while (dataVar > 0)
+            auto& front = self->_buffers.front();
+            size_t avail = front.size() - self->_buf_read_offset;
+            size_t need = (size_t)(len - written);
+            size_t chunk = std::min(avail, need);
+            // apply volume (14-bit scaling, Kirikiroid2 style)
+            int vol = (int)(self->_volume * 16384.0f);
+            if (vol >= 16384)
             {
-                dataVar -= _bufferSizeCache[idxVar];
-                idxVar--;
-                if (idxVar < 0)
-                    idxVar = _bufferLimitCount - 1;
-                queued++;
+                memcpy(stream + written, front.data() + self->_buf_read_offset, chunk);
+            }
+            else if (vol <= 0)
+            {
+                memset(stream + written, 0, chunk);
+            }
+            else
+            {
+                const int16_t* src = (const int16_t*)(front.data() + self->_buf_read_offset);
+                int16_t* dst = (int16_t*)(stream + written);
+                for (size_t i = 0; i < chunk / 2; i++)
+                {
+                    int s = ((int)src[i] * vol) >> 14;
+                    // soft clamp
+                    if (s > 32767) s = 32767;
+                    if (s < -32768) s = -32768;
+                    dst[i] = (int16_t)s;
+                }
+            }
+            written += (int)chunk;
+            self->_buf_read_offset += chunk;
+            if (self->_buf_read_offset >= front.size())
+            {
+                self->_buffers.pop_front();
+                self->_buf_read_offset = 0;
+                self->processed++;
             }
         }
-
-        // remain
-        int tmp = totalBufferSize;
-        totalBufferSize = newSize - dataVar;
-        dataVar = tmp;
-        idxVar = _bufferIdx;
-        processed = -queued;
-        while (dataVar > 0)
+        // fill silence if underrun
+        if (written < len)
         {
-            dataVar -= _bufferSizeCache[idxVar];
-            idxVar--;
-            if (idxVar < 0)
-                idxVar = _bufferLimitCount - 1;
-            processed++;
+            memset(stream + written, 0, len - written);
         }
+    }
+
+    void UpdateQueueData()
+    {
+        queued = (int)_buffers.size();
     }
 
     tTVPSoundBufferSDL(tTVPWaveFormat& fmt, int bufcount)
@@ -77,46 +98,44 @@ public:
         _frame_size(fmt.BitsPerSample * fmt.Channels)
     {
         _bufferSizeCache = new tjs_uint[bufcount];
-        memset(&spec, 0, sizeof(spec));
-        spec.freq = fmt.SamplesPerSec;
-        spec.channels = fmt.Channels;
+        memset(&desired_spec, 0, sizeof(desired_spec));
+        desired_spec.freq = fmt.SamplesPerSec;
+        desired_spec.channels = fmt.Channels;
+        desired_spec.samples = 4096;
+        desired_spec.callback = audio_callback;
+        desired_spec.userdata = this;
         BitsPerSample = fmt.BitsPerSample;
         switch (fmt.BitsPerSample)
         {
             case 8:
-                spec.format = SDL_AUDIO_S8;
+                desired_spec.format = AUDIO_S8;
                 break;
             case 16:
-                spec.format = SDL_AUDIO_S16LE;
+                desired_spec.format = AUDIO_S16LSB;
                 break;
             case 32:
-                spec.format = SDL_AUDIO_S32LE;
+                desired_spec.format = AUDIO_S32LSB;
                 break;
             default:
-                spec.format = SDL_AUDIO_UNKNOWN;
+                desired_spec.format = 0;
                 break;
         }
     }
 
     virtual bool Init() override
     {
-        if (spec.format == SDL_AUDIO_UNKNOWN)
+        if (desired_spec.format == 0)
         {
-            SDL_Log("Couldn't create audio stream: Unknow Format!");
-            delete this;
+            SDL_Log("[krkr2-audio] Couldn't create audio stream: Unknown Format!");
             return false;
         }
 
-        sdl_audio_device = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, NULL);
-
-        _stream = SDL_CreateAudioStream(&spec, NULL);
-        if (!_stream)
+        sdl_audio_device = SDL_OpenAudioDevice(NULL, 0, &desired_spec, &obtained_spec, 0);
+        if (sdl_audio_device == 0)
         {
-            SDL_Log("Couldn't create audio stream: %s", SDL_GetError());
-            delete this;
+            SDL_Log("[krkr2-audio] Couldn't open audio device: %s", SDL_GetError());
             return false;
         }
-        SDL_BindAudioStream(sdl_audio_device, _stream);
         return true;
     }
 
@@ -124,13 +143,11 @@ public:
     {
         Stop();
 
-        if (_stream)
-        {
-            SDL_UnbindAudioStream(_stream);
-            SDL_DestroyAudioStream(_stream);
-        }
         if (sdl_audio_device)
+        {
             SDL_CloseAudioDevice(sdl_audio_device);
+            sdl_audio_device = 0;
+        }
         delete[] _bufferSizeCache;
     }
 
@@ -139,14 +156,14 @@ public:
     {
         if (_playing)
             return;
-        SDL_ResumeAudioStreamDevice(_stream);
+        SDL_PauseAudioDevice(sdl_audio_device, 0);
         _playing = true;
     }
     virtual void Pause() override
     {
         if (!_playing)
             return;
-        SDL_PauseAudioStreamDevice(_stream);
+        SDL_PauseAudioDevice(sdl_audio_device, 1);
         _playing = false;
     }
 
@@ -159,19 +176,19 @@ public:
     }
     virtual void Reset() override
     {
-        SDL_ClearAudioStream(_stream);
+        std::lock_guard<std::mutex> lk(_buffer_mtx);
+        _buffers.clear();
+        _buf_read_offset = 0;
         queued = 0;
         processed = 0;
     }
     virtual bool IsPlaying() override { return _playing; }
     virtual void SetVolume(float v) override
     {
-        SDL_SetAudioStreamGain(_stream, v);
         _volume = v;
     }
     virtual float GetVolume() override
     {
-        _volume = SDL_GetAudioStreamGain(_stream);
         return _volume;
     }
     virtual void SetPan(float v) override { _pan = v; }
@@ -183,14 +200,15 @@ public:
 
         std::lock_guard<std::mutex> lk(_buffer_mtx);
         UpdateQueueData();
-        if (queued >= _bufferLimitCount)
+        if (queued >= (int)_bufferLimitCount)
             return;
 
         ++_bufferIdx;
-        if (_bufferIdx >= _bufferLimitCount)
+        if (_bufferIdx >= (int)_bufferLimitCount)
             _bufferIdx = 0;
 
-        SDL_PutAudioStreamData(_stream, _inbuf, inlen);
+        std::vector<uint8_t> buf((const uint8_t*)_inbuf, (const uint8_t*)_inbuf + inlen);
+        _buffers.push_back(std::move(buf));
         _bufferSizeCache[_bufferIdx] = inlen;
         totalBufferSize += inlen;
     }
@@ -200,20 +218,24 @@ public:
         UpdateQueueData();
         if (processed > 0)
             return true;
-        return (processed + queued) < _bufferLimitCount;
-        // unlimited buffer size
-        // return !_buffers.empty(); // thread safe if read only
+        return (processed + queued) < (int)_bufferLimitCount;
     }
     virtual bool IsValidFormat(tTVPWaveFormat& fmt) override
     {
-        if (spec.freq != fmt.SamplesPerSec || BitsPerSample != fmt.BitsPerSample ||
-            spec.channels != fmt.Channels)
+        if (desired_spec.freq != (int)fmt.SamplesPerSec || BitsPerSample != fmt.BitsPerSample ||
+            desired_spec.channels != fmt.Channels)
             return false;
         return true;
     }
     virtual tjs_uint GetCurrentPlaySamples() override
     {
-        return SDL_GetAudioStreamQueued(_stream) / _frame_size;
+        std::lock_guard<std::mutex> lk(_buffer_mtx);
+        size_t total = 0;
+        for (auto& b : _buffers)
+            total += b.size();
+        if (!_buffers.empty())
+            total -= _buf_read_offset;
+        return (tjs_uint)(total / _frame_size);
     }
     virtual int GetRemainBuffers() override
     {
@@ -236,27 +258,29 @@ void TVPInitDirectSound(int freq)
     if (!isGetSoundDevice)
     {
         isGetSoundDevice = true;
-        if (SDL_InitSubSystem(SDL_INIT_AUDIO))
+        if (SDL_InitSubSystem(SDL_INIT_AUDIO) == 0)
         {
-            int i, num_devices;
-            SDL_AudioDeviceID* devices = SDL_GetAudioPlaybackDevices(&num_devices);
-            if (devices)
+            int num_devices = SDL_GetNumAudioDevices(0);
+            for (int i = 0; i < num_devices; ++i)
             {
-                for (i = 0; i < num_devices; ++i)
-                {
-                    SDL_AudioDeviceID instance_id = devices[i];
-                    SDL_Log("AudioDevice %" SDL_PRIu32 ": %s", instance_id,
-                            SDL_GetAudioDeviceName(instance_id));
-                }
-                SDL_free(devices);
+                SDL_Log("AudioDevice %d: %s", i, SDL_GetAudioDeviceName(i, 0));
             }
-            SDL_QuitSubSystem(SDL_INIT_AUDIO);
+            // Keep audio subsystem alive — SDL_OpenAudioDevice needs it later
+        }
+        else
+        {
+            SDL_Log("[krkr2-audio] SDL_InitSubSystem(SDL_INIT_AUDIO) failed: %s", SDL_GetError());
         }
     }
 }
 
 void TVPUninitDirectSound()
 {
+    if (isGetSoundDevice)
+    {
+        SDL_QuitSubSystem(SDL_INIT_AUDIO);
+        isGetSoundDevice = false;
+    }
 }
 
 iTVPSoundBuffer* TVPCreateSoundBuffer(tTVPWaveFormat& fmt, int bufcount)
@@ -266,6 +290,6 @@ iTVPSoundBuffer* TVPCreateSoundBuffer(tTVPWaveFormat& fmt, int bufcount)
         return nullptr;
     if (s->Init())
         return s;
-    else
-        return nullptr;
+    delete s;
+    return nullptr;
 }

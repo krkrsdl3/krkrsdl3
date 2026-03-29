@@ -149,6 +149,10 @@ ttstr TVPChopStorageExt(const ttstr& name);
 void TVPAddAutoPath(const ttstr& name);
 // add given path to auto search path
 
+void TVPAddArchiveSubDirAutoPath(const ttstr& arcNormalizedPath);
+// enumerate top-level subdirectories inside an XP3 archive and register each
+// as an additional auto-path entry (e.g. "data.xp3>main/", "data.xp3>system/")
+
 void TVPRemoveAutoPath(const ttstr& name);
 // remove given path from auto search path
 //---------------------------------------------------------------------------

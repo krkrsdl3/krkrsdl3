@@ -6,7 +6,7 @@
 #include <random>
 
 #if _KRKRSDL3_GL
-#include <glad/glad.h>
+#include <GL/glew.h>
 #else
 #include <GLES3/gl32.h>
 #endif

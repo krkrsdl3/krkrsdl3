@@ -34,19 +34,32 @@ tTVPThread::tTVPThread()
 //---------------------------------------------------------------------------
 tTVPThread::~tTVPThread()
 {
-    if (!Terminated)
-        Terminate();
+    // Ensure the thread is fully stopped and joined before destroying
+    // mutex/condvar members.  Previous code only called Terminate() which
+    // set a flag but never joined — leaving a dangling thread on re-entry.
+    StopThread();
 }
 //---------------------------------------------------------------------------
 void tTVPThread::Terminate()
 {
+    std::lock_guard<std::mutex> lk(_mutex);
     Terminated = true;
 }
 void tTVPThread::StopThread()
 {
-    Terminated = true;
+    SDL_Thread* h = nullptr;
+    {
+        std::lock_guard<std::mutex> lk(_mutex);
+        Terminated = true;
+        Suspended = false;          // wake predicate in StartProc
+        h = (SDL_Thread*)Handle;
+        Handle = nullptr;           // prevent double-join
+    }
     _cond.notify_all();
-    SDL_WaitThread((SDL_Thread*)Handle, nullptr);
+    if (h)
+    {
+        SDL_WaitThread(h, nullptr);
+    }
 }
 //---------------------------------------------------------------------------
 void tTVPThread::Sleep(unsigned int milliseconds)
@@ -64,19 +77,35 @@ void tTVPThread::Sleep(unsigned int milliseconds)
 //---------------------------------------------------------------------------
 bool tTVPThread::IsCurrentThread()
 {
-    return (SDL_GetCurrentThreadID() == SDL_GetThreadID((SDL_Thread*)Handle));
+    SDL_Thread* h = nullptr;
+    {
+        std::lock_guard<std::mutex> lk(_mutex);
+        h = (SDL_Thread*)Handle;
+    }
+    if (!h) return false;
+    return (SDL_ThreadID() == SDL_GetThreadID(h));
 }
 //---------------------------------------------------------------------------
 int tTVPThread::StartProc(void* arg)
 {
     tTVPThread* _this = static_cast<tTVPThread*>(arg);
 
-    // 等待恢复
-    if (_this->Suspended)
+    // Wait until Resume() or StopThread() using a predicate-based wait
+    // to be immune to spurious wakeups.
     {
         std::unique_lock<std::mutex> lk(_this->_mutex);
-        _this->_cond.wait(lk);
+        _this->_cond.wait(lk, [_this]{
+            return !_this->Suspended || _this->Terminated;
+        });
     }
+
+    // If terminated while still suspended, exit without calling Execute()
+    if (_this->Terminated)
+    {
+        TVPOnThreadExited();
+        return 0;
+    }
+
     _this->Execute();
     _this->OnExit();
     _this->Terminated = false;
@@ -87,7 +116,16 @@ int tTVPThread::StartProc(void* arg)
 //---------------------------------------------------------------------------
 void tTVPThread::WaitFor()
 {
-    SDL_WaitThread((SDL_Thread*)Handle, nullptr);
+    SDL_Thread* h = nullptr;
+    {
+        std::lock_guard<std::mutex> lk(_mutex);
+        h = (SDL_Thread*)Handle;
+        Handle = nullptr;
+    }
+    if (h)
+    {
+        SDL_WaitThread(h, nullptr);
+    }
 }
 //---------------------------------------------------------------------------
 tTVPThreadPriority tTVPThread::GetPriority()
@@ -103,7 +141,10 @@ void tTVPThread::SetPriority(tTVPThreadPriority pri)
 //---------------------------------------------------------------------------
 void tTVPThread::Resume()
 {
-    Suspended = false;
+    {
+        std::lock_guard<std::mutex> lk(_mutex);
+        Suspended = false;
+    }
     _cond.notify_one();
 }
 //---------------------------------------------------------------------------

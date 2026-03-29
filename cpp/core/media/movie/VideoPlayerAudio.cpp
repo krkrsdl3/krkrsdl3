@@ -64,6 +64,7 @@ CVideoPlayerAudio::~CVideoPlayerAudio()
         m_soundDevice = nullptr;
     }
 
+    m_messageQueue.Abort();   // wake Execute() loop out of messageQueue.Get()
     StopThread();
 
     // close the stream, and don't wait for the audio to be finished

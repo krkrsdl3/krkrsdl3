@@ -6,6 +6,7 @@
 #include "tjsDebug.h"
 #include "xp3filter.h"
 #include "TVPSystem.h"
+#include "TVPStorage.h"
 #include "TVPMsg.h"
 #include "TVPThread.h"
 #include "TextStream.h"
@@ -540,11 +541,6 @@ void TVPXP3ArchiveExtractionFilterWrapper(tTVPXP3ExtractionFilterInfo* info, tTJ
         tTJSVariant BufferSize((tjs_int64)info->BufferSize);
         tTJSVariant FileName(info->FileName);
         tTJSVariant* vars[] = {&FileHash, &Offset, &Buffer, &BufferSize, &FileName, ctx};
-#if defined(WIN32) && defined(CHECK_CXDEC)
-        unsigned char *pBackup = new unsigned char[info->BufferSize],
-                      *pBuffer = (unsigned char*)info->Buffer;
-        memcpy(pBackup, info->Buffer, info->BufferSize);
-#endif
         decoder->ManagedDecoder.FuncCall(0, NULL, NULL, NULL, sizeof(vars) / sizeof(vars[0]), vars,
                                          NULL);
 #if defined(WIN32) && defined(CHECK_CXDEC)
@@ -588,9 +584,39 @@ void TVPSetXP3FilterScript(ttstr content)
 
 static void PostRegistCallback()
 {
-    ttstr path = TVPGetAppPath() + TJS_N("xp3filter.tjs");
-    if (TVPIsExistentStorageNoSearch(path))
+    // Check for -xp3filter=off command line option
+    tTJSVariant filterOpt;
+    if (TVPGetCommandLine(TJS_N("-xp3filter"), &filterOpt))
     {
+        ttstr optVal(filterOpt);
+        if (optVal == TJS_N("off") || optVal == TJS_N("no"))
+        {
+            TVPAddImportantLog(TJS_N("(info) XP3 filter disabled by command line (-xp3filter=off)"));
+            return;
+        }
+    }
+
+    ttstr path = TVPGetAppPath() + TJS_N("xp3filter.tjs");
+    bool found = TVPIsExistentStorageNoSearch(path);
+
+    // If not found inside archive, try the local directory alongside the XP3
+    if (!found)
+    {
+        ttstr projdir = TVPProjectDir;
+        tjs_int len = projdir.GetLen();
+        if (len > 0 && projdir[len - 1] == TVPArchiveDelimiter)
+        {
+            // TVPProjectDir is "file://./path/data.xp3>" — extract directory part
+            ttstr arcpath(projdir.c_str(), len - 1); // remove '>'
+            ttstr dirpath = TVPExtractStoragePath(arcpath);
+            path = dirpath + TJS_N("xp3filter.tjs");
+            found = TVPIsExistentStorageNoSearch(path);
+        }
+    }
+
+    if (found)
+    {
+        TVPAddImportantLog(ttstr(TJS_N("(info) Loading XP3 filter script: ")) + path);
         iTJSTextReadStream* stream = TVPCreateTextStreamForRead(path, "");
         try
         {

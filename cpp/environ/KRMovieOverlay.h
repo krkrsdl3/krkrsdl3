@@ -4,7 +4,7 @@
 #include "TVPEvent.h"
 #include "ComplexRect.h"
 
-#include "SDL3/SDL.h"
+#include "SDL2/SDL.h"
 #include "../eventCallbackFun.h"
 
 struct SwsContext;

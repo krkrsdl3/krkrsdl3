@@ -18,7 +18,7 @@
 #include "Log.h"
 
 #include <deque>
-#include <SDL3/SDL_iostream.h>
+#include <SDL2/SDL.h>
 
 //---------------------------------------------------------------------------
 // global variables
@@ -219,7 +219,7 @@ void TVPRemoveLoggingHandler(tTJSVariantClosure clo)
 //---------------------------------------------------------------------------
 class tTVPLogStreamHolder
 {
-    SDL_IOStream* Stream;
+    SDL_RWops* Stream;
     bool Alive;
     bool OpenFailed;
 
@@ -233,7 +233,7 @@ public:
     ~tTVPLogStreamHolder()
     {
         if (Stream)
-            SDL_CloseIO(Stream);
+            SDL_RWclose(Stream);
         Alive = false;
     }
 
@@ -247,7 +247,7 @@ public:
     void Reopen()
     {
         if (Stream)
-            SDL_CloseIO(Stream);
+            SDL_RWclose(Stream);
         Stream = NULL;
         Alive = false;
         OpenFailed = false;
@@ -274,15 +274,15 @@ void tTVPLogStreamHolder::Open(const tjs_char* mode)
             filename = TVPNativeLogLocation + TJS_N("/krkr.console.log");
             TVPEnsureDataPathDirectory();
             std::string _filename = filename.AsStdString();
-            Stream = SDL_IOFromFile(_filename.c_str(), mode);
+            Stream = SDL_RWFromFile(_filename.c_str(), mode);
             if (!Stream)
                 OpenFailed = true;
         }
 
         if (Stream)
         {
-            SDL_SeekIO(Stream, 0, SDL_IO_SEEK_END);
-            if (SDL_TellIO(Stream) == 0)
+            SDL_RWseek(Stream, 0, RW_SEEK_END);
+            if (SDL_RWtell(Stream) == 0)
             {
                 // write BOM
                 // TODO: 32-bit unicode support
@@ -318,7 +318,7 @@ void tTVPLogStreamHolder::Clear()
 {
     // clear log text
     if (Stream)
-        SDL_CloseIO(Stream);
+        SDL_RWclose(Stream);
 
     Open("wb");
 }
@@ -333,21 +333,20 @@ void tTVPLogStreamHolder::Log(const ttstr& text)
         if (Stream)
         {
             size_t len = text.GetLen() * sizeof(tjs_char);
-            if (len != SDL_WriteIO(Stream, text.c_str(), len))
+            if (len != SDL_RWwrite(Stream, text.c_str(), 1, len))
             {
                 // cannot write
-                SDL_CloseIO(Stream);
+                SDL_RWclose(Stream);
                 OpenFailed = true;
                 return;
             }
 #ifdef TJS_TEXT_OUT_CRLF
-            SDL_WriteIO(Stream, TJS_N("\r\n"), 2 * sizeof(tjs_char));
+            SDL_RWwrite(Stream, TJS_N("\r\n"), 1, 2 * sizeof(tjs_char));
 #else
-            SDL_WriteIO(Stream, TJS_N("\n"),  1 * sizeof(tjs_char));
+            SDL_RWwrite(Stream, TJS_N("\n"), 1, 1 * sizeof(tjs_char));
 #endif
 
-            // flush
-            SDL_FlushIO(Stream);
+            // SDL2 RWops has no flush — writes are immediate
         }
     }
     catch (...)
@@ -355,7 +354,7 @@ void tTVPLogStreamHolder::Log(const ttstr& text)
         try
         {
             if (Stream)
-                SDL_CloseIO(Stream);
+                SDL_RWclose(Stream);
         }
         catch (...)
         {

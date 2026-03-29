@@ -3,7 +3,11 @@
 
 #include "TVPStorage.h"
 
+#ifdef _KRKRSDL3_OHOS
+#include "opusfile.h"
+#else
 #include "opus/opusfile.h"
+#endif
 
 class OpusWaveDecoder : public tTVPWaveDecoder // decoder interface
 {

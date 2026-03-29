@@ -553,7 +553,8 @@ void TVPUninitScriptEngine()
     TVPScriptEngineUninit = true;
 
     // TVPScriptEngine->Shutdown();
-    TVPScriptEngine->Release();
+    if (TVPScriptEngine)
+        TVPScriptEngine->Release();
     /*
             Objects, theirs lives are contolled by reference counter, may not be all
             freed here in some occations.
@@ -571,6 +572,19 @@ void TVPRestartScriptEngine()
     TVPScriptEngineInit = false;
     TVPInitScriptEngine();
 }
+//---------------------------------------------------------------------------
+
+//---------------------------------------------------------------------------
+// TVPResetScriptForReentry - reset init flags for OHOS re-entry
+//---------------------------------------------------------------------------
+#ifdef _KRKRSDL3_OHOS
+void TVPResetScriptForReentry()
+{
+    TVPScriptEngineInit = false;
+    TVPScriptEngineUninit = false;
+    TVPScriptEngine = NULL; // already released by TVPUninitScriptEngine
+}
+#endif
 //---------------------------------------------------------------------------
 
 //---------------------------------------------------------------------------

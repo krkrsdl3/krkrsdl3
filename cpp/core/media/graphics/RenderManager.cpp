@@ -14,7 +14,7 @@ extern "C"
 };
 #include "TVPConfig.h"
 #include "xxhash.h"
-#include "opencv2/opencv.hpp"
+#include "simd_image.h"
 
 //---------------------------------------------------------------------------
 // heap allocation functions for bitmap bits
@@ -1917,10 +1917,9 @@ public:
         uint8_t* ddata = (uint8_t*)tar->GetScanLineForWrite(rcdst.top) + rcdst.left * 4;
         int dpitch = tar->GetPitch();
 
-        cv::Mat src_img(sh, sw, CV_8UC4, (void*)sdata, spitch);
-        cv::Mat dst_img(dh, dw, CV_8UC4, (void*)ddata, dpitch);
-        cv::Size areasize(area.get_width() + 1, area.get_height() + 1);
-        cv::boxFilter(src_img, dst_img, -1, areasize);
+        int kx = area.get_width() + 1;
+        int ky = area.get_height() + 1;
+        krkrsimd::boxFilter_8UC4(sdata, sw, sh, spitch, ddata, dw, dh, dpitch, kx, ky);
     }
 };
 
@@ -2189,12 +2188,143 @@ iTVPRenderMethod* iTVPRenderManager::GetOrCompileRenderMethod(
     return CompileRenderMethod(name, glsl_script, nTex, flags);
 }
 
-static int cvFlags[4] = {
-    cv::INTER_NEAREST, // stNearest
-    cv::INTER_AREA,    // stFastLinear
-    cv::INTER_LINEAR,  // stLinear
-    cv::INTER_CUBIC,   // stCubic
+// sws_scale interpolation flags (replacing OpenCV cvFlags)
+static int swsFlags[4] = {
+    SWS_POINT,     // stNearest
+    SWS_AREA,      // stFastLinear
+    SWS_BILINEAR,  // stLinear
+    SWS_BICUBIC,   // stCubic
 };
+
+// ---- Affine/Perspective transform helpers (replacing OpenCV) ----
+namespace {
+struct Pt2f {
+    float x, y;
+    Pt2f() : x(0), y(0) {}
+    Pt2f(float _x, float _y) : x(_x), y(_y) {}
+};
+
+struct WarpBuf {
+    std::vector<uint8_t> data;
+    int w, h, pitch;
+    WarpBuf() : w(0), h(0), pitch(0) {}
+    void alloc(int _w, int _h) { w = _w; h = _h; pitch = w * 4; data.assign(pitch * h, 0); }
+    uint8_t* ptr() { return data.data(); }
+    int step() const { return pitch; }
+};
+
+struct ImageRef {
+    const uint8_t* data;
+    int w, h, pitch;
+    ImageRef() : data(nullptr), w(0), h(0), pitch(0) {}
+    ImageRef(const uint8_t* d, int _w, int _h, int p) : data(d), w(_w), h(_h), pitch(p) {}
+};
+
+static inline uint32_t sampleBilinear(const ImageRef& img, float fx, float fy) {
+    int x0 = (int)floorf(fx), y0 = (int)floorf(fy);
+    float ax = fx - x0, ay = fy - y0;
+    auto cx = [&](int x) { return x < 0 ? 0 : (x >= img.w ? img.w - 1 : x); };
+    auto cy = [&](int y) { return y < 0 ? 0 : (y >= img.h ? img.h - 1 : y); };
+    const uint8_t* p00 = img.data + cy(y0) * img.pitch + cx(x0) * 4;
+    const uint8_t* p10 = img.data + cy(y0) * img.pitch + cx(x0+1) * 4;
+    const uint8_t* p01 = img.data + cy(y0+1) * img.pitch + cx(x0) * 4;
+    const uint8_t* p11 = img.data + cy(y0+1) * img.pitch + cx(x0+1) * 4;
+    float w00 = (1-ax)*(1-ay), w10 = ax*(1-ay), w01 = (1-ax)*ay, w11 = ax*ay;
+    uint8_t r[4];
+    for (int c = 0; c < 4; ++c)
+        r[c] = (uint8_t)(p00[c]*w00 + p10[c]*w10 + p01[c]*w01 + p11[c]*w11 + 0.5f);
+    uint32_t out; memcpy(&out, r, 4); return out;
+}
+
+static inline uint32_t sampleNearest(const ImageRef& img, float fx, float fy) {
+    int x = (int)(fx + 0.5f), y = (int)(fy + 0.5f);
+    x = x < 0 ? 0 : (x >= img.w ? img.w - 1 : x);
+    y = y < 0 ? 0 : (y >= img.h ? img.h - 1 : y);
+    uint32_t out; memcpy(&out, img.data + y * img.pitch + x * 4, 4); return out;
+}
+
+static bool invert3x3(const double M[9], double Minv[9]) {
+    double d = M[0]*(M[4]*M[8]-M[5]*M[7]) - M[1]*(M[3]*M[8]-M[5]*M[6]) + M[2]*(M[3]*M[7]-M[4]*M[6]);
+    if (fabs(d) < 1e-12) return false;
+    double id = 1.0/d;
+    Minv[0]=(M[4]*M[8]-M[5]*M[7])*id; Minv[1]=(M[2]*M[7]-M[1]*M[8])*id; Minv[2]=(M[1]*M[5]-M[2]*M[4])*id;
+    Minv[3]=(M[5]*M[6]-M[3]*M[8])*id; Minv[4]=(M[0]*M[8]-M[2]*M[6])*id; Minv[5]=(M[2]*M[3]-M[0]*M[5])*id;
+    Minv[6]=(M[3]*M[7]-M[4]*M[6])*id; Minv[7]=(M[1]*M[6]-M[0]*M[7])*id; Minv[8]=(M[0]*M[4]-M[1]*M[3])*id;
+    return true;
+}
+
+static bool solveLinearN(double* A, double* b, double* x, int N) {
+    for (int col = 0; col < N; ++col) {
+        int piv = col; double pm = fabs(A[col*N+col]);
+        for (int r = col+1; r < N; ++r) { double v = fabs(A[r*N+col]); if (v > pm) { pm = v; piv = r; } }
+        if (pm < 1e-12) return false;
+        if (piv != col) { for (int j = col; j < N; ++j) std::swap(A[col*N+j], A[piv*N+j]); std::swap(b[col], b[piv]); }
+        for (int r = col+1; r < N; ++r) {
+            double f = A[r*N+col] / A[col*N+col];
+            for (int j = col+1; j < N; ++j) A[r*N+j] -= f*A[col*N+j];
+            A[r*N+col] = 0; b[r] -= f*b[col];
+        }
+    }
+    for (int r = N-1; r >= 0; --r) {
+        double s = b[r]; for (int j = r+1; j < N; ++j) s -= A[r*N+j]*x[j];
+        x[r] = s / A[r*N+r];
+    }
+    return true;
+}
+
+static bool computePerspectiveTransform(const Pt2f src[4], const Pt2f dst[4], double H[9]) {
+    double A[64], b[8], x[8];
+    for (int i = 0; i < 4; ++i) {
+        double sx=src[i].x, sy=src[i].y, dx=dst[i].x, dy=dst[i].y;
+        A[i*2*8+0]=sx; A[i*2*8+1]=sy; A[i*2*8+2]=1; A[i*2*8+3]=0; A[i*2*8+4]=0; A[i*2*8+5]=0; A[i*2*8+6]=-sx*dx; A[i*2*8+7]=-sy*dx; b[i*2]=dx;
+        A[(i*2+1)*8+0]=0; A[(i*2+1)*8+1]=0; A[(i*2+1)*8+2]=0; A[(i*2+1)*8+3]=sx; A[(i*2+1)*8+4]=sy; A[(i*2+1)*8+5]=1; A[(i*2+1)*8+6]=-sx*dy; A[(i*2+1)*8+7]=-sy*dy; b[i*2+1]=dy;
+    }
+    if (!solveLinearN(A, b, x, 8)) return false;
+    for (int i = 0; i < 8; ++i) H[i] = x[i]; H[8] = 1.0;
+    return true;
+}
+
+static bool computeAffineTransform(const Pt2f src[3], const Pt2f dst[3], double M[9]) {
+    double A[9], bx[3], by[3], rx[3], ry[3];
+    for (int i = 0; i < 3; ++i) { A[i*3]=src[i].x; A[i*3+1]=src[i].y; A[i*3+2]=1; bx[i]=dst[i].x; by[i]=dst[i].y; }
+    double A2[9]; memcpy(A2, A, sizeof(A));
+    if (!solveLinearN(A, bx, rx, 3)) return false;
+    if (!solveLinearN(A2, by, ry, 3)) return false;
+    M[0]=rx[0]; M[1]=rx[1]; M[2]=rx[2]; M[3]=ry[0]; M[4]=ry[1]; M[5]=ry[2]; M[6]=0; M[7]=0; M[8]=1;
+    return true;
+}
+
+static void doWarpPerspective(const ImageRef& src, WarpBuf& dst, const double H[9], int dw, int dh, bool bilinear) {
+    double Hi[9]; if (!invert3x3(H, Hi)) { dst.alloc(dw, dh); return; }
+    dst.alloc(dw, dh);
+    for (int dy = 0; dy < dh; ++dy) {
+        uint32_t* row = (uint32_t*)(dst.ptr() + dy * dst.pitch);
+        for (int dx = 0; dx < dw; ++dx) {
+            double w = Hi[6]*dx + Hi[7]*dy + Hi[8];
+            if (fabs(w) < 1e-12) { row[dx] = 0; continue; }
+            float sx = (float)((Hi[0]*dx + Hi[1]*dy + Hi[2]) / w);
+            float sy = (float)((Hi[3]*dx + Hi[4]*dy + Hi[5]) / w);
+            if (sx < -0.5f || sx >= src.w-0.5f || sy < -0.5f || sy >= src.h-0.5f) { row[dx] = 0; continue; }
+            row[dx] = bilinear ? sampleBilinear(src, sx, sy) : sampleNearest(src, sx, sy);
+        }
+    }
+}
+
+static void doWarpAffine(const ImageRef& src, WarpBuf& dst, const double M[9], int dw, int dh, bool bilinear) {
+    double Mi[9]; if (!invert3x3(M, Mi)) { dst.alloc(dw, dh); return; }
+    dst.alloc(dw, dh);
+    for (int dy = 0; dy < dh; ++dy) {
+        uint32_t* row = (uint32_t*)(dst.ptr() + dy * dst.pitch);
+        for (int dx = 0; dx < dw; ++dx) {
+            float sx = (float)(Mi[0]*dx + Mi[1]*dy + Mi[2]);
+            float sy = (float)(Mi[3]*dx + Mi[4]*dy + Mi[5]);
+            if (sx < -0.5f || sx >= src.w-0.5f || sy < -0.5f || sy >= src.h-0.5f) { row[dx] = 0; continue; }
+            row[dx] = bilinear ? sampleBilinear(src, sx, sy) : sampleNearest(src, sx, sy);
+        }
+    }
+}
+} // anonymous namespace
+// ---- End transform helpers ----
 
 static double tTVPPointD_distQ(const tTVPPointD& p0, const tTVPPointD& p1)
 {
@@ -2582,9 +2712,9 @@ public:
         {
             case eParameters::StretchType:
                 StretchType = (tTVPBBStretchType)Value;
-                if (StretchType > sizeof(cvFlags) / sizeof(cvFlags[0]))
+                if (StretchType > sizeof(swsFlags) / sizeof(swsFlags[0]))
                 {
-                    StretchType = (tTVPBBStretchType)(sizeof(cvFlags) / sizeof(cvFlags[0]) - 1);
+                    StretchType = (tTVPBBStretchType)(sizeof(swsFlags) / sizeof(swsFlags[0]) - 1);
                 }
                 break;
             default:
@@ -2644,10 +2774,22 @@ public:
             uint8_t* ddata = (uint8_t*)tmp->GetScanLineForWrite(0);
             int dpitch = tmp->GetPitch();
 
-            cv::Size dsize(dw, dh);
-            cv::Mat src_img(sh, sw, CV_8UC4, (void*)sdata, spitch);
-            cv::Mat dst_img(dh, dw, CV_8UC4, (void*)ddata, dpitch);
-            cv::resize(src_img, dst_img, dsize, 0, 0, cvFlags[StretchType]);
+            // sws_scale resize (replacing cv::resize)
+            {
+                struct SwsContext* swsCtx = sws_getContext(
+                    sw, sh, AV_PIX_FMT_RGBA,
+                    dw, dh, AV_PIX_FMT_RGBA,
+                    swsFlags[StretchType], NULL, NULL, NULL);
+                if (swsCtx)
+                {
+                    const uint8_t* srcSlice[1] = { sdata };
+                    int srcStride[1] = { spitch };
+                    uint8_t* dstSlice[1] = { ddata };
+                    int dstStride[1] = { dpitch };
+                    sws_scale(swsCtx, srcSlice, srcStride, 0, sh, dstSlice, dstStride);
+                    sws_freeContext(swsCtx);
+                }
+            }
 
             tTVPRect rc(0, 0, dw, dh);
             ((tTVPRenderMethod_Software*)method)
@@ -3129,26 +3271,26 @@ public:
             sdata = (const uint8_t*)src->GetPixelData();
 
             // upper-left, upper-right, bottom-right, bottom-left
-            cv::Point2f pts_src[] = {
-                cv::Point2f(srcpt[0].x, srcpt[0].y),
-                cv::Point2f(srcpt[1].x + 1, srcpt[1].y),
-                cv::Point2f(srcpt[5].x + 1, srcpt[5].y + 1),
-                cv::Point2f(srcpt[2].x, srcpt[2].y + 1),
+            Pt2f pts_src[] = {
+                Pt2f(srcpt[0].x, srcpt[0].y),
+                Pt2f(srcpt[1].x + 1, srcpt[1].y),
+                Pt2f(srcpt[5].x + 1, srcpt[5].y + 1),
+                Pt2f(srcpt[2].x, srcpt[2].y + 1),
             };
-            cv::Point2f pts_dst[] = {
-                cv::Point2f(dstpt[0].x - rcclip.left, dstpt[0].y - rcclip.top),
-                cv::Point2f(dstpt[1].x - rcclip.left, dstpt[1].y - rcclip.top),
-                cv::Point2f(dstpt[5].x - rcclip.left, dstpt[5].y - rcclip.top),
-                cv::Point2f(dstpt[2].x - rcclip.left, dstpt[2].y - rcclip.top),
+            Pt2f pts_dst[] = {
+                Pt2f(dstpt[0].x - rcclip.left, dstpt[0].y - rcclip.top),
+                Pt2f(dstpt[1].x - rcclip.left, dstpt[1].y - rcclip.top),
+                Pt2f(dstpt[5].x - rcclip.left, dstpt[5].y - rcclip.top),
+                Pt2f(dstpt[2].x - rcclip.left, dstpt[2].y - rcclip.top),
             };
 
-            cv::Mat src_img;
+            ImageRef src_img;
             if (isSrcRect)
             {
                 tTVPRect rcsrc(0x7FFFFFFF, 0x7FFFFFFF, -1, -1);
                 for (int i = 0; i < 4; ++i)
                 {
-                    const cv::Point2f& pt = pts_src[i];
+                    const Pt2f& pt = pts_src[i];
                     tjs_int x = pt.x;
                     if (x < rcsrc.left)
                         rcsrc.left = x;
@@ -3163,7 +3305,7 @@ public:
                 sdata += rcsrc.top * spitch + rcsrc.left * 4;
                 for (int i = 0; i < 4; ++i)
                 {
-                    cv::Point2f& pt = pts_src[i];
+                    Pt2f& pt = pts_src[i];
                     pt.x -= rcsrc.left;
                     pt.y -= rcsrc.top;
                 }
@@ -3172,32 +3314,33 @@ public:
                     rcsrc.set_width(sw - rcsrc.left);
                 if (rcsrc.bottom > sh)
                     rcsrc.set_height(sh - rcsrc.top);
-                src_img =
-                    cv::Mat(rcsrc.get_height(), rcsrc.get_width(), CV_8UC4, (void*)sdata, spitch);
+                src_img = ImageRef(sdata, rcsrc.get_width(), rcsrc.get_height(), spitch);
             }
             else
             {
-                src_img = cv::Mat(src->GetHeight(), src->GetWidth(), CV_8UC4, (void*)sdata, spitch);
+                src_img = ImageRef(sdata, src->GetWidth(), src->GetHeight(), spitch);
             }
 
-            cv::Mat dst_img;
-            cv::Size dst_size(rcclip.get_width(), rcclip.get_height());
+            WarpBuf warp_dst;
+            int dstW = rcclip.get_width(), dstH = rcclip.get_height();
+            bool bilinear = (StretchType >= 2);
             if (isSrcRect && checkQuadSquared(dstpt))
             {
-                cv::Mat affine_matrix = cv::getAffineTransform(pts_src, pts_dst);
-                cv::warpAffine(src_img, dst_img, affine_matrix, dst_size, cvFlags[StretchType]);
+                double M[9];
+                computeAffineTransform(pts_src, pts_dst, M);
+                doWarpAffine(src_img, warp_dst, M, dstW, dstH, bilinear);
             }
             else
             {
-                cv::Mat perspective_matrix = cv::getPerspectiveTransform(pts_src, pts_dst);
-                cv::warpPerspective(src_img, dst_img, perspective_matrix, dst_size,
-                                    cvFlags[StretchType]);
+                double H[9];
+                computePerspectiveTransform(pts_src, pts_dst, H);
+                doWarpPerspective(src_img, warp_dst, H, dstW, dstH, bilinear);
             }
 
             iTVPTexture2D* tmp =
-                new tTVPSoftwareTexture2D_static(dst_img.ptr(0), dst_img.step1(0), dst_size.width,
-                                                 dst_size.height, TVPTextureFormat::RGBA);
-            tTVPRect rc(0, 0, dst_size.width, dst_size.height);
+                new tTVPSoftwareTexture2D_static(warp_dst.ptr(), warp_dst.step(), dstW,
+                                                 dstH, TVPTextureFormat::RGBA);
+            tTVPRect rc(0, 0, dstW, dstH);
             ((tTVPRenderMethod_Software*)method)
                 ->DoRender(target, rcclip, target, rcclip, tmp, rc, nullptr, rc);
             tmp->Release();
@@ -4357,29 +4500,29 @@ public:
                 const uint8_t* sdata;
                 int spitch = src->GetPitch();
                 sdata = (const uint8_t*)src->GetPixelData();
-                cv::Mat src_img(src->GetHeight(), src->GetWidth(), CV_8UC4, (void*)sdata, spitch);
-                cv::Mat dst_img;
-                cv::Size dst_size(rcclip.get_width(), rcclip.get_height());
+                ImageRef src_img(sdata, src->GetWidth(), src->GetHeight(), spitch);
+                int dstW = rcclip.get_width(), dstH = rcclip.get_height();
 
                 // upper-left, upper-right, bottom-right, bottom-left
-                cv::Point2f pts_src[] = {cv::Point2f(srcpt[0].x, srcpt[0].y),
-                                         cv::Point2f(srcpt[1].x + 1, srcpt[1].y),
-                                         cv::Point2f(srcpt[3].x + 1, srcpt[3].y + 1),
-                                         cv::Point2f(srcpt[2].x, srcpt[2].y + 1)};
-                cv::Point2f pts_dst[] = {
-                    cv::Point2f(dstpt[0].x - rcclip.left, dstpt[0].y - rcclip.top),
-                    cv::Point2f(dstpt[1].x - rcclip.left, dstpt[1].y - rcclip.top),
-                    cv::Point2f(dstpt[3].x - rcclip.left, dstpt[3].y - rcclip.top),
-                    cv::Point2f(dstpt[2].x - rcclip.left, dstpt[2].y - rcclip.top)};
+                Pt2f pts_src[] = {Pt2f(srcpt[0].x, srcpt[0].y),
+                                  Pt2f(srcpt[1].x + 1, srcpt[1].y),
+                                  Pt2f(srcpt[3].x + 1, srcpt[3].y + 1),
+                                  Pt2f(srcpt[2].x, srcpt[2].y + 1)};
+                Pt2f pts_dst[] = {
+                    Pt2f(dstpt[0].x - rcclip.left, dstpt[0].y - rcclip.top),
+                    Pt2f(dstpt[1].x - rcclip.left, dstpt[1].y - rcclip.top),
+                    Pt2f(dstpt[3].x - rcclip.left, dstpt[3].y - rcclip.top),
+                    Pt2f(dstpt[2].x - rcclip.left, dstpt[2].y - rcclip.top)};
 
-                cv::Mat perspective_matrix = cv::getPerspectiveTransform(pts_src, pts_dst);
-                cv::warpPerspective(src_img, dst_img, perspective_matrix, dst_size,
-                                    cvFlags[StretchType]);
+                double H[9];
+                computePerspectiveTransform(pts_src, pts_dst, H);
+                WarpBuf warp_dst;
+                doWarpPerspective(src_img, warp_dst, H, dstW, dstH, (StretchType >= 2));
 
                 iTVPTexture2D* tmp = new tTVPSoftwareTexture2D_static(
-                    dst_img.ptr(0), dst_img.step1(0), dst_size.width, dst_size.height,
+                    warp_dst.ptr(), warp_dst.step(), dstW, dstH,
                     TVPTextureFormat::RGBA);
-                tTVPRect rc(0, 0, dst_size.width, dst_size.height);
+                tTVPRect rc(0, 0, dstW, dstH);
 
                 ((tTVPRenderMethod_Software*)method)
                     ->DoRender(target, rcclip, target, rcclip, tmp, rc, nullptr, rc);

@@ -1,7 +1,7 @@
 #include "KeyCodeConv.h"
 #include "tvpinputdefs.h"
 
-#include "SDL3/SDL.h"
+#include "SDL2/SDL.h"
 
 int TVPConvertMouseBtnToVKCode(tTVPMouseButton _mouseBtn)
 {
@@ -157,7 +157,7 @@ int TVPConvertKeyCodeToVKCode(int keyCode)
             return VK_OEM_4;
         case SDL_SCANCODE_RIGHTBRACKET:
             return VK_OEM_6;
-        case SDL_SCANCODE_MEDIA_PLAY:
+        case SDL_SCANCODE_AUDIOPLAY:
             return VK_PLAY;
         default:
             return 0;

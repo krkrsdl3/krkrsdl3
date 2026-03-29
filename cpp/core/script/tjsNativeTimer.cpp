@@ -1,5 +1,6 @@
 #include "tjsNativeTimer.h"
 
+#include <algorithm>
 #include "TickCount.h"
 #include "TVPSystem.h"
 #include "TVPThread.h"

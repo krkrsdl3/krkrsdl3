@@ -1504,7 +1504,7 @@ extern int ZEXPORT unzOpenCurrentFile3 (unzFile file, int* method,
     if (s->pfile_in_zip_read != NULL)
         unzCloseCurrentFile(file);
 
-	return unzOpenData(file, &s->pfile_in_zip_read, method, level, raw, password);
+	return unzOpenData(file, (unzData*)&s->pfile_in_zip_read, method, level, raw, password);
 }
 
 extern int ZEXPORT unzOpenData (unzFile file, unzData *data,

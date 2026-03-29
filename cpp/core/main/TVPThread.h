@@ -14,7 +14,7 @@
 
 #include <condition_variable>
 #include <functional>
-#include <SDL3/SDL_thread.h>
+#include <SDL2/SDL_thread.h>
 
 //---------------------------------------------------------------------------
 // tTVPThreadPriority

@@ -6,6 +6,12 @@
 /**/out/
 /**/bin/
 
+# local build directories
+/build_sdl2/
+/build_sdl2_msvc/
+/build_harmony_arm64/
+/build_harmony_x86_64/
+
 .idea/
 .vscode/
 .vs/

@@ -5,7 +5,7 @@
 #include <assert.h>
 #include <locale>
 
-#include "SDL3/SDL.h"
+#include "SDL2/SDL.h"
 static const int MAX_LOG_LENGTH = 16 * 1024;
 
 void TVPConsoleLog(const tjs_char* format, ...)

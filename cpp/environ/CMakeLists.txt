@@ -11,11 +11,17 @@ set(KRKRSDL_ENVIRON_SRC
     ${KRKRSDL_ENVIRON_PATH}/gl/tvpgl.cpp
     )
 	
-if(ANDROID)
+if(CMAKE_SYSTEM_NAME STREQUAL "OHOS")
+    set(OHOS TRUE)
+endif()
+
+if(OHOS)
+    list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/harmony/Platform.cpp)
+elseif(ANDROID)
     list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/android/Platform.cpp)
 elseif(LINUX)
     list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/linux/Platform.cpp)
-elseif(WINDOWS)
+elseif(WIN32)
     list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/windows/Platform.cpp)
 else()
     message(FATAL_ERROR "unsupported: ${CMAKE_SYSTEM_NAME}")

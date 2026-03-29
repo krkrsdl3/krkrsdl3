@@ -4,7 +4,7 @@
 #include "WindowIntf.h"
 #include "tjsNativeMenuItem.h"
 
-#include <SDL3/SDL.h>
+#include <SDL2/SDL.h>
 
 extern SDL_Window* tvp_window;
 extern iTJSDispatch2* TVPGetMenuDispatch(tTVInteger hWnd);

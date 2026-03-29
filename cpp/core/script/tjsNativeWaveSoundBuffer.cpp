@@ -2601,6 +2601,13 @@ void tTJSNI_WaveSoundBuffer::StartPlay()
 
         CreateSoundBuffer();
 
+        if (!SoundBuffer)
+        {
+            // Audio device could not be opened (e.g. OHOS without audio permission)
+            BufferPlaying = false;
+            return;
+        }
+
         // reset filter chain
         ResetFilterChain();
 

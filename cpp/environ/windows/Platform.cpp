@@ -5,8 +5,7 @@
 #include <codecvt>
 #include <algorithm>
 
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_iostream.h>
+#include <SDL2/SDL.h>
 #include <sys/utime.h>
 #include <fcntl.h>
 
@@ -391,33 +390,28 @@ bool TVPCopyFolder(const std::string& from, const std::string& to)
 }
 bool TVPCopyFile(const std::string& from, const std::string& to)
 {
-    SDL_IOStream* fFrom = SDL_IOFromFile(from.c_str(), "rb");
+    SDL_RWops* fFrom = SDL_RWFromFile(from.c_str(), "rb");
     if (!fFrom) {
         return TVPCopyFolder(from, to);
     }
-    SDL_IOStream* fTo = SDL_IOFromFile(to.c_str(), "wb");
+    SDL_RWops* fTo = SDL_RWFromFile(to.c_str(), "wb");
     if (!fTo) {
-        SDL_CloseIO(fFrom);
+        SDL_RWclose(fFrom);
         return false;
     }
     const int bufSize = 1 * 1024 * 1024;
     std::vector<char> buffer(bufSize);
     size_t bytesRead;
-    while ((bytesRead = SDL_ReadIO(fFrom, buffer.data(), bufSize)) > 0) {
-        if (SDL_WriteIO(fTo, buffer.data(), bytesRead) != bytesRead) {
-            SDL_CloseIO(fFrom);
-            SDL_CloseIO(fTo);
+    while ((bytesRead = SDL_RWread(fFrom, buffer.data(), 1, bufSize)) > 0) {
+        if (SDL_RWwrite(fTo, buffer.data(), 1, bytesRead) != bytesRead) {
+            SDL_RWclose(fFrom);
+            SDL_RWclose(fTo);
             return false;
         }
     }
-    if (SDL_GetIOStatus(fFrom) != SDL_IO_STATUS_EOF) {
-        SDL_CloseIO(fFrom);
-        SDL_CloseIO(fTo);
-        return false;
-    }
     
-    SDL_CloseIO(fFrom);
-    SDL_CloseIO(fTo);
+    SDL_RWclose(fFrom);
+    SDL_RWclose(fTo);
     return true;
 }
 

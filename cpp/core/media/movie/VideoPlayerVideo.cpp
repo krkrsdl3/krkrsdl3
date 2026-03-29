@@ -83,6 +83,7 @@ CVideoPlayerVideo::CVideoPlayerVideo(CDVDClock* pClock,
 CVideoPlayerVideo::~CVideoPlayerVideo()
 {
     m_bAbortOutput = true;
+    m_messageQueue.Abort();   // wake Execute() loop out of messageQueue.Get()
     StopThread();
 }
 

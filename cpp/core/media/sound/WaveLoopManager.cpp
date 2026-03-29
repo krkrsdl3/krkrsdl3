@@ -19,7 +19,7 @@
 #include "WaveLoopManager.h"
 
 #include "WaveIntf.h"
-#include "SDL3/SDL.h"
+#include "SDL2/SDL.h"
 
 //---------------------------------------------------------------------------
 const int TVPWaveLoopLinkGiveUpCount = 10;

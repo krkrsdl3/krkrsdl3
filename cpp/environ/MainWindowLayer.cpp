@@ -10,7 +10,7 @@
 #include "TVPSystem.h"
 #include <thread>
 
-#include "SDL3/SDL.h"
+#include "SDL2/SDL.h"
 
 #include "KeyCodeConv.h"
 #include "../eventCallbackFun.h"
@@ -78,8 +78,8 @@ static void AdjustNumerAndDenom(tjs_int& n, tjs_int& d)
     d = d / a;
 }
 
-extern "C" SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event);
-extern "C" SDL_AppResult SDL_AppIterate(void* appstate);
+// Forward declarations for SDL2 main loop helpers defined in krkrsdl.cpp
+extern void sdl_render_frame();
 
 int TVPDrawSceneOnce(int interval)
 {
@@ -88,12 +88,7 @@ int TVPDrawSceneOnce(int interval)
     int remain = interval - (curTick - lastTick);
     if (remain <= 0)
     {
-        SDL_AppIterate(NULL);
-        SDL_Event event;
-        while (SDL_PollEvent(&event))
-        {
-            SDL_AppEvent(NULL, &event);
-        }
+        sdl_render_frame();
         lastTick = curTick;
         return 0;
     }
@@ -544,7 +539,16 @@ public:
     {
         if (this == _firstWindowLayer)
         {
-            SDL_SetWindowFullscreen(tvp_window, isFull);
+            // Default to windowed mode; only go fullscreen if -fullscr=yes
+            static int forceWindowed = -1;
+            if (forceWindowed < 0) {
+                tTJSVariant v;
+                forceWindowed = (TVPGetCommandLine(TJS_N("-fullscr"), &v) &&
+                                 ttstr(v) == TJS_N("yes")) ? 0 : 1;
+            }
+            if (forceWindowed) isFull = false;
+            SDL_SetWindowFullscreen(tvp_window,
+                isFull ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
             isFullScreen = isFull;
         }
     }
@@ -928,6 +932,7 @@ iWindowLayer* TVPCreateAndAddWindow(tTJSNI_Window* w)
     return ret;
 }
 
+#ifndef _KRKRSDL3_OHOS
 void refreshWindow()
 {
     TVPWindowLayer* pWin = _lastWindowLayer;
@@ -937,6 +942,7 @@ void refreshWindow()
         pWin = pWin->_prevWindow;
     }
 }
+#endif // !_KRKRSDL3_OHOS
 
 tTJSNI_Window *TVPGetActiveWindow() {
 	if (!_currentWindowLayer) return nullptr;

@@ -11,7 +11,7 @@
 */
 
 #include "ioapi.h"
-#include <SDL3/SDL_iostream.h>
+#include <SDL2/SDL.h>
 #include <fcntl.h>
 #include <stdint.h>
 
@@ -90,7 +90,7 @@ static voidpf ZCALLBACK fopen_file_func (voidpf opaque, const char* filename, in
         sdl_mode = "wb+";
     else
         return NULL;
-    SDL_IOStream* rw = SDL_IOFromFile(filename, sdl_mode);
+    SDL_RWops* rw = SDL_RWFromFile(filename, sdl_mode);
     return (voidpf)rw;
 }
 
@@ -102,17 +102,17 @@ static voidpf ZCALLBACK fopen64_file_func (voidpf opaque, const void* filename, 
 
 static uLong ZCALLBACK fread_file_func (voidpf opaque, voidpf stream, void* buf, uLong size)
 {
-    return (uLong)SDL_ReadIO((SDL_IOStream*)stream, buf, size);
+    return (uLong)SDL_RWread((SDL_RWops*)stream, buf, 1, size);
 }
 
 static uLong ZCALLBACK fwrite_file_func (voidpf opaque, voidpf stream, const void* buf, uLong size)
 {
-    return (uLong)SDL_WriteIO((SDL_IOStream*)stream, buf, size);
+    return (uLong)SDL_RWwrite((SDL_RWops*)stream, buf, 1, size);
 }
 
 static ZPOS64_T ZCALLBACK ftell64_file_func (voidpf opaque, voidpf stream)
 {
-    return (ZPOS64_T)SDL_SeekIO((SDL_IOStream*)stream, 0, SDL_IO_SEEK_CUR);
+    return (ZPOS64_T)SDL_RWtell((SDL_RWops*)stream);
 }
 
 static long ZCALLBACK ftell_file_func (voidpf opaque, voidpf stream)
@@ -122,43 +122,43 @@ static long ZCALLBACK ftell_file_func (voidpf opaque, voidpf stream)
 
 static long ZCALLBACK fseek_file_func (voidpf  opaque, voidpf stream, uLong offset, int origin)
 {
-    SDL_IOWhence fseek_origin;
+    int fseek_origin;
     long ret;
     switch (origin)
     {
     case ZLIB_FILEFUNC_SEEK_CUR :
-        fseek_origin = SDL_IO_SEEK_CUR;
+        fseek_origin = RW_SEEK_CUR;
         break;
     case ZLIB_FILEFUNC_SEEK_END :
-        fseek_origin = SDL_IO_SEEK_END;
+        fseek_origin = RW_SEEK_END;
         break;
     case ZLIB_FILEFUNC_SEEK_SET :
-        fseek_origin = SDL_IO_SEEK_SET;
+        fseek_origin = RW_SEEK_SET;
         break;
     default: return -1;
     }
     ret = 0;
-    SDL_SeekIO((SDL_IOStream*)stream, offset, fseek_origin);
+    SDL_RWseek((SDL_RWops*)stream, offset, fseek_origin);
     return ret;
 }
 
 static long ZCALLBACK fseek64_file_func (voidpf  opaque, voidpf stream, ZPOS64_T offset, int origin)
 {
-    SDL_IOWhence fseek_origin;
+    int fseek_origin;
     switch (origin)
     {
     case ZLIB_FILEFUNC_SEEK_CUR :
-        fseek_origin = SDL_IO_SEEK_CUR;
+        fseek_origin = RW_SEEK_CUR;
         break;
     case ZLIB_FILEFUNC_SEEK_END :
-        fseek_origin = SDL_IO_SEEK_END;
+        fseek_origin = RW_SEEK_END;
         break;
     case ZLIB_FILEFUNC_SEEK_SET :
-        fseek_origin = SDL_IO_SEEK_SET;
+        fseek_origin = RW_SEEK_SET;
         break;
     default: return -1;
     }
-    SDL_SeekIO((SDL_IOStream*)stream, offset, fseek_origin);
+    SDL_RWseek((SDL_RWops*)stream, offset, fseek_origin);
     return 0;
 }
 
@@ -166,7 +166,7 @@ static long ZCALLBACK fseek64_file_func (voidpf  opaque, voidpf stream, ZPOS64_T
 static int ZCALLBACK fclose_file_func (voidpf opaque, voidpf stream)
 {
     int ret;
-    ret = SDL_CloseIO((SDL_IOStream*)stream);
+    ret = SDL_RWclose((SDL_RWops*)stream);
     return ret;
 }
 

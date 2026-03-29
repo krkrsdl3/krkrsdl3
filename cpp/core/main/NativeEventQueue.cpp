@@ -4,11 +4,15 @@
 
 void NativeEventQueueImplement::PostEvent(const NativeEvent& ev)
 {
+    if (!Application)
+        return;
     Application->PostUserMessage([this, ev]() { Dispatch(*const_cast<NativeEvent*>(&ev)); }, this);
 }
 
 void NativeEventQueueImplement::Clear(int msg)
 {
+    if (!Application)
+        return;
     Application->FilterUserMessage(
         [this, msg](std::vector<std::tuple<void*, int, tTVPApplication::tMsg>>& lst)
         {

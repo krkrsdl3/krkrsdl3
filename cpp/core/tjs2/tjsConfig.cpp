@@ -313,6 +313,9 @@ tjs_int TJS_timezone()
 #elif defined(_KRKRSDL3_LINUX)
     localtime_r(&now, &local_tm);
     gmtime_r(&now, &utc_tm);
+#elif defined(_KRKRSDL3_OHOS)
+    localtime_r(&now, &local_tm);
+    gmtime_r(&now, &utc_tm);
 #else
 #error "Unsupported platform"
 #endif

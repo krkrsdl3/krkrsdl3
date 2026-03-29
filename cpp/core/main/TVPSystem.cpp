@@ -19,6 +19,9 @@
 #include "DetectCPU.h"
 #include "XP3Archive.h"
 #include <thread>
+#ifdef _KRKRSDL3_OHOS
+#include <SDL2/SDL.h>
+#endif
 
 #include "tjsLex.h"
 #include "tjsNativeLayer.h"
@@ -372,6 +375,9 @@ extern void TVPGL_C_Init();
 //---------------------------------------------------------------------------
 void TVPSystemInit(void)
 {
+#ifdef _KRKRSDL3_OHOS
+    SDL_Log("[krkr2-diag] >>> TVPSystemInit entered");
+#endif
     TVPBeforeSystemInit();
 
     TVPInitScriptEngine();
@@ -445,6 +451,9 @@ static void TVPCauseAtExit()
         return;
     TVPAtExitShutdown = true;
 
+    if (!TVPAtExitInfos)
+        return;
+
     std::sort(TVPAtExitInfos->begin(), TVPAtExitInfos->end()); // descending sort
 
     std::vector<tTVPAtExitInfo>::iterator i;
@@ -453,7 +462,9 @@ static void TVPCauseAtExit()
         i->Handler();
     }
 
-    delete TVPAtExitInfos;
+    // Do NOT delete TVPAtExitInfos here: on HarmonyOS the .so stays loaded
+    // across game launches and static tTVPAtExit constructors only run once.
+    // Keeping the vector alive allows the same handlers to fire on re-entry.
 }
 //---------------------------------------------------------------------------
 
@@ -463,6 +474,29 @@ static void TVPCauseAtExit()
 ttstr TVPNativeProjectDir;
 ttstr TVPNativeDataPath;
 bool TVPProjectDirSelected = false;
+//---------------------------------------------------------------------------
+
+//---------------------------------------------------------------------------
+// TVPResetSystemForReentry - reset all one-shot flags for OHOS re-entry
+//---------------------------------------------------------------------------
+#ifdef _KRKRSDL3_OHOS
+void TVPResetSystemForReentry()
+{
+    TVPSystemUninitCalled = false;
+    TVPAtExitShutdown = false;
+    // TVPAtExitInfos is intentionally kept — static tTVPAtExit constructors
+    // only run once per .so load, so the registered handlers must survive.
+    TVPTerminated = false;
+    TVPTerminateCode = 0;
+    TVPTerminateOnWindowClose = true;
+    TVPTerminateOnNoWindowStartup = true;
+    TVPProjectDir.Clear();
+    TVPDataPath.Clear();
+    TVPNativeProjectDir.Clear();
+    TVPNativeDataPath.Clear();
+    TVPProjectDirSelected = false;
+}
+#endif
 //---------------------------------------------------------------------------
 
 //---------------------------------------------------------------------------
@@ -1206,6 +1240,9 @@ static void TVPInitRandomGenerator()
 //---------------------------------------------------------------------------
 void TVPInitializeBaseSystems()
 {
+#ifdef _KRKRSDL3_OHOS
+    SDL_Log("[krkr2-diag] >>> TVPInitializeBaseSystems entered");
+#endif
     // set system archive delimiter
     tTJSVariant v;
     if (TVPGetCommandLine(TJS_N("-arcdelim"), &v))
@@ -1213,7 +1250,13 @@ void TVPInitializeBaseSystems()
 
     // set default current directory
     {
+#ifdef _KRKRSDL3_OHOS
+        ttstr ep = IncludeTrailingBackslash(ExePath());
+        SDL_Log("[krkr2-diag] TVPInitializeBaseSystems setting CurDir to: '%s'", ep.AsStdString().c_str());
+        TVPSetCurrentDirectory(ep);
+#else
         TVPSetCurrentDirectory(IncludeTrailingBackslash(ExePath()));
+#endif
     }
 
     // load message map file
@@ -1222,7 +1265,14 @@ void TVPInitializeBaseSystems()
     if (load_msgmap)
     {
         const tjs_char name_msgmap[] = TJS_N("msgmap.tjs");
+#ifdef _KRKRSDL3_OHOS
+        SDL_Log("[krkr2-diag] checking msgmap.tjs existence...");
+        bool exists = TVPIsExistentStorage(name_msgmap);
+        SDL_Log("[krkr2-diag] msgmap.tjs exists=%d", exists);
+        if (exists)
+#else
         if (TVPIsExistentStorage(name_msgmap))
+#endif
             TVPExecuteStorage(name_msgmap, NULL, false, TJS_N(""));
     }
 }
@@ -1235,6 +1285,9 @@ static tjs_uint64 TVPTotalPhysMemory = 0;
 static void TVPInitProgramArgumentsAndDataPath(bool stop_after_datapath_got);
 void TVPBeforeSystemInit()
 {
+#ifdef _KRKRSDL3_OHOS
+    SDL_Log("[krkr2-diag] >>> TVPBeforeSystemInit entered");
+#endif
     // RegisterDllLoadHook();
     //  register DLL delayed import hook to support _inmm.dll
 
@@ -1245,14 +1298,59 @@ void TVPBeforeSystemInit()
     if (TVPGetCommandLine(TJS_N("-arcdelim"), &v))
         TVPArchiveDelimiter = ttstr(v)[0];
 
+#ifdef _KRKRSDL3_OHOS
+    SDL_Log("[krkr2-diag] TVPProjectDir before check: '%s'", TVPProjectDir.AsStdString().c_str());
+    bool isExistent = TVPIsExistentStorageNoSearchNoNormalize(TVPProjectDir);
+    SDL_Log("[krkr2-diag] TVPIsExistentStorageNoSearchNoNormalize = %d", isExistent);
+    if (isExistent)
+#else
     if (TVPIsExistentStorageNoSearchNoNormalize(TVPProjectDir))
+#endif
     {
+        // Register parent directory so files next to the archive are searchable
+        // (e.g. Config.tjs which resides in the game folder, not inside the XP3)
+        ttstr parentDir = TVPExtractStoragePath(TVPProjectDir);
+        if (!parentDir.IsEmpty())
+            TVPAddAutoPath(parentDir);
         TVPProjectDir += TVPArchiveDelimiter;
+        // Register all top-level subdirectories inside the archive so that
+        // files stored in subdirs (e.g. main/Config.tjs) can be found by name.
+        TVPAddArchiveSubDirAutoPath(TVPNormalizeStorageName(TVPProjectDir));
+#ifdef _KRKRSDL3_OHOS
+        // Scan the parent directory for sibling XP3 archives so that
+        // startup.tjs (typically in data.xp3) is discoverable even when
+        // TVPProjectDir points at a specific archive (e.g. patch.xp3).
+        if (!parentDir.IsEmpty()) {
+            static const char* xp3Names[] = {
+                "data.xp3", "run.xp3", "plugin.xp3",
+                "patch.xp3", "patch2.xp3", "patch3.xp3",
+                "patch4.xp3", "patch5.xp3", nullptr
+            };
+            // TVPProjectDir now has '>' at end; extract the base name for comparison
+            ttstr currentArc = TVPExtractStorageName(parentDir.IsEmpty() ? TVPProjectDir : 
+                ttstr(TVPProjectDir, TVPProjectDir.GetLen() - 1));
+            for (int i = 0; xp3Names[i]; ++i) {
+                ttstr siblingArc = parentDir + xp3Names[i];
+                if (TVPIsExistentStorageNoSearchNoNormalize(siblingArc)) {
+                    ttstr siblingAutoPath = siblingArc + TVPArchiveDelimiter;
+                    TVPAddAutoPath(siblingAutoPath);
+                    TVPAddArchiveSubDirAutoPath(TVPNormalizeStorageName(siblingAutoPath));
+                    SDL_Log("[krkr2-diag] TVPBeforeSystemInit: sibling XP3 '%s'",
+                            siblingAutoPath.AsStdString().c_str());
+                }
+            }
+        }
+#endif
     }
     else
     {
-        TVPProjectDir += TJS_N("/");
+        if (TVPProjectDir.GetLastChar() != TJS_N('/') &&
+            TVPProjectDir.GetLastChar() != TJS_N('\\'))
+            TVPProjectDir += TJS_N("/");
     }
+#ifdef _KRKRSDL3_OHOS
+    SDL_Log("[krkr2-diag] TVPProjectDir after check: '%s'", TVPProjectDir.AsStdString().c_str());
+#endif
     TVPSetCurrentDirectory(TVPProjectDir);
 
 #ifdef TVP_REPORT_HW_EXCEPTION

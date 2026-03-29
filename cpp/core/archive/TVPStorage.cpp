@@ -23,6 +23,10 @@
 #include "Platform.h"
 
 #include <filesystem>
+#ifdef _KRKRSDL3_OHOS
+#include <sys/stat.h>
+#include <SDL2/SDL.h>
+#endif
 
 #define TVP_DEFAULT_ARCHIVE_CACHE_NUM 64
 #define TVP_DEFAULT_AUTOPATH_CACHE_NUM 256
@@ -820,6 +824,92 @@ void TVPAddAutoPath(const ttstr& name)
     TVPClearAutoPathCache();
 }
 //---------------------------------------------------------------------------
+void TVPAddArchiveSubDirAutoPath(const ttstr& arcNormalizedPath)
+{
+    // Given arcNormalizedPath is a normalized archive path ending with '>'
+    // (e.g. "file://./storage/.../data.xp3>").
+    // This function enumerates ALL subdirectory paths inside the archive
+    // and registers an auto-path for each one (e.g. data.xp3>main/,
+    // data.xp3>system/override/) so that files stored at any nesting depth
+    // are discoverable via auto-path lookup.
+    SDL_Log("[krkr2-subdir] TVPAddArchiveSubDirAutoPath entered, path='%s'",
+            arcNormalizedPath.AsStdString().c_str());
+
+    tjs_int delimPos = arcNormalizedPath.GetLen() - 1;
+    if (delimPos < 0 || arcNormalizedPath[delimPos] != TVPArchiveDelimiter) {
+        SDL_Log("[krkr2-subdir] early return: last char is not archive delimiter");
+        return; // not an archive auto-path
+    }
+
+    ttstr arcName(arcNormalizedPath, delimPos); // strip trailing '>'
+
+    tTVPArchive* arc = nullptr;
+    try {
+        arc = TVPArchiveCache.Get(arcName);
+    } catch (...) {
+        SDL_Log("[krkr2-subdir] exception opening archive '%s'",
+                arcName.AsStdString().c_str());
+        return;
+    }
+
+    tjs_uint count = arc->GetCount();
+    SDL_Log("[krkr2-subdir] archive has %u entries", (unsigned)count);
+    std::vector<ttstr> newPaths;
+    tjs_uint rootCount = 0;
+
+    for (tjs_uint i = 0; i < count; i++) {
+        ttstr entryName = arc->GetName(i);
+        const tjs_char* p = entryName.c_str();
+        const tjs_char* pos = p;
+        bool hasSlash = false;
+
+        // Register ALL directory levels, not just top-level.
+        // For entry "system/override/foo.tjs", register both
+        // "archive>system/" and "archive>system/override/".
+        while ((pos = TJS_strchr(pos, TJS_N('/'))) != nullptr) {
+            hasSlash = true;
+            ttstr dirPart(p, (int)(pos - p + 1));
+            ttstr fullSubPath = arcNormalizedPath + dirPart;
+            pos++; // advance past '/'
+
+            // Dedup against already-queued paths
+            bool alreadyQueued = false;
+            for (auto& np : newPaths)
+                if (np == fullSubPath) { alreadyQueued = true; break; }
+            if (alreadyQueued) continue;
+
+            // Dedup against existing TVPAutoPathList
+            bool alreadyAdded = false;
+            for (auto& ap : TVPAutoPathList)
+                if (ap == fullSubPath) { alreadyAdded = true; break; }
+            if (alreadyAdded) continue;
+
+            newPaths.push_back(fullSubPath);
+        }
+
+        if (!hasSlash) rootCount++;
+    }
+
+    arc->Release();
+
+    SDL_Log("[krkr2-subdir] rootCount=%u, subdirs found=%u",
+            (unsigned)rootCount, (unsigned)newPaths.size());
+    for (size_t i = 0; i < newPaths.size() && i < 10; i++) {
+        SDL_Log("[krkr2-subdir]   subdir[%d]='%s'",
+                (int)i, newPaths[i].AsStdString().c_str());
+    }
+
+    // Add all discovered sub-directory paths
+    for (auto& path : newPaths) {
+        TVPAutoPathList.push_back(path);
+    }
+    if (!newPaths.empty())
+        TVPClearAutoPathCache();
+
+    SDL_Log("[krkr2-subdir] TVPAutoPathList now has %u entries",
+            (unsigned)TVPAutoPathList.size());
+}
+//---------------------------------------------------------------------------
 void TVPRemoveAutoPath(const ttstr& name)
 {
     tTJSCriticalSectionHolder cs_holder(TVPCreateStreamCS);
@@ -850,6 +940,8 @@ static tjs_uint TVPRebuildAutoPathTable()
 
     tjs_uint64 tick = TVPGetTickCount();
     TVPAddLog((const tjs_char*)TVPInfoRebuildingAutoPath);
+    SDL_Log("[krkr2-subdir] TVPRebuildAutoPathTable: TVPAutoPathList has %u entries",
+            (unsigned)TVPAutoPathList.size());
 
     tjs_uint totalcount = 0;
 
@@ -976,6 +1068,23 @@ ttstr TVPGetPlacedPath(const ttstr& name)
 
     TVPRebuildAutoPathTable(); // ensure auto path table
     ttstr* result = TVPAutoPathTable.Find(storagename);
+
+#ifdef _KRKRSDL3_OHOS
+    // On OHOS, NormalizePathName preserves case (case-sensitive FS), but
+    // archive entry names are always lowercased by NormalizeInArchiveStorageName.
+    // Fall back to lowercase lookup so archive files are discoverable.
+    if (!result) {
+        ttstr lower_storagename(storagename);
+        tTVPArchive::NormalizeInArchiveStorageName(lower_storagename);
+        if (lower_storagename != storagename)
+            result = TVPAutoPathTable.Find(lower_storagename);
+        if (result) {
+            // Use the lowercased name for the combined path
+            storagename = lower_storagename;
+        }
+    }
+#endif
+
     if (result)
     {
         // found in table
@@ -1179,11 +1288,32 @@ bool TVPRemoveFolder(const ttstr& name)
 //---------------------------------------------------------------------------
 // TVPGetAppPath
 //---------------------------------------------------------------------------
+static ttstr TVPAppPathCache;
+static bool TVPAppPathCacheInit = false;
 ttstr TVPGetAppPath()
 {
-    static ttstr apppath(TVPExtractStoragePath(TVPProjectDir));
-    return apppath;
+    if (!TVPAppPathCacheInit) {
+        TVPAppPathCache = TVPExtractStoragePath(TVPProjectDir);
+        TVPAppPathCacheInit = true;
+    }
+    return TVPAppPathCache;
 }
+//---------------------------------------------------------------------------
+
+//---------------------------------------------------------------------------
+// TVPResetStorageForReentry - clear all storage state for OHOS re-entry
+//---------------------------------------------------------------------------
+#ifdef _KRKRSDL3_OHOS
+void TVPResetStorageForReentry()
+{
+    tTJSCriticalSectionHolder cs_holder(TVPCreateStreamCS);
+    TVPAutoPathList.clear();
+    TVPClearAutoPathCache();
+    TVPArchiveCache.Clear();
+    TVPAppPathCacheInit = false;
+    TVPAppPathCache.Clear();
+}
+#endif
 //---------------------------------------------------------------------------
 
 //---------------------------------------------------------------------------
@@ -1191,10 +1321,19 @@ ttstr TVPGetAppPath()
 //---------------------------------------------------------------------------
 bool TVPCheckExistentLocalFile(const ttstr& name)
 {
+#ifdef _KRKRSDL3_OHOS
+    const char* path = name.c_str();
+    struct stat st;
+    int rc = stat(path, &st);
+    bool result = (rc == 0) && S_ISREG(st.st_mode);
+    SDL_Log("[krkr2-diag] TVPCheckExistentLocalFile('%s') stat_rc=%d result=%d", path, rc, result);
+    return result;
+#else
     std::error_code ec;
     std::filesystem::path path = std::filesystem::u8path(name.c_str());
     return std::filesystem::exists(path, ec) && 
            std::filesystem::is_regular_file(path, ec);
+#endif
 }
 //---------------------------------------------------------------------------
 
@@ -1203,10 +1342,16 @@ bool TVPCheckExistentLocalFile(const ttstr& name)
 //---------------------------------------------------------------------------
 bool TVPCheckExistentLocalFolder(const ttstr& name)
 {
+#ifdef _KRKRSDL3_OHOS
+    struct stat st;
+    if (stat(name.c_str(), &st) != 0) return false;
+    return S_ISDIR(st.st_mode);
+#else
     std::error_code ec;
     std::filesystem::path path = std::filesystem::u8path(name.c_str());
     return std::filesystem::exists(path, ec) && 
            std::filesystem::is_directory(path, ec);
+#endif
 }
 //---------------------------------------------------------------------------
 

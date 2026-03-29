@@ -3,7 +3,14 @@
 #include <algorithm>
 #include <string>
 #include <vector>
+#include <filesystem>
 #include <assert.h>
+#include <SDL2/SDL.h>
+#ifdef _KRKRSDL3_OHOS
+#include <sys/stat.h>
+#include <dirent.h>
+#include <errno.h>
+#endif
 
 #include "tjsError.h"
 #include "tjsDebug.h"
@@ -39,6 +46,22 @@ static tTJSCriticalSection _NoMemCallBackCS;
 static void* _reservedMem = malloc(1024 * 1024 * 4); // 4M reserved mem
 static bool _project_startup = false;
 tTJS* TVPAppScriptEngine;
+
+//---------------------------------------------------------------------------
+// TVPResetApplicationForReentry - reset application state for OHOS re-entry
+//---------------------------------------------------------------------------
+#ifdef _KRKRSDL3_OHOS
+void TVPResetApplicationForReentry()
+{
+    _project_startup = false;
+    TVPAppScriptEngine = nullptr;
+    if (!_reservedMem)
+        _reservedMem = malloc(1024 * 1024 * 4);
+    if (!Application)
+        Application = new tTVPApplication;
+}
+#endif
+//---------------------------------------------------------------------------
 
 static void _do_compact()
 {
@@ -115,6 +138,7 @@ void TVPLockSoundMixer();
 void TVPUnlockSoundMixer();
 
 static bool _warnLowMem = true;
+#ifndef _KRKRSDL3_OHOS
 void TVPCheckMemory()
 {
 #if defined(_DEBUG)
@@ -150,6 +174,7 @@ int TVPShowSimpleMessageBoxYesNo(const ttstr& text, const ttstr& caption)
     normal.emplace_back("No");
     return TVPShowSimpleMessageBox(text, caption, normal);
 }
+#endif // !_KRKRSDL3_OHOS
 
 tTVPApplication::tTVPApplication()
   : is_attach_console_(false),
@@ -191,9 +216,188 @@ bool tTVPApplication::StartApplication(int argc, char* argv[])
     try
     {
 
-        TVPProjectDir = TVPNormalizeStorageName(argv[1]);
+        // If argv[1] is a directory, auto-detect data.xp3 (or first *.xp3) inside it
+        {
+            std::string arg1 = argv[1];
+            // normalize separators
+            for (auto& c : arg1) if (c == '\\') c = '/';
+            // strip trailing slash
+            while (!arg1.empty() && arg1.back() == '/') arg1.pop_back();
+            // check if it's a directory
+            bool isDir = false;
+#ifdef _KRKRSDL3_OHOS
+            {
+                struct stat st;
+                int rc = stat(arg1.c_str(), &st);
+                SDL_Log("[krkr2-diag] stat('%s') rc=%d mode=0%o isdir=%d",
+                        arg1.c_str(), rc, rc == 0 ? st.st_mode : 0,
+                        rc == 0 ? S_ISDIR(st.st_mode) : -1);
+                if (rc == 0 && S_ISDIR(st.st_mode))
+                    isDir = true;
+            }
+#else
+            {
+                std::error_code ec;
+                isDir = std::filesystem::is_directory(
+                    std::filesystem::u8path(arg1), ec);
+            }
+#endif
+            SDL_Log("[krkr2-diag] arg1='%s' isDir=%d", arg1.c_str(), isDir);
+            if (isDir) {
+                // look for data.xp3 first, then any *.xp3
+                std::string found;
+                std::string candidate = arg1 + "/data.xp3";
+#ifdef _KRKRSDL3_OHOS
+                {
+                    struct stat st;
+                    int rc = stat(candidate.c_str(), &st);
+                    SDL_Log("[krkr2-diag] stat('%s') rc=%d errno=%d isreg=%d",
+                            candidate.c_str(), rc, rc != 0 ? errno : 0,
+                            rc == 0 ? S_ISREG(st.st_mode) : -1);
+                    if (rc == 0 && S_ISREG(st.st_mode))
+                        found = candidate;
+                }
+                if (found.empty()) {
+                    DIR* dir = opendir(arg1.c_str());
+                    SDL_Log("[krkr2-diag] opendir('%s') = %p", arg1.c_str(), (void*)dir);
+                    if (dir) {
+                        struct dirent* ent;
+                        int count = 0;
+                        while ((ent = readdir(dir)) != nullptr) {
+                            std::string fn(ent->d_name);
+                            SDL_Log("[krkr2-diag]   entry[%d]: '%s'", count, fn.c_str());
+                            if (fn.size() > 4 && fn.substr(fn.size() - 4) == ".xp3") {
+                                found = arg1 + "/" + fn;
+                                break;
+                            }
+                            count++;
+                        }
+                        closedir(dir);
+                    }
+                }
+#else
+                {
+                    std::error_code ec;
+                    if (std::filesystem::is_regular_file(
+                            std::filesystem::u8path(candidate), ec))
+                        found = candidate;
+                }
+                if (found.empty()) {
+                    std::error_code ec;
+                    for (auto& entry : std::filesystem::directory_iterator(
+                             std::filesystem::u8path(arg1), ec)) {
+                        if (entry.path().extension() == ".xp3") {
+                            found = entry.path().u8string();
+                            break;
+                        }
+                    }
+                }
+#endif
+                SDL_Log("[krkr2-diag] XP3 found='%s'", found.c_str());
+                if (!found.empty())
+                    TVPProjectDir = TVPNormalizeStorageName(found.c_str());
+                else
+                    TVPProjectDir = TVPNormalizeStorageName(argv[1]);
+            } else {
+                TVPProjectDir = TVPNormalizeStorageName(argv[1]);
+            }
+            SDL_Log("[krkr2-diag] TVPProjectDir='%s'", TVPProjectDir.AsStdString().c_str());
+        }
 
+#ifdef _KRKRSDL3_OHOS
+        // [OHOS] Early auto-path registration.
+        // TVPBeforeSystemInit (which appends '>' to TVPProjectDir) runs inside
+        // TVPSystemInit, far AFTER TVPInitFontNames / TVPInitializeBaseSystems.
+        // Those earlier functions may trigger TVPRebuildAutoPathTable while
+        // TVPAutoPathList is still empty, giving "Total 0 file(s) found".
+        //
+        // IMPORTANT: Do NOT modify TVPProjectDir here — TVPGetAppPath() uses a
+        // static cache of TVPExtractStoragePath(TVPProjectDir) on first call.
+        // If TVPProjectDir already has '>', the extracted path includes '>' and
+        // GetLocalName fails ("Cannot get local name from ...xp3>").
+        //
+        // Instead, only register the auto-path entries so the archive contents
+        // become discoverable.  TVPBeforeSystemInit will handle TVPProjectDir.
+        try {
+            SDL_Log("[krkr2-diag] Early auto-path registration starting");
+            bool isArchive = TVPIsExistentStorageNoSearchNoNormalize(TVPProjectDir);
+            SDL_Log("[krkr2-diag] TVPIsExistentStorageNoSearchNoNormalize=%d", isArchive);
+            if (isArchive)
+            {
+                // Archive file (e.g. data.xp3) — register it with '>' delimiter
+                ttstr arcAutoPath = TVPProjectDir + TVPArchiveDelimiter;
+                TVPAddAutoPath(arcAutoPath);
+                // Register all top-level subdirectories inside the archive
+                // (e.g. data.xp3>main/, data.xp3>system/) so that files like
+                // Config.tjs (stored as main/Config.tjs) are findable by name.
+                TVPAddArchiveSubDirAutoPath(TVPNormalizeStorageName(arcAutoPath));
+                SDL_Log("[krkr2-diag] Registered archive auto-path: '%s'",
+                        arcAutoPath.AsStdString().c_str());
+                // Also register the parent directory so files sitting next to
+                // the archive (e.g. Config.tjs, patch.xp3) are accessible
+                ttstr parentDir = TVPExtractStoragePath(TVPProjectDir);
+                if (!parentDir.IsEmpty()) {
+                    TVPAddAutoPath(parentDir);
+                    SDL_Log("[krkr2-diag] Registered parent dir auto-path: '%s'",
+                            parentDir.AsStdString().c_str());
+                    // Scan the parent directory for other XP3 archives
+                    // (e.g. when patch.xp3 is passed but data.xp3 has startup.tjs)
+                    static const char* xp3Names[] = {
+                        "data.xp3", "run.xp3", "plugin.xp3",
+                        "patch.xp3", "patch2.xp3", "patch3.xp3",
+                        "patch4.xp3", "patch5.xp3", nullptr
+                    };
+                    for (int i = 0; xp3Names[i]; ++i) {
+                        ttstr siblingArc = parentDir + xp3Names[i];
+                        // Skip the archive we already registered
+                        if (siblingArc == TVPProjectDir) continue;
+                        if (TVPIsExistentStorageNoSearchNoNormalize(siblingArc)) {
+                            ttstr siblingAutoPath = siblingArc + TVPArchiveDelimiter;
+                            TVPAddAutoPath(siblingAutoPath);
+                            TVPAddArchiveSubDirAutoPath(TVPNormalizeStorageName(siblingAutoPath));
+                            SDL_Log("[krkr2-diag] Auto-discovered sibling XP3: '%s'",
+                                    siblingAutoPath.AsStdString().c_str());
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // Directory — register it, and auto-discover XP3 archives inside
+                ttstr dirPath = TVPProjectDir;
+                if (dirPath.GetLastChar() != TJS_N('/'))
+                    dirPath += TJS_N("/");
+                TVPAddAutoPath(dirPath);
+                static const char* xp3Names[] = {
+                    "data.xp3", "run.xp3", "plugin.xp3",
+                    "patch.xp3", "patch2.xp3", "patch3.xp3", nullptr
+                };
+                for (int i = 0; xp3Names[i]; ++i) {
+                    ttstr arcPath = dirPath + xp3Names[i];
+                    if (TVPIsExistentStorageNoSearchNoNormalize(arcPath)) {
+                        ttstr arcAutoPath = arcPath + TVPArchiveDelimiter;
+                        TVPAddAutoPath(arcAutoPath);
+                        SDL_Log("[krkr2-diag] Auto-discovered XP3: '%s'",
+                                arcAutoPath.AsStdString().c_str());
+                    }
+                }
+                SDL_Log("[krkr2-diag] Registered dir auto-path: '%s'",
+                        dirPath.AsStdString().c_str());
+            }
+        } catch (const std::exception& e) {
+            SDL_Log("[krkr2-diag] Early auto-path exception: %s", e.what());
+        } catch (...) {
+            SDL_Log("[krkr2-diag] Early auto-path unknown exception");
+        }
+#endif
+
+#ifdef _KRKRSDL3_OHOS
+        SDL_Log("[krkr2-diag] >>> Step 1: TVPInitScriptEngine");
+#endif
         TVPInitScriptEngine();
+#ifdef _KRKRSDL3_OHOS
+        SDL_Log("[krkr2-diag] >>> Step 2: TVPInitFontNames");
+#endif
         TVPInitFontNames();
 
         // banner
@@ -201,8 +405,14 @@ bool tTVPApplication::StartApplication(int argc, char* argv[])
             TVPFormatMessage(TVPProgramStartedOn, TVPGetOSName(), TVPGetPlatformName()));
 
         // TVPInitializeBaseSystems
+#ifdef _KRKRSDL3_OHOS
+        SDL_Log("[krkr2-diag] >>> Step 3: TVPInitializeBaseSystems");
+#endif
         TVPInitializeBaseSystems();
 
+#ifdef _KRKRSDL3_OHOS
+        SDL_Log("[krkr2-diag] >>> Step 4: Initialize");
+#endif
         Initialize();
 
         if (TVPCheckPrintDataPath())
@@ -212,7 +422,13 @@ bool tTVPApplication::StartApplication(int argc, char* argv[])
 
         image_load_thread_ = new tTVPAsyncImageLoader();
 
+#ifdef _KRKRSDL3_OHOS
+        SDL_Log("[krkr2-diag] >>> Step 5: TVPLoadPluigins");
+#endif
         TVPLoadPluigins(); // load plugin module *.tpm
+#ifdef _KRKRSDL3_OHOS
+        SDL_Log("[krkr2-diag] >>> Step 6: TVPSystemInit");
+#endif
         TVPSystemInit();
 
         if (TVPCheckAbout())
@@ -226,6 +442,9 @@ bool tTVPApplication::StartApplication(int argc, char* argv[])
         // start image load thread
         image_load_thread_->Resume();
 
+#ifdef _KRKRSDL3_OHOS
+        SDL_Log("[krkr2-diag] >>> Step 7: TVPInitializeStartupScript");
+#endif
         TVPInitializeStartupScript();
         _project_startup = true;
     }
@@ -233,6 +452,18 @@ bool tTVPApplication::StartApplication(int argc, char* argv[])
     {
         // nothing to do
     }
+#ifdef _KRKRSDL3_OHOS
+    catch (const eTJS& e)
+    {
+        SDL_Log("[krkr2-diag] eTJS exception: %s", e.GetMessage().AsStdString().c_str());
+        throw; // re-throw for runner_main to handle
+    }
+    catch (const Exception& e)
+    {
+        SDL_Log("[krkr2-diag] Exception: %s", e.what().AsStdString().c_str());
+        throw;
+    }
+#endif
 
     return true;
 }

@@ -157,7 +157,8 @@ BasePlayer::~BasePlayer()
 {
     CloseInputStream();
     DestroyPlayers();
-    ::Application->RegisterActiveEvent(this, nullptr);
+    if (::Application)
+        ::Application->RegisterActiveEvent(this, nullptr);
 }
 
 void BasePlayer::Play()

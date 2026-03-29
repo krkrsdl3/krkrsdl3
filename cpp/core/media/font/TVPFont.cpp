@@ -10,6 +10,11 @@
 #include "Platform.h"
 #include "StringUtil.h"
 #include "TVPConfig.h"
+#include <vector>
+#ifdef _KRKRSDL3_OHOS
+#include <SDL2/SDL.h>
+#include <cstdio>
+#endif
 
 tTJSHashTable<ttstr, TVPFontNamePathInfo, tTVPttstrHash> TVPFontNames;
 
@@ -177,7 +182,52 @@ void TVPInitFontNames()
                                  [](TVPFontNamePathInfo* info) -> tTJSBinaryStream*
                                  { return GetResourceStream(info->Path.AsStdString()); });
             delete stream;
+            break;
         }
+#ifdef _KRKRSDL3_OHOS
+        // HarmonyOS: probe system fonts directly via fopen()
+        // (mirrors Kirikiroid2's KR2_HARMONY_BUILD path in FontImpl.cpp)
+        {
+            static const char* ohosFontPaths[] = {
+                "/system/fonts/HarmonyOS_Sans_SC.ttf",
+                "/system/fonts/NotoSansCJK-Regular.ttc",
+                "/system/fonts/DroidSansFallback.ttf",
+                "/system/fonts/NotoSansHans-Regular.otf",
+                "/system/fonts/HarmonyOS_Sans.ttf",
+                "/system/fonts/HarmonyOS_Sans_SC_Regular.ttf",
+                nullptr
+            };
+            for (int i = 0; ohosFontPaths[i]; ++i) {
+                FILE* fp = fopen(ohosFontPaths[i], "rb");
+                if (!fp) continue;
+                fseek(fp, 0, SEEK_END);
+                long sz = ftell(fp);
+                fseek(fp, 0, SEEK_SET);
+                if (sz <= 0) { fclose(fp); continue; }
+                std::vector<tjs_uint8> buf(sz);
+                fread(&buf[0], 1, sz, fp);
+                fclose(fp);
+                ttstr fontPath(ohosFontPaths[i]);
+                int count = TVPInternalEnumFonts(&buf[0], (int)sz, fontPath,
+                    [](TVPFontNamePathInfo* info) -> tTJSBinaryStream* {
+                        FILE* f = fopen(info->Path.AsStdString().c_str(), "rb");
+                        if (!f) return nullptr;
+                        fseek(f, 0, SEEK_END);
+                        long s = ftell(f);
+                        fseek(f, 0, SEEK_SET);
+                        if (s <= 0) { fclose(f); return nullptr; }
+                        tTVPMemoryStream* ret = new tTVPMemoryStream(nullptr, (tjs_uint)s);
+                        fread(ret->GetInternalBuffer(), 1, s, f);
+                        fclose(f);
+                        return ret;
+                    });
+                if (count > 0) {
+                    SDL_Log("[krkr2-font] Registered system font: %s (%d face(s))", ohosFontPaths[i], count);
+                    break;
+                }
+            }
+        }
+#endif
     } while (false);
     if (TVPFontNames.GetCount() > 0)
     {
