@@ -17,6 +17,16 @@
 #include "tjsGlobalStringMap.h"
 #include "tjsDebug.h"
 
+#include <cstring>
+
+// Protected global property names that should not be overwritten with void.
+// This prevents game scripts from voiding SystemAction stubs that the SDL2 port
+// provides in place of the original Win32 Window class lifecycle management.
+static bool TVPIsProtectedGlobalProperty(const tjs_char* name)
+{
+    return name && strcmp(name, "SystemAction") == 0;
+}
+
 namespace TJS
 {
 
@@ -1537,6 +1547,11 @@ tjs_error tTJSCustomObject::PropSet(tjs_uint32 flag,
     if (!param)
         return TJS_E_INVALIDPARAM;
 
+    // Prevent overwriting protected properties (e.g. SystemAction) with void
+    if (param->Type() == tvtVoid && GetValue(data).Type() == tvtObject &&
+        membername && TVPIsProtectedGlobalProperty(membername))
+        return TJS_S_OK;
+
     CheckObjectClosureRemove(GetValue(data));
     try
     {
@@ -1634,6 +1649,11 @@ tjs_error tTJSCustomObject::PropSetByVS(tjs_uint32 flag,
 
     if (!param)
         return TJS_E_INVALIDPARAM;
+
+    // Prevent overwriting protected properties (e.g. SystemAction) with void
+    if (param->Type() == tvtVoid && GetValue(data).Type() == tvtObject &&
+        TVPIsProtectedGlobalProperty((const tjs_char*)*membername))
+        return TJS_S_OK;
 
     CheckObjectClosureRemove(GetValue(data));
     try

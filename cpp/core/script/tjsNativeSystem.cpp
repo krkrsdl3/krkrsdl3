@@ -819,6 +819,32 @@ TJS_DENY_NATIVE_PROP_SETTER
 }
 TJS_END_NATIVE_STATIC_PROP_DECL_OUTER(cls, touchDevice)
 //----------------------------------------------------------------------
+TJS_BEGIN_NATIVE_PROP_DECL(checkAppId)
+{
+	TJS_BEGIN_NATIVE_PROP_GETTER
+	{
+		// Return global.APP_ID to bypass DRM check (same as Kirikiroid2)
+		extern iTJSDispatch2 * TVPGetScriptDispatch();
+		iTJSDispatch2 * global = TVPGetScriptDispatch();
+		if (global) {
+			tTJSVariant val;
+			tjs_error er = global->PropGet(0, TJS_N("APP_ID"), nullptr, &val, global);
+			global->Release();
+			if (TJS_SUCCEEDED(er)) {
+				*result = val;
+			} else {
+				*result = ttstr("");
+			}
+		} else {
+			*result = ttstr("");
+		}
+		return TJS_S_OK;
+	}
+	TJS_END_NATIVE_PROP_GETTER
+	TJS_DENY_NATIVE_PROP_SETTER
+}
+TJS_END_NATIVE_STATIC_PROP_DECL_OUTER(cls, checkAppId)
+//----------------------------------------------------------------------
 
 return cls;
 }

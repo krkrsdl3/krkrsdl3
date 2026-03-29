@@ -769,7 +769,16 @@ void TVPExecuteStorage(const ttstr& name,
             }
             delete stream;
             if (isbytecode)
+            {
+                // Post-load hook: inject WIN32Dialog constants after win32dialog.tjs
+                ttstr sn(TVPExtractStorageName(name));
+                sn.ToLowerCase();
+                if(sn == TJS_N("win32dialog.tjs")) {
+                    extern void TVPInjectWIN32DialogConstants();
+                    TVPInjectWIN32DialogConstants();
+                }
                 return;
+            }
         }
     }
 
@@ -795,6 +804,16 @@ void TVPExecuteStorage(const ttstr& name,
             TVPScriptEngine->ExecScript(buffer, result, context, &shortname);
         else
             TVPScriptEngine->EvalExpression(buffer, result, context, &shortname);
+    }
+
+    // Post-load hook: inject WIN32Dialog constants after win32dialog.tjs
+    {
+        ttstr sn(TVPExtractStorageName(name));
+        sn.ToLowerCase();
+        if(sn == TJS_N("win32dialog.tjs")) {
+            extern void TVPInjectWIN32DialogConstants();
+            TVPInjectWIN32DialogConstants();
+        }
     }
 }
 
@@ -954,6 +973,36 @@ void TVPOpenPatchLibUrl();
 //---------------------------------------------------------------------------
 void TVPExecuteStartupScript()
 {
+    // Ensure SystemAction stub exists before any game scripts run.
+    // Many games (LASS engine etc.) expect SystemAction.f10, SystemAction.option, etc.
+    // The game's Window class lifecycle sets SystemAction = void in destructors
+    // and re-creates it in constructors, but our SDL2 port lacks the Window class
+    // implementation that re-creates it. So we create a persistent stub.
+    {
+        iTJSDispatch2 *global = TVPGetScriptDispatch();
+        if (global) {
+            iTJSDispatch2 *dict = TJSCreateDictionaryObject();
+            if (dict) {
+                tTJSVariant funcVar;
+                TVPExecuteExpression(TJS_N("function(){}"), &funcVar);
+                static const tjs_char *stubNames[] = {
+                    TJS_N("_rclick"), TJS_N("_lclick"), TJS_N("_wheel"),
+                    TJS_N("f1"), TJS_N("f2"), TJS_N("f3"), TJS_N("f4"),
+                    TJS_N("f5"), TJS_N("f6"), TJS_N("f7"), TJS_N("f8"),
+                    TJS_N("f9"), TJS_N("f10"), TJS_N("f11"), TJS_N("f12"),
+                    TJS_N("capture"), TJS_N("release"), TJS_N("escape"),
+                    TJS_N("option"), TJS_N("close"), NULL
+                };
+                for (int i = 0; stubNames[i]; i++) {
+                    dict->PropSet(TJS_MEMBERENSURE, stubNames[i], NULL, &funcVar, dict);
+                }
+                tTJSVariant dictVar(dict, dict);
+                global->PropSet(TJS_MEMBERENSURE, TJS_N("SystemAction"), NULL, &dictVar, global);
+                dict->Release();
+            }
+        }
+    }
+
     ttstr strPatchError;
     try
     {
@@ -993,15 +1042,8 @@ void TVPExecuteStartupScript()
 
     if (!strPatchError.IsEmpty())
     {
-        ttstr msg = "startup_patch_fail\n";
-        msg += strPatchError;
-        std::vector<ttstr> btns;
-        btns.emplace_back("忽略");
-        btns.emplace_back("浏览补丁");
-        if (TVPShowSimpleMessageBox(msg, TVPGetPackageVersionString(), btns) == 1)
-        {
-            TVPOpenPatchLibUrl();
-        }
+        // Just log the error instead of showing a blocking dialog
+        TVPAddLog(TJS_N("(warn) patch.tjs failed: ") + strPatchError);
     }
 
     // execute "startup.tjs"

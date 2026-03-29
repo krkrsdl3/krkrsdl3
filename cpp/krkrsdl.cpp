@@ -8,6 +8,8 @@
 #include "TVPApplication.h"
 #include "RenderManager.h"
 #include "MainWindowLayer.h"
+#include "tjsError.h"
+#include "tjsCommHead.h"
 
 #include "eventCallbackFun.h"
 
@@ -15,6 +17,11 @@
 #ifdef _KRKRSDL3_WINDOWS
 #include <windows.h>
 #endif
+#endif
+
+// Windows <windows.h> defines GetMessage as GetMessageA/W — undo it
+#ifdef GetMessage
+#undef GetMessage
 #endif
 
 SDL_Window* tvp_window;
@@ -82,9 +89,40 @@ int main(int argc, char* argv[])
         SDL_Quit();
         return 1;
     }
-    if (!::Application->StartApplication(argc, argv))
+    try
     {
-        SDL_Log("Game Start Failed.");
+        if (!::Application->StartApplication(argc, argv))
+        {
+            SDL_Log("Game Start Failed.");
+            SDL_DestroyWindow(tvp_window);
+            SDL_Quit();
+            return 1;
+        }
+    }
+    catch (const TJS::eTJSError& e)
+    {
+        SDL_Log("TJS Error: %s", e.GetMessage().AsStdString().c_str());
+        SDL_DestroyWindow(tvp_window);
+        SDL_Quit();
+        return 1;
+    }
+    catch (const TJS::eTJS& e)
+    {
+        SDL_Log("TJS Exception: %s", e.GetMessage().AsStdString().c_str());
+        SDL_DestroyWindow(tvp_window);
+        SDL_Quit();
+        return 1;
+    }
+    catch (const std::exception& e)
+    {
+        SDL_Log("C++ Exception: %s", e.what());
+        SDL_DestroyWindow(tvp_window);
+        SDL_Quit();
+        return 1;
+    }
+    catch (...)
+    {
+        SDL_Log("Unknown exception during startup.");
         SDL_DestroyWindow(tvp_window);
         SDL_Quit();
         return 1;
@@ -104,10 +142,29 @@ int main(int argc, char* argv[])
 
     // 主循环
     bool running = true;
-    while (running)
+    try
     {
-        sdl_process_events(running);
-        sdl_render_frame();
+        while (running)
+        {
+            sdl_process_events(running);
+            sdl_render_frame();
+        }
+    }
+    catch (const TJS::eTJSError& e)
+    {
+        SDL_Log("TJS Error in main loop: %s", e.GetMessage().AsStdString().c_str());
+    }
+    catch (const TJS::eTJS& e)
+    {
+        SDL_Log("TJS Exception in main loop: %s", e.GetMessage().AsStdString().c_str());
+    }
+    catch (const std::exception& e)
+    {
+        SDL_Log("C++ Exception in main loop: %s", e.what());
+    }
+    catch (...)
+    {
+        SDL_Log("Unknown exception in main loop.");
     }
 
     SDL_DestroyWindow(tvp_window);

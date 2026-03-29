@@ -8,6 +8,8 @@ static void InitPlugin_WINDOWEx()
         TJS_N("Window.registerExEvent = function(){this.exSystemMenu = void;};")
             TJS_N("Window.getNotificationNum = function() {return 0;};")
                 TJS_N("Window.setMessageHook = function() { return 0; }; ")
+                    TJS_N("Window.startMouseHook = function() {}; ")
+                        TJS_N("Window.stopMouseHook = function() {}; ")
                     TJS_N("Window.getClientRect = function() { return %['x' => this.left,'y' => "
                           "this.top,'w' => this.width,'h' => this.height]; };")
                         TJS_N("System.getDisplayMonitors = function() { return "

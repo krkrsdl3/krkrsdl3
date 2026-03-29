@@ -23,9 +23,9 @@
 #include "Platform.h"
 
 #include <filesystem>
+#include <SDL2/SDL.h>
 #ifdef _KRKRSDL3_OHOS
 #include <sys/stat.h>
-#include <SDL2/SDL.h>
 #endif
 
 #define TVP_DEFAULT_ARCHIVE_CACHE_NUM 64
