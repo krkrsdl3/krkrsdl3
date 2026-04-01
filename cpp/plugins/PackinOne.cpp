@@ -11,9 +11,11 @@
 
 static void InitPlugin_PackinOne()
 {
-    // 我们并不知道这个插件是干啥的，只能根据情况猜一个
-    ncbAutoRegister::LoadModule(TJS_N("LayerExMovie.dll"));
-    TVPExecuteScript(TJS_N("\
+    try
+    {
+        // 我们并不知道这个插件是干啥的，只能根据情况猜一个
+        ncbAutoRegister::LoadModule(TJS_N("LayerExMovie.dll"));
+        TVPExecuteScript(TJS_N("\
 class AffineSourceMovie extends AffineSource {\
 	var _movie;\
 	var _width = 0;\
@@ -100,6 +102,7 @@ extSourceMap[\".WMV\"] = AffineSourceMovie;\
 extSourceMap[\".MPG\"] = AffineSourceMovie;\
 extSourceMap[\".MPEG\"] = AffineSourceMovie;\
         "));
+    } catch (...) { };
 }
 
 NCB_PRE_REGIST_CALLBACK(InitPlugin_PackinOne);

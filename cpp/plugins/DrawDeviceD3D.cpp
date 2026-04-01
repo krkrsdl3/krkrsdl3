@@ -12,8 +12,11 @@
 
 void DrawDeviceD3D_init()
 {
-    ncbAutoRegister::LoadModule(TJS_N("emoteplayer.dll"));
-    TVPExecuteBinaryStream(GetResourceStream("D3DEmote.tjs"), ttstr("D3DEmote.tjs"));
+    try
+    {
+        ncbAutoRegister::LoadModule(TJS_N("emoteplayer.dll"));
+        TVPExecuteBinaryStream(GetResourceStream("D3DEmote.tjs"), ttstr("D3DEmote.tjs"));
+    } catch(...) {}
 }
 
 void DrawDeviceD3D_done()

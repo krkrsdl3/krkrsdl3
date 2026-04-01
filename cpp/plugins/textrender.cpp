@@ -3,11 +3,11 @@
 #include <optional>
 
 #include "Log.h"
+#include "FreeTypeFontRasterizer.h"
 
 #define NCB_MODULE_NAME TJS_N("textrender.dll")
 
 // use Kirikiri-Z rasterizer for layouting
-#include "LayerBitmap.h"
 
 using RgbColor = uint32_t;
 
@@ -92,8 +92,8 @@ struct TextRenderState
     bool bold = false;
     bool italic = false;
     ttstr face = TJS_N("user");
-    int fontSize = 24;
-    double fontScale = 1.0;
+    int fontsize = 24;
+    double fontscale = 1.0;
     RgbColor chColor = 0xffffff;
     int rubySize = 10;
     int rubyOffset = -2;
@@ -104,7 +104,8 @@ struct TextRenderState
     int lineSpacing = 6;
     int pitch = 0;
     int lineSize = 0;
-    int valign = 0;
+    int align = -1;
+    int valign = -1;
 
     bool renderOver = false;
     int renderDelay = 1000;
@@ -118,8 +119,8 @@ struct TextRenderState
 
         setprop(dict, bold);
         setprop(dict, italic);
-        setprop(dict, fontSize);
-        setprop(dict, fontScale);
+        setprop(dict, fontsize);
+        setprop(dict, fontscale);
         setprop(dict, face);
         setprop_t(dict, chColor, static_cast<tjs_int>);
         setprop(dict, rubySize);
@@ -131,6 +132,7 @@ struct TextRenderState
         setprop(dict, lineSpacing);
         setprop(dict, pitch);
         setprop(dict, lineSize);
+        setprop(dict, align);
         setprop(dict, valign);
 
         auto res = tTJSVariant(dict, dict);
@@ -149,8 +151,8 @@ struct TextRenderState
 
         getprop_t(dict, bold, static_cast<tjs_int>);
         getprop_t(dict, italic, static_cast<tjs_int>);
-        getprop(dict, fontSize);
-        getprop(dict, fontScale);
+        getprop(dict, fontsize);
+        getprop(dict, fontscale);
         getprop_ensure_deref(dict, face, AsStringNoAddRef());
         getprop_t(dict, chColor, static_cast<tjs_int>);
         getprop(dict, rubySize);
@@ -162,6 +164,7 @@ struct TextRenderState
         getprop(dict, lineSpacing);
         getprop(dict, pitch);
         getprop(dict, lineSize);
+        getprop(dict, align);
         getprop(dict, valign);
     }
 
@@ -354,8 +357,8 @@ public:
     property_accessor(bold, bool, m_state.bold);
     property_accessor(italic, bool, m_state.italic);
     property_accessor_string(face, m_state.face);
-    property_accessor(fontSize, int, m_state.fontSize);
-    property_accessor(fontScale, double, m_state.fontScale);
+    property_accessor(fontSize, int, m_state.fontsize);
+    property_accessor(fontScale, double, m_state.fontscale);
     property_accessor_cast(chColor, RgbColor, tjs_int, m_state.chColor);
     property_accessor(rubySize, int, m_state.rubySize);
     property_accessor(rubyOffset, int, m_state.rubyOffset);
@@ -368,12 +371,12 @@ public:
 
     property_accessor(renderOver, bool, m_state.renderOver);
     property_accessor(renderDelay, int, m_state.renderDelay);
-    property_accessor(renderLeft, int, m_x);
-    int get_renderRight() const { return m_x + m_boxWidth; }
-    void set_renderRight(int v) { m_boxWidth = v - m_x; };
-    property_accessor(renderTop, int, m_y);
-    int get_renderBottom() const { return m_y + m_boxHeight; }
-    void set_renderBottom(int v) { m_boxHeight = v - m_y; };
+    property_accessor(renderLeft, int, m_boxLeft);
+    int get_renderRight() const { return m_boxLeft + m_boxWidth; }
+    void set_renderRight(int v) { m_boxWidth = v - m_boxLeft; };
+    property_accessor(renderTop, int, m_boxTop);
+    int get_renderBottom() const { return m_boxTop + m_boxHeight; }
+    void set_renderBottom(int v) { m_boxHeight = v - m_boxTop; };
     property_accessor(renderText, ttstr, m_state.renderText);
     int get_renderCount() const { return m_state.renderText.length(); }
     void set_renderCount(int v) { throw "avoid to set renderCount"; };
@@ -381,8 +384,8 @@ public:
     property_accessor(defaultBold, bool, m_default.bold);
     property_accessor(defaultItalic, bool, m_default.italic);
     property_accessor_string(defaultFace, m_default.face);
-    property_accessor(defaultFontSize, int, m_default.fontSize);
-    property_accessor(defaultFontScale, float, m_default.fontScale);
+    property_accessor(defaultFontSize, int, m_default.fontsize);
+    property_accessor(defaultFontScale, float, m_default.fontscale);
     property_accessor_cast(defaultChColor, RgbColor, tjs_int, m_default.chColor);
     property_accessor(defaultRubySize, int, m_default.rubySize);
     property_accessor(defaultRubyOffset, int, m_default.rubyOffset);
@@ -395,11 +398,13 @@ public:
     property_accessor(defaultValign, int, m_default.valign);
 
 private:
+    int m_boxLeft = 0;
+    int m_boxTop = 0;
     int m_boxWidth = 0;
     int m_boxHeight = 0;
 
-    int m_x = 0;
-    int m_y = 0;
+    int curr_x = 0;
+    int curr_y = 0;
 
     int m_indent = 0;
     int m_autoIndent = 0;
@@ -407,6 +412,10 @@ private:
     bool m_isBeginningOfLine = true;
 
     bool m_vertical = false;
+
+    // 需要与主渲染隔离
+    FontRasterizer* m_rasterizer = NULL;
+    FontRasterizer* GetCurrentRasterizer();
 
     TextRenderOptions m_options{};
     TextRenderState m_default{};
@@ -430,6 +439,7 @@ enum TextRenderAlignment
     kTextRenderAlignmentRight = 1,
 };
 
+// 这个没理解，后续再研究
 enum TextRenderMode
 {
     kTextRenderModeLeading = 0,
@@ -445,6 +455,8 @@ TextRenderBase::TextRenderBase()
 
 TextRenderBase::~TextRenderBase()
 {
+    if (!m_rasterizer)
+        m_rasterizer->Release();
 }
 
 static int read_integer(tTJSString const& str, const tjs_char* p, int& value)
@@ -728,7 +740,7 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all, 
                                 p += chLen - 1;
 
                             // font size
-                            m_state.fontSize = m_default.fontSize * value / 100;
+                            m_state.fontsize = m_default.fontsize * value / 100;
 
                             updateFont();
 
@@ -761,7 +773,7 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all, 
                             pushCharacter(constChar);
                             break;
                         case 'i':
-                            m_indent = m_x;
+                            m_indent = curr_x;
                             break;
                         case 'r':
                             m_indent = 0;
@@ -906,7 +918,7 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all, 
         p += chLen - 1;
     }
 
-    if (m_y > m_boxHeight)
+    if (curr_y > m_boxHeight)
     {
         m_overflow = true;
         set_renderOver(true);
@@ -923,9 +935,19 @@ bool TextRenderBase::render(tTJSString text, int autoIndent, int diff, int all, 
 void TextRenderBase::performLinebreak()
 {
     auto rasterizer = GetCurrentRasterizer();
-    m_x = m_indent;
+    if (m_state.align == kTextRenderAlignmentLeft)
+        curr_x = m_boxLeft + m_indent;
+    else if (m_state.align == kTextRenderAlignmentRight)
+        curr_x = m_boxWidth - m_indent;
+    else
+        curr_x = m_boxLeft + m_indent;
     m_isBeginningOfLine = true;
-    m_y += rasterizer->GetAscentHeight() + m_state.lineSpacing;
+    if (m_state.valign == kTextRenderAlignmentLeft)
+        curr_y += rasterizer->GetAscentHeight() + m_state.lineSpacing;
+    else if (m_state.valign == kTextRenderAlignmentRight)
+        curr_y -= rasterizer->GetAscentHeight() + m_state.lineSpacing;
+    else
+        curr_y += rasterizer->GetAscentHeight() + m_state.lineSpacing;
 }
 
 void TextRenderBase::pushGraphicalCharacter(ttstr const& graph)
@@ -945,35 +967,20 @@ static bool findchInChars(const tjs_wchar* chz, const tjs_wchar ch)
     return false;
 }
 
+FontRasterizer* TextRenderBase::GetCurrentRasterizer()
+{
+    if (!m_rasterizer)
+        m_rasterizer = new FreeTypeFontRasterizer();
+    return m_rasterizer;
+}
+
 void TextRenderBase::pushCharacter(const tjs_char* ch)
 {
     tjs_wchar chwd = 0;
     if (!TVP_utf8_to_utf16(ch, &chwd))
         return;
-    auto isLeadingChar = findchInChars(m_options.leading, chwd);
-    auto isFollowingChar = findchInChars(m_options.following, chwd);
     auto isIndent = findchInChars(m_options.begin, chwd);
     auto isIndentDecr = findchInChars(m_options.end, chwd);
-
-    uint32_t current;
-
-    if (isLeadingChar)
-    {
-        current = kTextRenderModeLeading;
-    }
-    else if (isFollowingChar)
-    {
-        current = kTextRenderModeFollowing;
-    }
-    else
-    {
-        current = kTextRenderModeNormal;
-    }
-
-    if (m_mode == kTextRenderModeFollowing || m_mode != kTextRenderModeLeading)
-    {
-        flush();
-    }
 
     auto rasterizer = GetCurrentRasterizer();
     auto text_height = rasterizer->GetAscentHeight();
@@ -991,7 +998,7 @@ void TextRenderBase::pushCharacter(const tjs_char* ch)
         0,
         0,
         advance_width,
-        text_height,
+        m_state.fontsize,
         m_state.chColor,
         (m_state.edge ? m_state.edgeColor : 0),
         (m_state.shadow ? m_state.shadowColor : 0),
@@ -1005,12 +1012,12 @@ void TextRenderBase::pushCharacter(const tjs_char* ch)
         // pre-indent
         if (m_isBeginningOfLine && m_autoIndent < 0)
         {
-            m_x -= advance_width;
+            curr_x -= advance_width;
         }
 
         if (isIndent)
         {
-            m_indent = m_x + advance_width;
+            m_indent = curr_x + advance_width;
             // TODO: register pair
         }
 
@@ -1021,10 +1028,9 @@ void TextRenderBase::pushCharacter(const tjs_char* ch)
         }
     }
 
-    m_mode = current;
     m_isBeginningOfLine = false;
 }
-
+#include <SDL3/SDL.h>
 void TextRenderBase::flush(bool force)
 {
     if (m_buffer.empty())
@@ -1033,37 +1039,110 @@ void TextRenderBase::flush(bool force)
     }
 
     // try place all characters in the same line
-
-    auto x = m_x;
-
-    for (auto& ch : m_buffer)
+    // 左对齐
+    if (m_state.align == kTextRenderAlignmentLeft)
     {
-        auto advance_width = ch.cw;
-        auto new_x = advance_width + x + m_state.pitch;
+        auto x = m_boxLeft;
 
-        if (m_boxWidth < new_x)
+        for (auto& ch : m_buffer)
         {
-            if (force)
+            auto advance_width = ch.cw;
+            auto new_x = advance_width + x + m_state.pitch;
+
+            if (m_boxWidth < new_x)
             {
-                performLinebreak();
-                x = m_x;
-                new_x = advance_width + x + m_state.pitch;
+                if (force)
+                {
+                    performLinebreak();
+                    x = curr_x;
+                    new_x = advance_width + x + m_state.pitch;
+                }
+                else
+                {
+                    flush(true);
+                    return;
+                }
             }
-            else
+
+            ch.x = x;
+            ch.y = curr_y;
+
+            x = new_x;
+        }
+
+        curr_x = x;
+    }
+    // 右对齐
+    else if (m_state.align == kTextRenderAlignmentRight)
+    {
+        auto x = m_boxLeft + m_boxWidth;
+
+        for (auto& ch : m_buffer)
+        {
+            auto advance_width = ch.cw;
+            auto new_x = x - advance_width;
+
+            if (new_x < m_boxLeft)
             {
-                performLinebreak();
-                flush(true);
-                return;
+                if (force)
+                {
+                    performLinebreak();
+                    new_x = curr_x - advance_width;
+                }
+                else
+                {
+                    flush(true);
+                    return;
+                }
+            }
+
+            ch.x = new_x;
+            ch.y = curr_y;
+
+            x = new_x - m_state.pitch;
+        }
+
+        curr_x = x;
+    }
+    // 居中对齐
+    else
+    {
+        int totalWidth = 0;
+        for (size_t i = 0; i < m_buffer.size(); i++)
+        {
+            totalWidth += m_buffer[i].cw;
+            if (i < m_buffer.size() - 1)
+            {
+                totalWidth += m_state.pitch;
+            }
+        }
+        if (totalWidth > m_boxWidth && !force)
+        {
+            performLinebreak();
+            flush(true);
+            return;
+        }
+
+        int startX = m_boxLeft + (m_boxWidth - totalWidth) / 2;
+        int x = startX;
+        for (size_t i = 0; i < m_buffer.size(); i++)
+        {
+            auto& ch = m_buffer[i];
+            float advance_width = ch.cw;
+
+            ch.x = x;
+            ch.y = curr_y;
+
+            x += advance_width;
+            if (i < m_buffer.size() - 1)
+            {
+                x += m_state.pitch;
             }
         }
 
-        ch.x = x;
-        ch.y = m_y;
-
-        x = new_x;
+        curr_x = x;
     }
-
-    m_x = x;
+    
     m_characters.insert(m_characters.end(), m_buffer.begin(), m_buffer.end());
     for (size_t i = 0; i < m_buffer.size(); i++)
     {
@@ -1117,8 +1196,24 @@ void TextRenderBase::clear()
     m_state = m_default;
     m_overflow = false;
 
-    m_x = 0;
-    m_y = 0;
+    curr_x = 0;
+    // 提前检查y的对齐方式
+    if (m_state.valign == kTextRenderAlignmentLeft)
+    {
+        // 正常搞
+        curr_y = m_boxTop;
+    }
+    else if (m_state.valign == kTextRenderAlignmentRight)
+    {
+        // 从底部开始
+        curr_y = m_boxTop + m_boxHeight - m_state.fontsize;
+    }
+    else
+    {
+        // 感觉为了高效实现对齐和实时渲染，以后可能得改整个textrender的流程
+        // 不考虑多行了，现在的流程不好搞
+        curr_y = m_boxTop + (m_boxHeight - GetCurrentRasterizer()->GetAscentHeight()) / 2;
+    }
     m_indent = 0;
 
     m_isBeginningOfLine = true;
@@ -1130,14 +1225,13 @@ void TextRenderBase::updateFont()
 {
     auto rasterizer = GetCurrentRasterizer();
     auto font = tTVPFont{
-        m_state.fontSize, // height of text
+        m_state.fontsize, // height of text
         static_cast<tjs_uint32>((m_state.bold ? TVP_TF_BOLD : 0) |
                                 (m_state.italic ? TVP_TF_ITALIC : 0)),
         0,
         m_state.face, // TODO: this may fuck up the font settings by
                       // forcing the fallback font (in most cases)
     };
-
     rasterizer->ApplyFont(font);
 }
 

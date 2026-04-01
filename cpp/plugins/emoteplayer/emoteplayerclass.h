@@ -75,8 +75,12 @@ public:
     void assign(iTJSDispatch2* anotherAdaptor);
     void clear();
 
-    tjs_int get_absolute() { return _absolute; }
+    tjs_int get_absolute();
     void set_absolute(tjs_int v);
+    bool get_isPrimary();
+    void set_isPrimary(bool v);
+    tTJSVariant get_parent();
+    void set_parent(tTJSVariant v);
     tTJSNI_Layer* GetLayer() { return _this; };
 
     // canvas
@@ -92,7 +96,6 @@ public:
 private:
     tTJSNI_Layer* _this = nullptr;
     tjs_int _type = 0;
-    tjs_int _absolute = 0;
 };
 
 // EmotePlayer 和Player是一个玩意
@@ -128,6 +131,7 @@ public:
     property_marco(speed, tjs_real, speedRatio);
     tTJSVariant get_outline() { return tTJSVariant(); }
     void set_outline(tTJSVariant v){/* TODO */};
+    property_marco(tags, tTJSVariant, _tags);
 
     tTJSVariant serialize();
     void unserialize(tTJSVariant data);
@@ -216,6 +220,7 @@ private:
     bool _allplaying = false;
     bool _animating = false;
     bool _useD3D = false;
+    tTJSVariant _tags;
 };
 
 class Player : public EmotePlayer

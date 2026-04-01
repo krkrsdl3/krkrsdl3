@@ -24,7 +24,10 @@ NCB_REGISTER_SUBCLASS_DELAY(SeparateLayerAdaptor)
     NCB_CONSTRUCTOR((iTJSDispatch2*));
     NCB_METHOD(assign);
     NCB_METHOD(clear);
+    // Layer的所有属性都应该有，NCB机制或许要换成Hook
     PROPERTY(absolute);
+    PROPERTY(isPrimary);
+    PROPERTY(parent);
 }
 
 NCB_REGISTER_SUBCLASS_DELAY(EmotePlayer)
@@ -130,6 +133,7 @@ NCB_REGISTER_SUBCLASS_DELAY(Player)
     PROPERTY(motion);
     PROPERTY(chara);
     PROPERTY(variableKeys);
+    PROPERTY(tags);
 }
 
 NCB_REGISTER_CLASS(Motion)

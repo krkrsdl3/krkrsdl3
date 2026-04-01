@@ -153,7 +153,7 @@ GLuint createProgram()
 void SDL_GL_BaseSet(int w, int h)
 {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
     glClear(GL_COLOR_BUFFER_BIT);

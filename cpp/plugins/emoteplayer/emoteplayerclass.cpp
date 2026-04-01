@@ -175,13 +175,44 @@ void SeparateLayerAdaptor::clear()
         _this = nullptr;
     }
 }
+tjs_int SeparateLayerAdaptor::get_absolute()
+{
+    if (_this != nullptr)
+    {
+        return _this->GetAbsoluteOrderIndex();
+    }
+    return 0;
+}
 void SeparateLayerAdaptor::set_absolute(tjs_int v)
 {
     if (_this != nullptr)
     {
-        _absolute = v;
         _this->SetAbsoluteOrderIndex(v);
     }
+}
+bool SeparateLayerAdaptor::get_isPrimary()
+{
+    if (_this != nullptr)
+    {
+        return _this->IsPrimary();
+    }
+    return false;
+}
+void SeparateLayerAdaptor::set_isPrimary(bool v)
+{
+    //
+}
+tTJSVariant SeparateLayerAdaptor::get_parent()
+{
+    if (_this != nullptr)
+    {
+        return _this->GetParent();
+    }
+    return tTJSVariant();
+}
+void SeparateLayerAdaptor::set_parent(tTJSVariant v)
+{
+    //
 }
 void SeparateLayerAdaptor::checkDrawArea(tjs_int width, tjs_int height)
 {
