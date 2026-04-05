@@ -43,6 +43,7 @@ public:
     tTJSVariant load(tTJSString path);
     void unload(tTJSString path);
     void unloadAll();
+    void clearCache();
     emotefile* GetPlayerByName(const tTJSString& name);
 
     static void setEmotePSBDecryptSeed(tjs_int decryptkey);
@@ -112,8 +113,8 @@ public:
     ~EmotePlayer();
 
     property_marco(playing, bool, _playing);
-    property_marco(allplaying, bool, _allplaying);
-    property_marco(animating, bool, _animating);
+    property_marco(allplaying, bool, _playing);
+    property_marco(animating, bool, _playing);
     property_marco(useD3D, bool, _useD3D);
     int32_t get_loopTime();
     void set_loopTime(int32_t v) { throw "reject to set loopTime"; };
@@ -123,7 +124,12 @@ public:
         _motionKey = motionKey;
         _currentfile = _resourceManager->GetPlayerByName(motionKey);
     }
-    property_marco(motion, tTJSString, _motion);
+    tTJSString get_motion() { return _motion; }
+    void set_motion(tTJSString v)
+    {
+        _motion = v;
+        play(_motion, 0);
+    };
     property_marco(chara, tTJSString, _chara);
     void set_variableKeys() { throw "reject to set variableKeys"; };
     tTJSVariant get_variableKeys();
@@ -155,7 +161,7 @@ public:
 
     void startWind(tjs_real start, tjs_real goal, tjs_real speed, tjs_real powMin, tjs_real powMax);
     void stopWind();
-    bool contains(tTJSString valName, tjs_real x, tjs_real y);
+    bool contains(tjs_real x, tjs_real y);
 
     void skip();
     void skipToSync();
@@ -177,6 +183,8 @@ public:
     void fadeOutTimeline(tTJSString name, tjs_real time = 0, tjs_real easing = 0);
     tTJSVariant getPlayingTimelineInfoList();
     tTJSVariant getVariableFrameList(tTJSString name);
+    tTJSVariant getCommandList();
+    tTJSVariant getLayerGetter(tTJSString name);
 
 private:
     // runtime
@@ -217,8 +225,6 @@ private:
     MaskMode _maskMode = MaskModeNone;
     bool _isStop = false;
     bool _playing = false;
-    bool _allplaying = false;
-    bool _animating = false;
     bool _useD3D = false;
     tTJSVariant _tags;
 };

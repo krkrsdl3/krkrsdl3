@@ -976,6 +976,7 @@ ttstr TVPGetPlacedPath(const ttstr& name)
 
     TVPRebuildAutoPathTable(); // ensure auto path table
     ttstr* result = TVPAutoPathTable.Find(storagename);
+    if (!result) result = TVPAutoPathTable.Find(name);
     if (result)
     {
         // found in table

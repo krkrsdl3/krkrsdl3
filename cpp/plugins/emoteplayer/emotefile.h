@@ -26,6 +26,13 @@ struct emotelimit // 区域限制
     float height = 0.0f;
     float zMax = 0.0f;
 };
+struct emoterect
+{
+    float left = 0;
+    float top = 0;
+    float right = 0;
+    float bottom = 0;
+};
 
 class emotenode;
 struct emoteRender // 渲染方式
@@ -191,10 +198,11 @@ public:
     emotenode* getNodeByName(const std::string& name);
     void progress(float tick, std::vector<emoteRender>& renderList, emotelimit lim);
     void draw(GLuint targetFbo, emotelimit lim, GLuint exFbo, GLuint exTex);
+    bool contains(tjs_real x, tjs_real y);
 
-    int64_t lastTime;
+    double lastTime;
     std::vector<emotenode*> layer;
-    int64_t loopTime;
+    double loopTime;
     float selfSyncTime = 0.0f;
     float syncTime = 0.0f;
     std::vector<emotenode*> nodeList;
@@ -203,6 +211,9 @@ public:
     std::vector<emoteVar*> parameter;
     bool isParameterize = false;
     int32_t parameterIdx = -1;
+
+    // shape rect
+    std::vector<emoterect> shapeList;
 
 private:
     emotefile* _filePtr = nullptr;
@@ -217,6 +228,7 @@ public:
     emoteobject(emotefile* filePtr, uint32_t startOffset);
     ~emoteobject();
     emoteVar* findVarByName(const std::string& name);
+    bool contains(tjs_real x, tjs_real y);
 
     uint8_t type;
     std::map<std::string, emotemotion*> motion;
