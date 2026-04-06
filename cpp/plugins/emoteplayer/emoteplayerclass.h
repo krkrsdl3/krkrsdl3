@@ -186,6 +186,9 @@ public:
     tTJSVariant getCommandList();
     tTJSVariant getLayerGetter(tTJSString name);
 
+protected:
+    bool isMotion = false;
+
 private:
     // runtime
     ResourceManager* _resourceManager;
@@ -232,7 +235,7 @@ private:
 class Player : public EmotePlayer
 {
 public:
-    Player(ResourceManager* resourceManager) : EmotePlayer(resourceManager) {}
+    Player(ResourceManager* resourceManager) : EmotePlayer(resourceManager) { isMotion = true; }
 
     using EmotePlayer::assign;
     using EmotePlayer::draw;
@@ -265,5 +268,7 @@ public:
     using EmotePlayer::stopTimeline;
     using EmotePlayer::stopWind;
     using EmotePlayer::unserialize;
+    using EmotePlayer::getCommandList;
+    using EmotePlayer::getLayerGetter;
 };
 }; // namespace emoteplayer

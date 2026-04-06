@@ -1935,14 +1935,17 @@ emotemotion::emotemotion(emotefile* filePtr, uint32_t startOffset) : _filePtr(fi
     }
 
     // selfSyncTime
-    for (auto _node : nodeList)
+    if (filePtr->isMotion && !isParameterize)
     {
-        for (auto _frame : _node->frameList)
+        for (auto _node : nodeList)
         {
-            if (_frame != nullptr && _frame->hasContent)
+            for (auto _frame : _node->frameList)
             {
-                if (_frame->time > selfSyncTime)
-                    selfSyncTime = _frame->time;
+                if (_frame != nullptr && _frame->hasContent)
+                {
+                    if (_frame->time > selfSyncTime)
+                        selfSyncTime = _frame->time;
+                }
             }
         }
     }
@@ -4567,6 +4570,7 @@ bool emotefile::GenerateAniTree()
     {
         for (auto _tmpMtn : _objTmp.second->motion)
         {
+            if (_tmpMtn.second->isParameterize) continue;
             std::vector<emotenode*> _stack(_tmpMtn.second->nodeList.begin(),
                                            _tmpMtn.second->nodeList.end());
             while (!_stack.empty())
@@ -4578,7 +4582,7 @@ bool emotefile::GenerateAniTree()
                 {
                     if (frameTmp != nullptr && frameTmp->hasContent)
                     {
-                        if (frameTmp->time > _tmpMtn.second->syncTime)
+                        if (!_current->isParameterize && frameTmp->time > _tmpMtn.second->syncTime)
                             _tmpMtn.second->syncTime = frameTmp->time;
 
                         emotemotion* _emot = findmotionByName(frameTmp->src);

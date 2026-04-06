@@ -472,7 +472,7 @@ void EmotePlayer::play(tTJSString name, int flag)
     if (_playing)
         return;
     // SDL_Log("play-->%s", name.AsStdString().c_str());
-    if (_currentfile != nullptr) // motionKey的启动模式
+    if (_currentfile != nullptr && !isMotion) // motionKey的启动模式
     {
         // motion
         auto it = _currentfile->_objects.find(_currentfile->_metadata->chara.c_str());
@@ -490,10 +490,10 @@ void EmotePlayer::play(tTJSString name, int flag)
         _playing = true;
         isSelfClear = true;
     }
-    else if (_resourceManager->cacheData.size() > 0 &&
-             _resourceManager->cacheData.begin()->second->isMotion) // chara+motion启动方案
+    else if (_resourceManager->cacheData.size() > 0 && isMotion) // chara+motion启动方案
     {
         _motion = name;
+        _currmotion = nullptr;
         // motion
         for (auto tmpFile : _resourceManager->cacheData)
         {
@@ -520,6 +520,8 @@ void EmotePlayer::play(tTJSString name, int flag)
     }
     else // 群体启动模式，即对manager的所有file进行拼好件(其会存在互相索引的情况，结构可能得改改了)
     {
+        _currentfile = nullptr;
+        _currmotion = nullptr;
         for (auto itm : _resourceManager->cacheData)
         {
             // 查询
@@ -610,12 +612,12 @@ void EmotePlayer::progress(tjs_real mstime)
         else
         {
             // 是否结束
-            if (!_currentfile->isMotion && clockPassed > _currmotion->lastTime)
+            if (!isMotion && clockPassed > _currmotion->lastTime)
             {
                 _playing = false;
             }
             // 对于motion限制最后时间并结束
-            if (_currentfile->isMotion && _currmotion->loopTime < 0 &&
+            if (isMotion && _currmotion->loopTime < 0 &&
                 clockPassed > _currmotion->syncTime)
             {
                 clockPassed = _currmotion->syncTime;
