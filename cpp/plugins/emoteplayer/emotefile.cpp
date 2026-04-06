@@ -1229,6 +1229,12 @@ void emotenode::progress(float tick, std::vector<emoteRender>& renderList, emote
     if (_filePtr->isMotion && frameList.size() == 2 && frameList.at(0)->type == 2 &&
         frameList.at(1)->type == 0)
         currTick = frameList.at(0)->time;
+    // 再来一个3->0的拦截机制，感觉确实未能理解motion的运行，只能凑合着搞了
+    if (_filePtr->isMotion && frameList.size() > 1 && 
+        frameList.at(frameList.size() - 1)->type == 0 && frameList.at(frameList.size() - 2)->type == 3)
+    {
+        currTick = std::min(currTick, (float)frameList.at(frameList.size() - 2)->time);
+    }
     // 不会处理，先跳过
     if (type == 12)
     {
@@ -1606,6 +1612,39 @@ void emotenode::progress(float tick, std::vector<emoteRender>& renderList, emote
         }
     }
 
+    // 对于icon保存大小信息
+    if (isIcon && renderMethod.size() > 0)
+    {
+        // 两个端点就够了
+        glm::vec2 pt1(0, 0), pt2(1, 1);
+        // 将所有矩阵变形进行作用
+        glm::vec4 tmpVec1(0, 0, 0, 0), tmpVec2(1, 1, 0, 0);
+        for (int32_t i = renderMethod.size() - 1; i >= 0; i--)
+        {
+            // 不想改了，这里自适应一下吧
+            // [0,1]-matTrans->[-1,1]-compute->[0,1]
+            if (i != renderMethod.size() - 1)
+            {
+                tmpVec1 = glm::vec4(tmpVec1.x / 2 + 0.5, 1 - (tmpVec1.y / 2 + 0.5), 0, 0);
+                tmpVec2 = glm::vec4(tmpVec2.x / 2 + 0.5, 1 - (tmpVec2.y / 2 + 0.5), 0, 0);
+            }
+            tmpVec1 = renderMethod.at(i).matTrans * glm::vec4(tmpVec1.x, tmpVec1.y, 0.0f, 1.0f);
+            tmpVec2 = renderMethod.at(i).matTrans * glm::vec4(tmpVec2.x, tmpVec2.y, 0.0f, 1.0f);
+        }
+        // 边界缩放
+        pt1.x = (tmpVec1.x / 2.0 + 0.5) * _filePtr->_screenSize.width;
+        pt1.y = (1 - (tmpVec1.y / 2.0 + 0.5)) * _filePtr->_screenSize.height;
+        pt2.x = (tmpVec2.x / 2.0 + 0.5) * _filePtr->_screenSize.width;
+        pt2.y = (1 - (tmpVec2.y / 2.0 + 0.5)) * _filePtr->_screenSize.height;
+        // 保存区域
+        emoterect tmprect;
+        tmprect.left = pt1.x;
+        tmprect.top = pt1.y;
+        tmprect.right = pt2.x;
+        tmprect.bottom = pt2.y;
+        _rootmotion->shapeList.push_back(tmprect);
+    }
+
     // 传递给子类
     for (auto ch : children)
     {
@@ -1617,6 +1656,9 @@ void emotenode::progress(float tick, std::vector<emoteRender>& renderList, emote
     {
         emot->progress(tick + currTimeOffset, renderMethod,
                        {originX, originY, width, height, lim.zMax});
+        // 边界加入
+        _rootmotion->shapeList.insert(_rootmotion->shapeList.end(), emot->shapeList.begin(),
+                                      emot->shapeList.end());
     }
 }
 void emotenode::draw(GLuint targetFbo, emotelimit lim, GLuint exFbo, GLuint exTex)
@@ -1790,8 +1832,8 @@ emotemotion::emotemotion(emotefile* filePtr, uint32_t startOffset) : _filePtr(fi
     std::map<std::string, uint32_t> _rootData;
     filePtr->parseObject(_rootData, startOffset);
     // time
-    filePtr->parseNumber(lastTime, _rootData["lastTime"]);
-    filePtr->parseNumber(loopTime, _rootData["loopTime"]);
+    filePtr->parseReal(lastTime, _rootData["lastTime"]);
+    filePtr->parseReal(loopTime, _rootData["loopTime"]);
     // layer
     std::vector<uint32_t> _layer;
     filePtr->parseList(_layer, _rootData["layer"]);
@@ -1860,6 +1902,25 @@ emotemotion::emotemotion(emotefile* filePtr, uint32_t startOffset) : _filePtr(fi
             isParameterize = true;
             parameterIdx = static_cast<int32_t>(tmp);
         }
+        if (filePtr->isMotion)
+        {
+            std::map<std::string, uint32_t> varMap;
+            if (filePtr->parseObject(varMap, it->second))
+            {
+                isParameterize = true;
+                parameterIdx = 0;
+                emoteVar* var = new emoteVar();
+                int64_t tmp = 0;
+                filePtr->parseNumber(tmp, varMap["rangeBegin"]);
+                var->rangeBegin = static_cast<int32_t>(tmp);
+                filePtr->parseNumber(tmp, varMap["rangeEnd"]);
+                var->rangeEnd = static_cast<int32_t>(tmp);
+                filePtr->parseNumber(tmp, varMap["discretization"]);
+                var->division = static_cast<int32_t>(tmp);
+                filePtr->parseString(var->id, varMap["id"]);
+                parameter.push_back(var);
+            }
+        }
     }
     if (isParameterize)
     {
@@ -1925,6 +1986,8 @@ emotenode* emotemotion::getNodeByName(const std::string& name)
 }
 void emotemotion::progress(float tick, std::vector<emoteRender>& renderList, emotelimit lim)
 {
+    // 清除shape信息
+    shapeList.clear();
     // 树状便利，构建节点的渲染结构
     for (auto ch : layer)
     {
@@ -1982,6 +2045,17 @@ void emotemotion::draw(GLuint targetFbo, emotelimit lim, GLuint exFbo, GLuint ex
         }
     }
 }
+bool emotemotion::contains(tjs_real x, tjs_real y)
+{
+    for (auto mtnRec : shapeList)
+    {
+        if (x >= mtnRec.left && x < mtnRec.right && y >= mtnRec.top && y < mtnRec.bottom)
+        {
+            return true;
+        }
+    }
+    return false;
+}
 
 emoteobject::emoteobject(emotefile* filePtr, uint32_t startOffset) : _filePtr(filePtr)
 {
@@ -2022,6 +2096,15 @@ emoteVar* emoteobject::findVarByName(const std::string& name)
         }
     }
     return nullptr;
+}
+bool emoteobject::contains(tjs_real x, tjs_real y)
+{
+    for (auto mtn : motion)
+    {
+        if (mtn.second->contains(x, y))
+            return true;
+    }
+    return false;
 }
 
 #pragma endregion
@@ -3682,6 +3765,14 @@ bool emotefile::load(const ttstr& filePath)
             delete filePtr;
             filePtr = _stream;
         }
+        else // 使用memory防止xp3filter解密所带来的性能下降，不过内存可能得遭罪了
+        {
+            tTVPMemoryStream* _stream = new tTVPMemoryStream(nullptr, filePtr->GetSize());
+            filePtr->SetPosition(0);
+            filePtr->ReadBuffer(_stream->GetInternalBuffer(), filePtr->GetSize());
+            delete filePtr;
+            filePtr = _stream;
+        }
     }
 
     // ReadHeader
@@ -4628,9 +4719,20 @@ bool emotefile::readIconTobuffer(uint8_t* buff, uint32_t buffSize, uint32_t pitc
     {
         if (ic->pal > -1)
         {
-            uint8_t* palbuff = new uint8_t[chunkLengths.at(ic->pal)];
+            const uint32_t palSize = chunkLengths.at(ic->pal);
+            uint8_t* palbuff = new uint8_t[palSize];
             filePtr->SetPosition(_header.offsetChunkData + chunkOffsets.at(ic->pal));
             filePtr->ReadBuffer(palbuff, chunkLengths.at(ic->pal));
+
+            auto copyPaletteColor = [&](uint8_t* dst, uint8_t colorIndex) {
+                const uint32_t paletteOffset = (uint32_t)colorIndex * 4;
+                if (paletteOffset + 4 > palSize)
+                {
+                    memset(dst, 0, 4);
+                    return;
+                }
+                memcpy(dst, palbuff + paletteOffset, 4);
+                };
 
             uint32_t currSize = 0;
             uint8_t* currPtr = srcbuff;
@@ -4650,7 +4752,7 @@ bool emotefile::readIconTobuffer(uint8_t* buff, uint32_t buffSize, uint32_t pitc
                     {
                         if (currSize + 4 > buffSize)
                             break;
-                        memcpy(currDst, palbuff + coloridx, 4);
+                        copyPaletteColor(currDst, coloridx);
                         currDst += 4;
                         currSize += 4;
                     }
@@ -4662,7 +4764,7 @@ bool emotefile::readIconTobuffer(uint8_t* buff, uint32_t buffSize, uint32_t pitc
                         count = (buffSize - currSize) / 4;
                     for (int i = 0; i < count; i++)
                     {
-                        memcpy(currDst + i * 4, palbuff + (*(currPtr + i)), 4);
+                        copyPaletteColor(currDst + i * 4, *(currPtr + i));
                     }
                     currPtr += count;
                     currDst += count * 4;
@@ -5100,19 +5202,55 @@ void emotefile::setVariable(const std::string& name, tjs_real value, bool isMain
     }
 
     // _selectorControl
-    for (auto _selItm : _metadata->_selectorControl)
+    if (!isMotion)
     {
-        if (strcmp(_selItm->lable.c_str(), name.c_str()) == 0)
+        for (auto _selItm : _metadata->_selectorControl)
         {
-            _selItm->selectValue(value);
-            return;
+            if (strcmp(_selItm->lable.c_str(), name.c_str()) == 0)
+            {
+                _selItm->selectValue(value);
+                return;
+            }
+        }
+   
+        // _varList
+        auto varPos = _metadata->_varList.find(name);
+        if (varPos != _metadata->_varList.end())
+        {
+            varPos->second = value;
         }
     }
-    // _varList
-    auto varPos = _metadata->_varList.find(name);
-    if (varPos != _metadata->_varList.end())
+
+    // motion_inter
+    size_t pos = name.find('/');
+    if (pos != std::string::npos)
     {
-        varPos->second = value;
+        std::string motionName = name.substr(0, name.find('/'));
+        emoteobject* obj = nullptr;
+        for (auto objItm : _objects)
+        {
+            if (objItm.first == motionName)
+            {
+                obj = objItm.second;
+                break;
+            }
+        }
+        if (obj)
+        {
+            std::string varName = name.substr(name.find('/') + 1);
+            for (auto mtnItm : obj->motion)
+            {
+                for (auto varItm : mtnItm.second->parameter)
+                {
+                    if (varItm->id == varName)
+                    {
+                        varItm->currVal = value;
+                        break;
+                    }
+                }
+            }
+            
+        }
     }
 }
 void emotefile::updatePhysics(float tick)

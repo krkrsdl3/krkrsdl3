@@ -1068,23 +1068,7 @@ ttstr TVPGetPlacedPath(const ttstr& name)
 
     TVPRebuildAutoPathTable(); // ensure auto path table
     ttstr* result = TVPAutoPathTable.Find(storagename);
-
-#ifdef _KRKRSDL3_OHOS
-    // On OHOS, NormalizePathName preserves case (case-sensitive FS), but
-    // archive entry names are always lowercased by NormalizeInArchiveStorageName.
-    // Fall back to lowercase lookup so archive files are discoverable.
-    if (!result) {
-        ttstr lower_storagename(storagename);
-        tTVPArchive::NormalizeInArchiveStorageName(lower_storagename);
-        if (lower_storagename != storagename)
-            result = TVPAutoPathTable.Find(lower_storagename);
-        if (result) {
-            // Use the lowercased name for the combined path
-            storagename = lower_storagename;
-        }
-    }
-#endif
-
+    if (!result) result = TVPAutoPathTable.Find(name);
     if (result)
     {
         // found in table

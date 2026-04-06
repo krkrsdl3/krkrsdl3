@@ -15,6 +15,7 @@ NCB_REGISTER_SUBCLASS(ResourceManager)
     NCB_METHOD(load);
     NCB_METHOD(unload);
     NCB_METHOD(unloadAll);
+    NCB_METHOD(clearCache);
     NCB_METHOD(setEmotePSBDecryptSeed);
     NCB_METHOD(setEmotePSBDecryptFunc);
 }
@@ -122,6 +123,8 @@ NCB_REGISTER_SUBCLASS_DELAY(Player)
     NCB_METHOD(fadeOutTimeline);
     NCB_METHOD(getPlayingTimelineInfoList);
     NCB_METHOD(getVariableFrameList);
+    NCB_METHOD(getCommandList);
+    NCB_METHOD(getLayerGetter);
     PROPERTY(animating);
     PROPERTY(playing);
     PROPERTY(allplaying);

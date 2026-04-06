@@ -83,6 +83,14 @@ bool tTJSNI_PsbFile::load(const ttstr& filePath)
         delete filePtr;
         filePtr = _stream;
     }
+    else // 使用memory防止xp3filter解密所带来的性能下降，不过内存可能得遭罪了
+    {
+        tTVPMemoryStream* _stream = new tTVPMemoryStream(nullptr, filePtr->GetSize());
+        filePtr->SetPosition(0);
+        filePtr->ReadBuffer(_stream->GetInternalBuffer(), filePtr->GetSize());
+        delete filePtr;
+        filePtr = _stream;
+    }
 
     // ReadHeader
     filePtr->SetPosition(0);
