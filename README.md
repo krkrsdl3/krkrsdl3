@@ -38,7 +38,7 @@
 - zlib:基础压缩算法
 - ffmpeg:音视频解码
 - libpng/libwebp/libjpeg-turbo:图片解码
-- miniaudio/libvorbis/opusfile:音频解码
+- libvorbis/opusfile:音频解码
 - freetype:字体
 - sdl3/glad/blend2d:跨平台核心
 

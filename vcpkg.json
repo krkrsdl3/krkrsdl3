@@ -2,15 +2,10 @@
     "dependencies": [
         "oniguruma",
         "zlib",
-        {
-            "name": "ffmpeg",
-            "features": ["avcodec", "avformat", "swresample", "swscale"],
-            "default-features": false
-        },
+        "ffmpeg",
         "libpng",
         "libwebp",
         "libjpeg-turbo",
-        "miniaudio",
         "libvorbis",
         "opusfile",
         "freetype",

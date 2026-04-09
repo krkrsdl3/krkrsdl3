@@ -15,18 +15,12 @@
 #include "KeyCodeConv.h"
 #include "../eventCallbackFun.h"
 
+#include "opencv2/opencv.hpp"
+
 extern SDL_Window* tvp_window;
 
-extern std::map<SDL_Sprite*, callbackOnMouseDownEvent> sdl_mouseDownCallback;
-extern std::map<SDL_Sprite*, callbackOnMouseUpEvent> sdl_mouseUpCallback;
-extern std::map<SDL_Sprite*, callbackOnMouseMoveEvent> sdl_mouseMoveCallback;
-extern std::map<SDL_Sprite*, callbackOnMouseScroll> sdl_mouseScrollCallback;
-extern std::map<SDL_Sprite*, callbackOnKeyDownUpEvent> sdl_keyDownCallback;
-extern std::map<SDL_Sprite*, callbackOnKeyDownUpEvent> sdl_keyUpCallback;
-extern std::mutex sdlCallbackMtx;
-
 class TVPWindowLayer;
-static TVPWindowLayer *_firstWindowLayer = NULL, *_lastWindowLayer, *_currentWindowLayer;
+static TVPWindowLayer *_firstWindowLayer = NULL, *_lastWindowLayer = NULL, *_currentWindowLayer;
 static tTVPMouseButton _mouseBtn;
 
 static tjs_uint8 _scancode[0x200];
@@ -106,7 +100,6 @@ int TVPDrawSceneOnce(int interval)
 class TVPWindowLayer : public iWindowLayer
 {
     tTJSNI_Window* TJSNativeInstance;
-    SDL_Sprite* pSprite = NULL;
     tjs_int ActualZoomDenom; // Zooming factor denominator (actual)
     tjs_int ActualZoomNumer; // Zooming factor numerator (actual)
     int LayerWidth = 0, LayerHeight = 0;
@@ -133,6 +126,7 @@ class TVPWindowLayer : public iWindowLayer
     bool isFullScreen = false;
 
 public:
+    SDL_Sprite* pSprite = NULL;
     TVPWindowLayer *_prevWindow, *_nextWindow;
     TVPWindowLayer(tTJSNI_Window* w) : TJSNativeInstance(w)
     {
@@ -177,12 +171,6 @@ public:
                 krkrsdl3::SDL_GL_DepartTexture(pSprite);
                 krkrsdl3::SDL_GL_DestroyTexture(pSprite);
             }
-            sdl_mouseDownCallback.erase(pSprite);
-            sdl_mouseUpCallback.erase(pSprite);
-            sdl_mouseMoveCallback.erase(pSprite);
-            sdl_mouseScrollCallback.erase(pSprite);
-            sdl_keyDownCallback.erase(pSprite);
-            sdl_keyUpCallback.erase(pSprite);
             delete pSprite;
         }
     }
@@ -204,52 +192,6 @@ public:
                 krkrsdl3::SDL_GL_CreateTexture(*pSprite);
                 krkrsdl3::SDL_GL_JoinTexture(pSprite);
             }
-        }
-
-        {
-            std::lock_guard<std::mutex> lock(sdlCallbackMtx);
-            sdl_mouseDownCallback.insert(std::pair<SDL_Sprite*, callbackOnMouseDownEvent>(
-                pSprite,
-                [](tTVPMouseButton mouseId, int x, int y)
-                {
-                    if (_currentWindowLayer != NULL)
-                        _currentWindowLayer->onMouseDownEvent(mouseId, x, y);
-                }));
-            sdl_mouseUpCallback.insert(std::pair<SDL_Sprite*, callbackOnMouseUpEvent>(
-                pSprite,
-                [](tTVPMouseButton mouseId, int x, int y)
-                {
-                    if (_currentWindowLayer != NULL)
-                        _currentWindowLayer->onMouseUpEvent(mouseId, x, y);
-                }));
-            sdl_mouseMoveCallback.insert(std::pair<SDL_Sprite*, callbackOnMouseMoveEvent>(
-                pSprite,
-                [](int x, int y)
-                {
-                    if (_currentWindowLayer != NULL)
-                        _currentWindowLayer->onMouseMoveEvent(x, y);
-                }));
-            sdl_mouseScrollCallback.insert(std::pair<SDL_Sprite*, callbackOnMouseScroll>(
-                pSprite,
-                [](int dx, int dy, int x, int y)
-                {
-                    if (_currentWindowLayer != NULL)
-                        _currentWindowLayer->onMouseScroll(dx, dy, x, y);
-                }));
-            sdl_keyDownCallback.insert(std::pair<SDL_Sprite*, callbackOnKeyDownUpEvent>(
-                pSprite,
-                [](int vk)
-                {
-                    if (_currentWindowLayer != NULL)
-                        _currentWindowLayer->onKeyDownEvent(vk);
-                }));
-            sdl_keyUpCallback.insert(std::pair<SDL_Sprite*, callbackOnKeyDownUpEvent>(
-                pSprite,
-                [](int vk)
-                {
-                    if (_currentWindowLayer != NULL)
-                        _currentWindowLayer->onKeyUpEvent(vk);
-                }));
         }
 
         return true;
@@ -918,6 +860,47 @@ public:
     }
 };
 
+// events
+namespace krkrsdl3
+{
+SDL_Sprite* KRKR_Get_Current_Sprite()
+{
+    if (_currentWindowLayer != NULL)
+        return _currentWindowLayer->pSprite;
+    return NULL;
+}
+void KRKR_Trig_MouseDown(tTVPMouseButton mouseId, int x, int y)
+{
+    if (_currentWindowLayer != NULL)
+        _currentWindowLayer->onMouseDownEvent(mouseId, x, y);
+}
+void KRKR_Trig_MouseUp(tTVPMouseButton mouseId, int x, int y)
+{
+    if (_currentWindowLayer != NULL)
+        _currentWindowLayer->onMouseUpEvent(mouseId, x, y);
+}
+void KRKR_Trig_MouseMove(int x, int y)
+{
+    if (_currentWindowLayer != NULL)
+        _currentWindowLayer->onMouseMoveEvent(x, y);
+}
+void KRKR_Trig_MouseScroll(int dx, int dy, int x, int y)
+{
+    if (_currentWindowLayer != NULL)
+        _currentWindowLayer->onMouseScroll(dx, dy, x, y);
+}
+void KRKR_Trig_KeyDown(int vk)
+{
+    if (_currentWindowLayer != NULL)
+        _currentWindowLayer->onKeyDownEvent(vk);
+}
+void KRKR_Trig_KeyUp(int vk)
+{
+    if (_currentWindowLayer != NULL)
+        _currentWindowLayer->onKeyUpEvent(vk);
+}
+}
+
 iWindowLayer* TVPCreateAndAddWindow(tTJSNI_Window* w)
 {
     TVPWindowLayer* ret = TVPWindowLayer::create(w);
@@ -928,17 +911,8 @@ iWindowLayer* TVPCreateAndAddWindow(tTJSNI_Window* w)
     return ret;
 }
 
-void refreshWindow()
+tTJSNI_Window *TVPGetActiveWindow()
 {
-    TVPWindowLayer* pWin = _lastWindowLayer;
-    while (pWin)
-    {
-        pWin->SetVisible(true);
-        pWin = pWin->_prevWindow;
-    }
-}
-
-tTJSNI_Window *TVPGetActiveWindow() {
 	if (!_currentWindowLayer) return nullptr;
 	return _currentWindowLayer->GetWindow();
 }

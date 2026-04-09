@@ -2,12 +2,6 @@
 
 #include "tvpinputdefs.h"
 
-typedef void (*callbackOnKeyDownUpEvent)(int);
-typedef void (*callbackOnMouseScroll)(int, int, int, int);
-typedef void (*callbackOnMouseDownEvent)(tTVPMouseButton, int, int);
-typedef void (*callbackOnMouseUpEvent)(tTVPMouseButton, int, int);
-typedef void (*callbackOnMouseMoveEvent)(int, int);
-
 struct SDL_Sprite
 {
     uint64_t texture = 0;
@@ -20,6 +14,15 @@ struct SDL_Sprite
 
 namespace krkrsdl3
 {
+// 
+SDL_Sprite* KRKR_Get_Current_Sprite();
+void KRKR_Trig_MouseDown(tTVPMouseButton mouseId, int x, int y);
+void KRKR_Trig_MouseUp(tTVPMouseButton mouseId, int x, int y);
+void KRKR_Trig_MouseMove(int x, int y);
+void KRKR_Trig_MouseScroll(int dx, int dy, int x, int y);
+void KRKR_Trig_KeyDown(int vk);
+void KRKR_Trig_KeyUp(int vk);
+
 //
 void fetchGLInfo();
 

@@ -125,6 +125,9 @@ NCB_REGISTER_SUBCLASS_DELAY(Player)
     NCB_METHOD(getVariableFrameList);
     NCB_METHOD(getCommandList);
     NCB_METHOD(getLayerGetter);
+    NCB_METHOD(setFlip);
+    NCB_METHOD(setSlant);
+    NCB_METHOD(setZoom);
     PROPERTY(animating);
     PROPERTY(playing);
     PROPERTY(allplaying);

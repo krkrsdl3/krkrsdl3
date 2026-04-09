@@ -1025,6 +1025,21 @@ tTJSVariant EmotePlayer::getLayerGetter(tTJSString name)
     dsp->Release();
     return var;
 }
+void EmotePlayer::setFlip(bool isFlip)
+{
+    if (isFlip)
+        currZy = -currZy;
+}
+void EmotePlayer::setSlant(tjs_real x, tjs_real y)
+{
+    // unknow
+}
+void EmotePlayer::setZoom(tjs_real x, tjs_real y)
+{
+    currZx = x;
+    currZy = y;
+    updateTransMat();
+}
 void EmotePlayer::setOpenGLDrawArea(tjs_int width, tjs_int height)
 {
     // fbo
