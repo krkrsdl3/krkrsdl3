@@ -291,6 +291,7 @@ public:
                             TVPThrowExceptionMessage(TJSNarrowToWideConversionError);
                         interBuff = new tjs_wchar[interSize + 1];
                         TextStream_mbstowcs(interBuff, (tjs_char*)nbuf, interSize);
+                        interBuff[interSize] = 0;
                         // to utf-8
                         BufferLen = TVPWideCharToUtf8String(interBuff, NULL);
                         if (BufferLen == (size_t)-1)

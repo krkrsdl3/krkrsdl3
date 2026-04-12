@@ -63,7 +63,6 @@ FreeTypeFontRasterizer::~FreeTypeFontRasterizer()
         delete FaceFallback;
         FaceFallback = nullptr;
     }
-    TVPUninitializeFreeFont();
 }
 void FreeTypeFontRasterizer::AddRef()
 {
