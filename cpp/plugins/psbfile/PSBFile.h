@@ -19,6 +19,7 @@ public:
     void Invalidate();
 
     bool load(const ttstr& filePath);
+    bool loadFromStream(tTJSBinaryStream* filePtr, const ttstr& filePath);
     tTJSVariant root();
     tjs_uint32 readListInfo(std::vector<tjs_uint32>* target);
     void refreshListInfo(std::vector<tjs_uint32>* target1, std::vector<tjs_uint32>* target2);

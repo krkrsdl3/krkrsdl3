@@ -60,4 +60,8 @@ set(KRKRSDL_PLUGINS_SRC
     ${KRKRSDL_PLUGINS_PATH}/psbfile/PSBData.cpp
     ${KRKRSDL_PLUGINS_PATH}/psbfile/PSBFile.cpp
     ${KRKRSDL_PLUGINS_PATH}/psbfile/PSBMedia.cpp
+	${KRKRSDL_PLUGINS_PATH}/sqlite3/extend.cpp
+	${KRKRSDL_PLUGINS_PATH}/sqlite3/sqlite3.c
+	${KRKRSDL_PLUGINS_PATH}/sqlite3/sqlite3.cpp
+	${KRKRSDL_PLUGINS_PATH}/sqlite3/xp3_vfs.cpp
     )
