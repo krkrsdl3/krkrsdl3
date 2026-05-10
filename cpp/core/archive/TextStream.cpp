@@ -100,7 +100,7 @@ static size_t _TextStream_mbstowcs(int (*func_mbtowc)(unsigned short*, const uns
     return count;
 }
 
-static size_t TextStream_mbstowcs(tjs_wchar* pwcs, const tjs_char* s, size_t n)
+size_t TextStream_mbstowcs(tjs_wchar* pwcs, const tjs_char* s, size_t n)
 {
     if (mbtowc_for_text_stream)
     {

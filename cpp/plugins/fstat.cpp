@@ -569,15 +569,10 @@ private:
                 if ((*cb)(array, count, file, entry))
                     count++;
             }
+        } catch (...) { }
 
-            result = tTJSVariant(array, array);
-            array->Release();
-        }
-        catch (...)
-        {
-            array->Release();
-            throw;
-        }
+        result = tTJSVariant(array, array);
+        array->Release();
 
         return result;
     }

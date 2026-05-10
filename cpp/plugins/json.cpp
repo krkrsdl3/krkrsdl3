@@ -15,6 +15,9 @@
 
 #define UNICODE_BOM (0xfeff)
 
+// CP_ACP为本地编码 我们基于TextStream确定
+extern size_t TextStream_mbstowcs(tjs_wchar* pwcs, const tjs_char* s, size_t n);
+
 // ----------------------------------------------------------------------
 
 class IFileStorage
@@ -122,14 +125,39 @@ public:
             }
             else
             {
-                size_t BufferLen = TVPWideCharToUtf8String((tjs_wchar*)mbline.c_str(), NULL);
-                if (BufferLen == (size_t)-1)
+                tjs_char* buf = nullptr;
+                tjs_wchar* interBuff = nullptr;
+                try
+                {
+                    // 再次重蹈覆辙(看来对于编码得专门抽象一个工具包) TODO
+                    // to utf-16
+                    size_t interSize = TextStream_mbstowcs(NULL, (tjs_char*)mbline.c_str(), 0);
+                    if (interSize == (size_t)-1)
+                        TVPThrowExceptionMessage(TJSNarrowToWideConversionError);
+                    interBuff = new tjs_wchar[interSize + 1];
+                    TextStream_mbstowcs(interBuff, (tjs_char*)mbline.c_str(), interSize);
+                    interBuff[interSize] = 0;
+                    // to utf-8
+                    size_t BufferLen = TVPWideCharToUtf8String(interBuff, NULL);
+                    if (BufferLen == (size_t)-1)
+                        TVPThrowExceptionMessage(TJSWideToNarrowConversionError);
+                    buf = new tjs_char[BufferLen + 1];
+                    TVPWideCharToUtf8String(interBuff, buf);
+                    buf[BufferLen] = 0;
+                }
+                catch (...)
+                {
+                    if (buf)
+                        delete[] buf;
+                    if (interBuff)
+                        delete[] interBuff;
                     return false;
-                tjs_char* buf = new tjs_char[BufferLen + 1];
-                TVPWideCharToUtf8String((tjs_wchar*)mbline.c_str(), buf);
-                buf[l] = '\0';
+                }
                 str += buf;
-                delete[] buf;
+                if (buf)
+                    delete[] buf;
+                if (interBuff)
+                    delete[] interBuff;
             }
             return true;
         }

@@ -17,10 +17,9 @@
 #include <vector>
 #include <assert.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include "sqlite3/sqlite3.h"
 
-#define MAX_PATH 4096
+#include <unistd.h>
 
 #include "TVPStorage.h"
 
@@ -277,7 +276,7 @@ sqlite3_vfs *getXp3Vfs()
 	static sqlite3_vfs xp3Vfs = {
 		1,					// iVersion
 		sizeof(xp3File),	// szOsFile
-		MAX_PATH,			// mxPathname
+		4096,			    // mxPathname
 		0,					// pNext
 		"xp3",				// zName
 		0,					// pAppData
