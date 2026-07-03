@@ -276,44 +276,130 @@ static void evaluateSurfaceChain(
     float u, float v,
     float& outClipX, float& outClipY)
 {
-    float lastX = u;
-    float lastY = v;
+    float lastX = 0;
+    float lastY = 0;
+    glm::vec4 trans = glm::vec4(1.0f);
     int surfaceCount = (int)renderMethod.size();
+    uint32_t currInheritMask = 0xFFFFFFF;
 
     // Iterate in reverse: renderMethod[surfaceCount-1] is innermost (first in shader)
-    for (int i = surfaceCount - 1; i >= 0; i--) {
-        // Evaluate bezier surface
-        float bx, by;
-        if (renderMethod[i].type == 1)
+    for (int i = surfaceCount - 1; i >= 0; i--)
+    {
+        // inheritMask
+        currInheritMask &= renderMethod[i].currInheritMask;
+        // 构建变换矩阵 平移 currCoordx/currCoordy → 剪切 sx/sy → 缩放 zx/zy → 旋转 angle
+        glm::mat4 model = glm::mat4(1.0f); // 注:复合顺序是反过来的
+        // 考察InheritMask
+        if (i < surfaceCount - 1 && i > 0 && ((currInheritMask & 0x1FC) != 0x1FC))
         {
-            evalBezierSurface(renderMethod[i].controlPts, lastX, lastY, bx, by);
+            model = glm::translate(
+                model, glm::vec3(renderMethod[i].currCoordx, renderMethod[i].currCoordy, 0));
+            // 0x00000010 角度
+            if ((currInheritMask & 0x10) == 0x10)
+            {
+                model = glm::rotate(model, glm::radians(renderMethod[i].currAngle), glm::vec3(0.0f, 0.0f, 1.0f));
+            }
+            // 0x00000020 ZoomX
+            if ((currInheritMask & 0x20) == 0x20)
+            {
+                model = glm::scale(model, glm::vec3(renderMethod[i].currZx, 1.0f, 1.0f));
+            }
+            // 0x00000040 ZoomY
+            if ((currInheritMask & 0x40) == 0x40)
+            {
+                model = glm::scale(model, glm::vec3(1.0f, renderMethod[i].currZy, 1.0f));
+            }
+            // 0x00000180 SlantX + lantY
+            if ((currInheritMask & 0x180) == 0x180)
+            {
+                model =
+                    glm::mat4(1.0f, renderMethod[i].currSy, 0.0f, 0.0f, renderMethod[i].currSx,
+                              1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f) *
+                    model;
+            }
+            // 0x00000080 SlantX
+            else if ((currInheritMask & 0x80) == 0x80)
+            {
+                model =
+                    glm::mat4(1.0f, 0.0f, 0.0f, 0.0f, renderMethod[i].currSx,
+                              1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f) *
+                    model;
+            }
+            // 0x00000100 SlantY
+            else if ((currInheritMask & 0x100) == 0x100)
+            {
+                model =
+                    glm::mat4(1.0f, renderMethod[i].currSy, 0.0f, 0.0f, 0.0f,
+                              1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f) *
+                    model;
+            }
         }
         else
         {
-            bx = lastY;
-            by = lastX;
+            model = glm::translate(
+                model, glm::vec3(renderMethod[i].currCoordx, renderMethod[i].currCoordy, 0));
+            model = glm::rotate(model, glm::radians(renderMethod[i].currAngle),
+                                glm::vec3(0.0f, 0.0f, 1.0f));
+            model =
+                glm::scale(model, glm::vec3(renderMethod[i].currZx, renderMethod[i].currZy, 1.0f));
+            model = glm::mat4(1.0f, renderMethod[i].currSy, 0.0f, 0.0f, renderMethod[i].currSx,
+                              1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f) *
+                    model;
         }
+        // 非layout补充计算矩阵
+        if (renderMethod[i].type >= 1 && renderMethod[i].type <= 2)
+        {
+            model = glm::translate(
+                model, glm::vec3(-renderMethod[i].originX - renderMethod[i].currOx,
+                                 -renderMethod[i].originY - renderMethod[i].currOy, 0.0f));
+            model =
+                glm::scale(model, glm::vec3(renderMethod[i].width, renderMethod[i].height, 1.0f));
+        }
+        // 加入attach矩阵
+        model = renderMethod[i].attachMat * model;
+        GLM_ASSERT_VALID(model);
 
-        // Apply transformation matrix
-        glm::vec4 trans = renderMethod[i].matTrans * glm::vec4(bx, by, 0.0f, 1.0f);
+        if (renderMethod[i].type == 3)
+        {
+            // Layout层 直接计算
+            trans = model * trans;
+        }
+        else
+        {
+            // 获取 lastX,lastY
+            if (i < surfaceCount - 1)
+            {
+                // Inner surfaces have model-only matrices; output is in parent's pixel space.
+                // Normalize back to UV [0,1] (with axis swap: parent-Y→U, parent-X→V)
+                // for the next (outer) surface's Bezier input.
+                lastX = (trans.y + renderMethod[i].originY) / renderMethod[i].height; // Y → U
+                lastY = (trans.x + renderMethod[i].originX) / renderMethod[i].width;  // X → V
+            }
+            else
+            {
+                lastX = u;
+                lastY = v;
+            }
 
-        if (i > 0) {
-            // Inner surfaces have model-only matrices; output is in parent's pixel space.
-            // Normalize back to UV [0,1] (with axis swap: parent-Y→U, parent-X→V)
-            // for the next (outer) surface's Bezier input.
-            const auto& parent = renderMethod[i - 1];
-            lastX = (trans.y + parent.originY) / parent.height;   // Y → U
-            lastY = (trans.x + parent.originX) / parent.width;    // X → V
-        } else {
-            // Outermost surface includes projection → output is in clip space
-            lastX = trans.x;
-            lastY = trans.y;
+            // Evaluate bezier surface
+            float bx, by;
+            if (renderMethod[i].type == 1)
+            {
+                evalBezierSurface(renderMethod[i].controlPts, lastX, lastY, bx, by);
+            }
+            else
+            {
+                bx = lastY, by = lastX;
+            }
+
+            // Apply transformation matrix
+            trans = model * glm::vec4(bx, by, 0.0f, 1.0f);
         }
     }
 
     // Final Y flip (same as shader: gl_Position = lastPt * vec4(1, -1, 1, 1))
-    outClipX = lastX;
-    outClipY = -lastY;
+    outClipX = trans.x;
+    outClipY = -trans.y;
 }
 
 // Build subdivided mesh for a given icon node
@@ -673,23 +759,8 @@ void emotenoderef::progress(float tick, std::vector<emoteRender>& renderList, em
         // 有深度信息时，穿透到最顶层
         if (renderMethod.size() > 0 && currCoordz != 0.0)
         {
-            if (renderMethod.at(0).type == 3)
-            {
-                renderMethod.at(0).matTrans =
-                    glm::translate(renderMethod.at(0).matTrans, glm::vec3(0.0, 0.0, currCoordz));
-            }
-            else
-            {
-                glm::mat4 proj = glm::ortho(-renderMethod.at(0).originX,
-                                            renderMethod.at(0).width - renderMethod.at(0).originX,
-                                            renderMethod.at(0).height - renderMethod.at(0).originY,
-                                            -renderMethod.at(0).originY, lim.zMax, -lim.zMax);
-                glm::mat4 last = glm::mat4(1.0f);
-                last = glm::translate(last, glm::vec3(0.0, 0.0, currCoordz));
-                last = last * glm::inverse(proj) * renderMethod.at(0).matTrans;
-                renderMethod.at(0).matTrans = proj * last;
-            }
-            GLM_ASSERT_VALID(renderMethod.at(0).matTrans);
+            renderMethod.at(0).attachMat =
+                glm::translate(renderMethod.at(0).attachMat, glm::vec3(0.0, 0.0, currCoordz));
         }
 
         // 有模板信息时，穿透到最顶层
@@ -707,16 +778,6 @@ void emotenoderef::progress(float tick, std::vector<emoteRender>& renderList, em
             }
         }
 
-        // 是否需要同步父节点变形 玩不明白啊，反正视觉效果还行，就算了吧
-        // if ((inheritMask >> 25 & 0x1) != 0x1 && renderMethod.size() > 0 &&
-        // renderMethod.back().type == 1)
-        //{
-        //    emoteRender emt = renderMethod.back();
-        //    renderMethod.pop_back();
-        //    emt.type = 2;
-        //    renderMethod.push_back(emt);
-        //}
-
         // shape节点: 将currZx/currZy重置为1，避免与width/height双重缩放(px = zx * shapeUnit * 1)
         if (!isIcon && frame != nullptr && frame->src.rfind("shape/", 0) == 0)
         {
@@ -724,210 +785,52 @@ void emotenoderef::progress(float tick, std::vector<emoteRender>& renderList, em
             currZy = 1.0f;
         }
 
-        // 构建变换矩阵 平移 currCoordx/currCoordy → 缩放 zx/zy → 剪切 sx/sy → 旋转 angle
-        glm::mat4 model = glm::mat4(1.0f); // 注:复合顺序是反过来的
-        model = glm::translate(model, glm::vec3(currCoordx, currCoordy, 0));
-        model = glm::rotate(model, glm::radians(currAngle), glm::vec3(0.0f, 0.0f, 1.0f));
-        model = glm::mat4(1.0f, currSy, 0.0f, 0.0f, currSx, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f,
-                          0.0f, 0.0f, 0.0f, 0.0f, 1.0f) *
-                model;
-        model = glm::scale(model, glm::vec3(currZx, currZy, 1.0f));
-
-        if (isLayout) // 不绘制，不处理网格数据，只构建变换矩阵
+        // 渲染信息记录
+        emoteRender emt;
+        if (isLayout)
+            emt.type = 3;
+        else
+            emt.type = 2;
+        if (isNeedBp)
         {
-            if (renderMethod.size() > 0 &&
-                renderMethod.back().type == 3) // 如果上一级是layout的话，则进行合并
-            {
-                // 构造渲染方法结构
-                emoteRender emt = renderMethod.back();
-                renderMethod.pop_back();
-                emt.type = 3;
-                emt.opa *= currOpa;
-
-                // 更新矩阵
-                emt.matTrans = emt.matTrans * model;
-
-                // fbo信息
-                emt.originX = originX;
-                emt.originY = originY;
-                emt.width = width;
-                emt.height = height;
-                emt.label = currentNode->label;
-                GLM_ASSERT_VALID(emt.matTrans);
-                renderMethod.push_back(emt);
-            }
-            else
-            {
-                // 构造渲染方法结构
-                emoteRender emt;
-                emt.type = 3;
-                emt.opa = currOpa;
-
-                // 如果父类没有网格变形，则进行矩阵解耦并外加合并
-                if (renderMethod.size() > 1 && renderMethod.back().type == 2)
-                {
-                    glm::mat4 demuxMat =
-                        glm::scale(renderMethod.back().matTrans,
-                                   glm::vec3(1 / renderMethod.back().width,
-                                             1 / renderMethod.back().height, 1.0f));
-                    demuxMat =
-                        glm::translate(demuxMat, glm::vec3(renderMethod.back().originX,
-                                                           renderMethod.back().originY, 0.0f));
-                    emt.matTrans = demuxMat * model;
-                    emt.opa *= renderMethod.back().opa;
-                    renderMethod.pop_back();
-                    // 继承自父 layout 的边界信息
-                    originX = renderMethod.back().originX;
-                    originY = renderMethod.back().originY;
-                    width = renderMethod.back().width;
-                    height = renderMethod.back().height;
-                }
-                else // 正常更新矩阵
-                {
-                    emt.matTrans = model;
-                }
-
-                // fbo信息
-                emt.originX = originX;
-                emt.originY = originY;
-                emt.width = width;
-                emt.height = height;
-                emt.label = currentNode->label;
-                GLM_ASSERT_VALID(emt.matTrans);
-                renderMethod.push_back(emt);
-            }
+            for (size_t i = 0; i < 32; i++)
+                emt.controlPts[i] = currbp[i];
+            emt.type = 1;
         }
-        else // 需要绘制，构建绘制矩阵和变形参数
-        {
-            if (renderMethod.size() > 0 &&
-                renderMethod.back().type == 3) // 如果上一级是layout的话，则进行合并
-            {
-                // 构造渲染方法结构
-                emoteRender emt = renderMethod.back();
-                renderMethod.pop_back();
-                emt.type = 2;
-                emt.opa *= currOpa;
-                if (isNeedBp)
-                {
-                    for (size_t i = 0; i < 32; i++)
-                        emt.controlPts[i] = currbp[i];
-                    emt.type = 1;
-                }
-
-                model =
-                    glm::translate(model, glm::vec3(-originX - currOx, -originY - currOy, 0.0f));
-                model = glm::scale(model, glm::vec3(width, height, 1.0f));
-                if (renderMethod.empty())
-                { // 更新矩阵：仅最外层包含 projection，内层 surface 只保留 model 变换
-                    glm::mat4 projection =
-                        glm::ortho(-lim.originX, lim.width - lim.originX, lim.height - lim.originY,
-                                   -lim.originY, lim.zMax, -lim.zMax);
-                    emt.matTrans = projection * emt.matTrans * model;
-                }
-                else
-                {
-                    emt.matTrans = emt.matTrans * model;
-                }
-
-                // fbo信息
-                emt.originX = originX;
-                emt.originY = originY;
-                emt.width = width;
-                emt.height = height;
-                emt.label = currentNode->label;
-                GLM_ASSERT_VALID(emt.matTrans);
-                renderMethod.push_back(emt);
-            }
-            else
-            {
-                // 构造渲染方法结构
-                emoteRender emt;
-                emt.type = 2;
-                emt.opa = currOpa;
-                if (isNeedBp)
-                {
-                    for (size_t i = 0; i < 32; i++)
-                        emt.controlPts[i] = currbp[i];
-                    emt.type = 1;
-                }
-
-                // 如果父类没有网格变形，则进行矩阵解耦并外加合并
-                if (renderMethod.size() > 0 && renderMethod.back().type == 2)
-                {
-                    glm::mat4 demuxMat =
-                        glm::scale(renderMethod.back().matTrans,
-                                   glm::vec3(1 / renderMethod.back().width,
-                                             1 / renderMethod.back().height, 1.0f));
-                    demuxMat =
-                        glm::translate(demuxMat, glm::vec3(renderMethod.back().originX,
-                                                           renderMethod.back().originY, 0.0f));
-                    model = glm::translate(model,
-                                           glm::vec3(-originX - currOx, -originY - currOy, 0.0f));
-                    model = glm::scale(model, glm::vec3(width, height, 1.0f));
-                    emt.matTrans = demuxMat * model;
-                    emt.opa *= renderMethod.back().opa;
-                    renderMethod.pop_back();
-                }
-                else
-                {
-                    model = glm::translate(model,
-                                           glm::vec3(-originX - currOx, -originY - currOy, 0.0f));
-                    model = glm::scale(model, glm::vec3(width, height, 1.0f));
-                    if (renderMethod.empty())
-                    { // 正常更新矩阵：仅最外层加 projection
-                        glm::mat4 projection =
-                            glm::ortho(-lim.originX, lim.width - lim.originX,
-                                       lim.height - lim.originY, -lim.originY, lim.zMax, -lim.zMax);
-                        emt.matTrans = projection * model;
-                    }
-                    else
-                    {
-                        emt.matTrans = model;
-                    }
-                }
-
-                // fbo信息
-                emt.originX = originX;
-                emt.originY = originY;
-                emt.width = width;
-                emt.height = height;
-                emt.label = currentNode->label;
-                GLM_ASSERT_VALID(emt.matTrans);
-                renderMethod.push_back(emt);
-            }
-        }
+        emt.opa = currOpa;
+        // 矩阵计算信息
+        emt.currCoordx = currCoordx;
+        emt.currCoordy = currCoordy;
+        emt.currAngle = currAngle;
+        emt.currSx = currSx;
+        emt.currSy = currSy;
+        emt.currZx = currZx;
+        emt.currZy = currZy;
+        emt.currOx = currOx;
+        emt.currOy = currOy;
+        emt.currInheritMask = currentNode->inheritMask;
+        // fbo信息
+        emt.originX = originX;
+        emt.originY = originY;
+        emt.width = width;
+        emt.height = height;
+        emt.label = currentNode->label;
+        renderMethod.push_back(emt);
     }
 
     // 对于icon保存大小信息
     if (isIcon && renderMethod.size() > 0)
     {
         // 两个端点就够了
+        float ot1x, ot1y, ot2x, ot2y;
+        evaluateSurfaceChain(renderMethod, 0, 0, ot1x, ot1y);
+        evaluateSurfaceChain(renderMethod, 1, 1, ot2x, ot2y);
         glm::vec2 pt1(0, 0), pt2(1, 1);
-        // 将所有矩阵变形进行作用
-        glm::vec4 tmpVec1(0, 0, 0, 0), tmpVec2(1, 1, 0, 0);
-        for (int32_t i = renderMethod.size() - 1; i >= 0; i--)
-        {
-            // 内层 surface 输出在父级像素空间 → 归一化回 UV [0,1]
-            if (i != renderMethod.size() - 1)
-            {
-                const auto& cur = renderMethod.at(i);
-                tmpVec1 = glm::vec4(
-                    (tmpVec1.x + cur.originX) / cur.width,
-                    (tmpVec1.y + cur.originY) / cur.height,
-                    0, 0);
-                tmpVec2 = glm::vec4(
-                    (tmpVec2.x + cur.originX) / cur.width,
-                    (tmpVec2.y + cur.originY) / cur.height,
-                    0, 0);
-            }
-            tmpVec1 = renderMethod.at(i).matTrans * glm::vec4(tmpVec1.x, tmpVec1.y, 0.0f, 1.0f);
-            tmpVec2 = renderMethod.at(i).matTrans * glm::vec4(tmpVec2.x, tmpVec2.y, 0.0f, 1.0f);
-        }
         // 边界缩放（最外层 surface 输出 clip → screen）
-        pt1.x = (tmpVec1.x / 2.0 + 0.5) * currentNode->_filePtr->_screenSize.width;
-        pt1.y = (1 - (tmpVec1.y / 2.0 + 0.5)) * currentNode->_filePtr->_screenSize.height;
-        pt2.x = (tmpVec2.x / 2.0 + 0.5) * currentNode->_filePtr->_screenSize.width;
-        pt2.y = (1 - (tmpVec2.y / 2.0 + 0.5)) * currentNode->_filePtr->_screenSize.height;
+        pt1.x = (ot1x / 2.0 + 0.5) * currentNode->_filePtr->_screenSize.width;
+        pt1.y = (ot1y / 2.0 + 0.5) * currentNode->_filePtr->_screenSize.height;
+        pt2.x = (ot2x / 2.0 + 0.5) * currentNode->_filePtr->_screenSize.width;
+        pt2.y = (ot2y / 2.0 + 0.5) * currentNode->_filePtr->_screenSize.height;
         // 保存区域(使用独立的shapeList，避免状态重复)
         emoterect tmprect;
         tmprect.left = pt1.x;
@@ -945,32 +848,15 @@ void emotenoderef::progress(float tick, std::vector<emoteRender>& renderList, em
         if (src.rfind("shape/", 0) == 0 && renderMethod.size() > 0)
         {
             // 两个端点就够了
+            float ot1x, ot1y, ot2x, ot2y;
+            evaluateSurfaceChain(renderMethod, 0, 0, ot1x, ot1y);
+            evaluateSurfaceChain(renderMethod, 1, 1, ot2x, ot2y);
             glm::vec2 pt1(0, 0), pt2(1, 1);
-            // 将所有矩阵变形进行作用
-            glm::vec4 tmpVec1(0, 0, 0, 0), tmpVec2(1, 1, 0, 0);
-            for (int32_t i = renderMethod.size() - 1; i >= 0; i--)
-            {
-                // 内层 surface 输出在父级像素空间 → 归一化回 UV [0,1]
-                if (i != renderMethod.size() - 1)
-                {
-                    const auto& cur = renderMethod.at(i);
-                    tmpVec1 = glm::vec4(
-                        (tmpVec1.x + cur.originX) / cur.width,
-                        (tmpVec1.y + cur.originY) / cur.height,
-                        0, 0);
-                    tmpVec2 = glm::vec4(
-                        (tmpVec2.x + cur.originX) / cur.width,
-                        (tmpVec2.y + cur.originY) / cur.height,
-                        0, 0);
-                }
-                tmpVec1 = renderMethod.at(i).matTrans * glm::vec4(tmpVec1.x, tmpVec1.y, 0.0f, 1.0f);
-                tmpVec2 = renderMethod.at(i).matTrans * glm::vec4(tmpVec2.x, tmpVec2.y, 0.0f, 1.0f);
-            }
             // 边界缩放（最外层 surface 输出 clip → screen）
-            pt1.x = (tmpVec1.x / 2.0 + 0.5) * currentNode->_filePtr->_screenSize.width;
-            pt1.y = (1 - (tmpVec1.y / 2.0 + 0.5)) * currentNode->_filePtr->_screenSize.height;
-            pt2.x = (tmpVec2.x / 2.0 + 0.5) * currentNode->_filePtr->_screenSize.width;
-            pt2.y = (1 - (tmpVec2.y / 2.0 + 0.5)) * currentNode->_filePtr->_screenSize.height;
+            pt1.x = (ot1x / 2.0 + 0.5) * currentNode->_filePtr->_screenSize.width;
+            pt1.y = (ot1y / 2.0 + 0.5) * currentNode->_filePtr->_screenSize.height;
+            pt2.x = (ot2x / 2.0 + 0.5) * currentNode->_filePtr->_screenSize.width;
+            pt2.y = (ot2y / 2.0 + 0.5) * currentNode->_filePtr->_screenSize.height;
             // 保存区域(使用独立的shapeList，避免状态重复)
             emoterect tmprect;
             tmprect.label = currentNode->label;
@@ -1049,11 +935,18 @@ void emotenoderef::draw(GLuint targetFbo, emotelimit lim, GLuint exFbo, GLuint e
     {
         glBindFramebuffer(GL_FRAMEBUFFER, exFbo);
         glBaseSet();
+        bool hasDraw = false;
         for (auto maskLayer : renderMethod.at(0).layerNode)
         {
-            if (maskLayer != nullptr)
+            if (maskLayer != nullptr && maskLayer->currOpa > 0)
+            {
+                hasDraw = true;
                 maskLayer->draw(exFbo, lim, 0, 0);
+            } 
         }
+        // 排除异常蒙版
+        if (!hasDraw)
+            renderMethod.at(0).hasStencil = false;
     }
 
     // clear
@@ -1184,7 +1077,7 @@ float emotenoderef::getCurrentRenderZ()
 {
     if (renderMethod.size() > 0)
     {
-        return renderMethod.at(0).matTrans[3][2];
+        return renderMethod.at(0).attachMat[3][2];
     }
     return 0;
 }

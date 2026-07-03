@@ -742,7 +742,7 @@ void EmotePlayer::progress(tjs_real mstime)
         // mirror
         if (emtEngine._mainfile->isMirror)
         {
-            empty.at(0).matTrans = glm::scale(empty.at(0).matTrans, glm::vec3(-1.0f, 1.0f, 1.0f));
+            empty.at(0).attachMat = glm::scale(empty.at(0).attachMat, glm::vec3(-1.0f, 1.0f, 1.0f));
         }
         // condition
         if (emtEngine._mainfile->_metadata->_varList.size() > 0)
@@ -1283,11 +1283,15 @@ void EmotePlayer::updateTransMat()
     _renderMethod.type = 3;
     _renderMethod.opa = 1.0f;
     // 构建变换矩阵
-    glm::mat4 model = glm::mat4(1.0f);
-    model = glm::translate(model, glm::vec3(currCoordx + currCamX, currCoordy + currCamY, 0));
-    model = glm::rotate(model, glm::radians(currAngle), glm::vec3(0.0f, 0.0f, 1.0f));
-    model = glm::scale(model, glm::vec3(currZx, currZy, 1.0f));
-    _renderMethod.matTrans = _affineTrans * model;
+    glm::mat4 projection = glm::ortho(-_limitArea.originX, _limitArea.width - _limitArea.originX,
+                                      _limitArea.height - _limitArea.originY, -_limitArea.originY,
+                                      _limitArea.zMax, -_limitArea.zMax);
+    _renderMethod.attachMat = projection * _affineTrans;
+    _renderMethod.currCoordx = currCoordx + currCamX;
+    _renderMethod.currCoordy = currCoordy + currCamY;
+    _renderMethod.currAngle = currAngle;
+    _renderMethod.currZx = currZx;
+    _renderMethod.currZy = currZy;
 }
 void EmotePlayer::ResetDrawArea(tjs_int width, tjs_int height)
 {

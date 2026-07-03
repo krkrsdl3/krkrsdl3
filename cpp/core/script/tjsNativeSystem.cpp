@@ -9,7 +9,6 @@
 #include "TVPApplication.h"
 #include "TVPScreen.h"
 #include "TVPScript.h"
-#include "TVPConfig.h"
 #include "TVPGraphicsLoader.h"
 #include "TVPMsg.h"
 #include "Random.h"

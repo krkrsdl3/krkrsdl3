@@ -1267,9 +1267,9 @@ void TVPBeginContinuousEvent()
 {
     // read commandline options
     static tjs_int ArgumentGeneration = 0;
-    if (ArgumentGeneration != TVPGetCommandLineArgumentGeneration())
+    if (ArgumentGeneration != 1)
     {
-        ArgumentGeneration = TVPGetCommandLineArgumentGeneration();
+        ArgumentGeneration = 1;
     }
     //	if(!TVPIsWaitVSync())
     {

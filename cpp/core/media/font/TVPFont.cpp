@@ -9,7 +9,6 @@
 #include "TVPMsg.h"
 #include "Platform.h"
 #include "StringUtil.h"
-#include "TVPConfig.h"
 
 tTJSHashTable<ttstr, TVPFontNamePathInfo, tTVPttstrHash> TVPFontNames;
 
@@ -156,7 +155,7 @@ void TVPInitFontNames()
     TVPFontNamesInit = true;
     do
     {
-        ttstr userFont = GameSetting::default_font;
+        ttstr userFont = "";
         if (!userFont.IsEmpty() && TVPEnumFontsProc(userFont))
             break;
 
@@ -314,7 +313,7 @@ ttstr TVPGetBeingFont(ttstr fonts)
         vfont = false;
     }
 
-    static bool force_default_font = GameSetting::force_default_font;
+    static bool force_default_font = false;
     if (!force_default_font)
     {
         bool prev_empty_name = false;

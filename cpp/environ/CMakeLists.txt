@@ -5,7 +5,6 @@ set(KRKRSDL_ENVIRON_SRC
     ${KRKRSDL_ENVIRON_PATH}/KeyCodeConv.cpp
     ${KRKRSDL_ENVIRON_PATH}/MainWindowLayer.cpp
     ${KRKRSDL_ENVIRON_PATH}/Other.cpp
-    ${KRKRSDL_ENVIRON_PATH}/TVPConfig.cpp
     ${KRKRSDL_ENVIRON_PATH}/WaveMixer.cpp
     )
 	

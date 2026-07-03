@@ -15,7 +15,6 @@
 #include "TVPScript.h"
 #include "TVPPlugin.h"
 
-#include "TVPConfig.h"
 #include "Exception.h"
 #include "SystemControl.h"
 #include "WaveIntf.h"
@@ -165,34 +164,19 @@ tTVPApplication::~tTVPApplication()
 }
 
 extern void TVPLoadPluigins(void);
-bool tTVPApplication::StartApplication(int argc, char* argv[])
+bool tTVPApplication::StartApplication()
 {
-    SetCommandlineArguments(argc, argv);
-
     TVPTerminateCode = 0;
     _retry = "retry";
     _cancel = "cancel";
     _msg = "内存不足";
     _title = "发生异常";
 
-#ifdef _KRKRSDL3_LIB
-    TVPNativeProjectDir = std::string(argv[1]);
-#else
-    size_t lastSlash = std::string(argv[0]).find_last_of("/\\");
-    if (lastSlash != std::string::npos)
-    {
-        TVPNativeProjectDir = std::string(argv[0]).substr(0, lastSlash + 1) + "Res";
-    }
-#endif
-
     CheckConsole();
 
     // try starting the program!
     try
     {
-
-        TVPProjectDir = TVPNormalizeStorageName(argv[1]);
-
         TVPInitScriptEngine();
         TVPInitFontNames();
 

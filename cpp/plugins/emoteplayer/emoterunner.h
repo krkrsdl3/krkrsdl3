@@ -33,20 +33,26 @@ namespace emoteplayer
     };
     struct emoteRender // 渲染方式
     {
-        int type = 0; // 0:不绘制 1:参与网格变形和矩阵变换 2:只参与矩阵变换
-                      // 3:layout/motion变形穿透(无法使用网格和透明度)，需要将matTrans合并到下一级使用
-        glm::mat4 matTrans = glm::mat4(1.0f);
+
+        int type = 0; // 0:不绘制 1:icon参与网格变形和矩阵变换 2:icon只参与矩阵变换 3:layout/motion变形(无法使用网格和透明度)
         float controlPts[32] = {0.0};
         float opa = 1.0;
 
         bool hasStencil = false;
         std::vector<emotenoderef*> layerNode;
 
-        float originX = 0; // 基础参数
+        // 基础参数
+        float originX = 0;
         float originY = 0;
         float width = 0;
         float height = 0;
-
+        // 计算参数  lastMat = attachMat * calcMat
+        glm::mat4 attachMat = glm::mat4(1.0f);
+        float currCoordx = 0, currCoordy = 0, currCoordz = 0;
+        float currAngle = 0, currZx = 1.0, currZy = 1.0;
+        float currSx = 0, currSy = 0;
+        float currOx = 0, currOy = 0;
+        uint32_t currInheritMask = 0x20007FC;
         // 辅助信息
         std::string label;
     };

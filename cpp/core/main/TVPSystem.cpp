@@ -15,13 +15,14 @@
 #include "SystemControl.h"
 #include "FilePathUtil.h"
 #include "Platform.h"
-#include "TVPConfig.h"
 #include "DetectCPU.h"
 #include "XP3Archive.h"
 #include <thread>
 
 #include "tjsLex.h"
 #include "tjsNativeLayer.h"
+
+#include "../eventCallbackFun.h"
 
 //---------------------------------------------------------------------------
 // TVPFireOnApplicationActivateEvent
@@ -1232,14 +1233,8 @@ void TVPInitializeBaseSystems()
 // system initializer / uninitializer
 //---------------------------------------------------------------------------
 static tjs_uint64 TVPTotalPhysMemory = 0;
-static void TVPInitProgramArgumentsAndDataPath(bool stop_after_datapath_got);
 void TVPBeforeSystemInit()
 {
-    // RegisterDllLoadHook();
-    //  register DLL delayed import hook to support _inmm.dll
-
-    TVPInitProgramArgumentsAndDataPath(false); // ensure command line
-
     // set system archive delimiter after patch.tjs specified
     tTJSVariant v;
     if (TVPGetCommandLine(TJS_N("-arcdelim"), &v))
@@ -1319,8 +1314,6 @@ void TVPBeforeSystemInit()
     }
 }
 //---------------------------------------------------------------------------
-static void TVPDumpOptions();
-//---------------------------------------------------------------------------
 extern bool TVPEnableGlobalHeapCompaction;
 extern bool TVPAutoSaveBookMark;
 static bool TVPHighTimerPeriod = false;
@@ -1389,29 +1382,16 @@ void TVPAfterSystemInit()
             TVPAutoSaveBookMark = true;
         }
     }
-    // check renderer option
-    if (TVPGetCommandLine(TJS_N("-renderer"), &opt))
-    {
-        ttstr str(opt);
-        if (str == TJS_N("opengl") || str == TJS_N("gl") || str == TJS_N("gpu"))
-            GameSetting::renderer = "opengl";
-        else if (str == TJS_N("software") || str == TJS_N("sw"))
-            GameSetting::renderer = "software";
-        else
-            TVPAddLog(ttstr(TJS_N("Unknown renderer '")) + str +
-                      TJS_N("', using default '") + ttstr(GameSetting::renderer) +
-                      TJS_N("'"));
-    }
 
     // check TVPGraphicSplitOperation option
-    std::string _val = GameSetting::renderer;
+    std::string _val = "software";
     if (_val != "software")
     {
         TVPGraphicSplitOperationType = gsotNone;
     }
     else
     {
-        TVPDrawThreadNum = GameSetting::software_draw_thread;
+        TVPDrawThreadNum = 0;
         if (TVPGetCommandLine(TJS_N("-gsplit"), &opt))
         {
             ttstr str(opt);
@@ -1447,9 +1427,6 @@ void TVPAfterSystemInit()
         else if (str == TJS_N("high"))
             TVPJPEGLoadPrecision = jlpHigh;
     }
-
-    // dump option
-    TVPDumpOptions();
 
     // timer precision
     uint32_t prectick = 1;
@@ -1542,47 +1519,8 @@ static std::vector<std::string>* TVPGetConfigFileOptions(const ttstr& filename)
 //---------------------------------------------------------------------------
 
 //---------------------------------------------------------------------------
-
-static ttstr TVPParseCommandLineOne(const ttstr& i)
-{
-    // value is specified
-    const tjs_char *p, *o;
-    p = o = i.c_str();
-    p = TJS_strchr(p, '=');
-
-    if (p == NULL)
-    {
-        return i + TJS_N("=yes");
-    }
-
-    p++;
-
-    ttstr optname(o, (int)(p - o));
-
-    if (*p == TJS_N('\'') || *p == TJS_N('\"'))
-    {
-        // as an escaped string
-        tTJSVariant v;
-        TJSParseString(v, &p);
-
-        return optname + ttstr(v);
-    }
-    else
-    {
-        // as a string
-        return optname + p;
-    }
-}
-//---------------------------------------------------------------------------
-std::vector<ttstr> TVPProgramArguments;
 static bool TVPProgramArgumentsInit = false;
-static tjs_int TVPCommandLineArgumentGeneration = 0;
 static bool TVPDataPathDirectoryEnsured = false;
-//---------------------------------------------------------------------------
-tjs_int TVPGetCommandLineArgumentGeneration()
-{
-    return TVPCommandLineArgumentGeneration;
-}
 //---------------------------------------------------------------------------
 void TVPEnsureDataPathDirectory()
 {
@@ -1602,169 +1540,23 @@ void TVPEnsureDataPathDirectory()
     }
 }
 //---------------------------------------------------------------------------
-static void PushConfigFileOptions(const std::vector<std::string>* options)
-{
-    if (!options)
-        return;
-    for (unsigned int j = 0; j < options->size(); j++)
-    {
-        if ((*options)[j].c_str()[0] != ';') // unless comment
-            TVPProgramArguments.push_back(
-                TVPParseCommandLineOne(TJS_N("-") + ttstr((*options)[j].c_str())));
-    }
-}
-//---------------------------------------------------------------------------
-static int tvp_argc = 0;
-static char** tvp_argv = NULL;
-void SetCommandlineArguments(int argc, char* argv[])
-{
-    tvp_argc = argc;
-    tvp_argv = argv;
-}
 
-static void TVPInitProgramArgumentsAndDataPath(bool stop_after_datapath_got)
-{
-    if (!TVPProgramArgumentsInit)
-    {
-        TVPProgramArgumentsInit = true;
-
-        // find options from self executable image
-        try
-        {
-            // store arguments given by commandline to "TVPProgramArguments"
-            bool acceptfilenameargument = GetSystemSecurityOption("acceptfilenameargument") != 0;
-            bool argument_stopped = false;
-            if (acceptfilenameargument)
-                argument_stopped = true;
-            int file_argument_count = 0;
-            for (tjs_int i = 1; i < tvp_argc; i++)
-            {
-                if (argument_stopped)
-                {
-                    ttstr arg_name_and_value = TJS_N("-arg") + ttstr(file_argument_count) +
-                                               TJS_N("=") + ttstr(tvp_argv[i]);
-                    file_argument_count++;
-                    TVPProgramArguments.push_back(arg_name_and_value);
-                }
-                else
-                {
-                    if (tvp_argv[i][0] == TJS_N('-'))
-                    {
-                        if (tvp_argv[i][1] == TJS_N('-') && tvp_argv[i][2] == 0)
-                        {
-                            // argument stopper
-                            argument_stopped = true;
-                        }
-                        else
-                        {
-                            ttstr value(tvp_argv[i]);
-                            if (!TJS_strchr(value.c_str(), TJS_N('=')))
-                                value += TJS_N("=yes");
-                            TVPProgramArguments.push_back(TVPParseCommandLineOne(value));
-                        }
-                    }
-                }
-            }
-
-            // read datapath
-            TVPNativeDataPath = GetDataPathDirectory(ExePath());
-
-            if (stop_after_datapath_got)
-                return;
-        }
-        catch (...)
-        {
-            throw;
-        }
-
-        // set data path
-        TVPDataPath = TVPNormalizeStorageName(TVPNativeDataPath);
-        TVPAddImportantLog(TVPFormatMessage(TVPInfoDataPath, TVPDataPath));
-
-        // set log output directory
-        TVPSetLogLocation(TVPNativeDataPath);
-
-        // increment TVPCommandLineArgumentGeneration
-        TVPCommandLineArgumentGeneration++;
-    }
-}
-//---------------------------------------------------------------------------
-static void TVPDumpOptions()
-{
-    std::vector<ttstr>::const_iterator i;
-    ttstr options(TVPInfoSpecifiedOptionEarlierItemHasMorePriority);
-    if (TVPProgramArguments.size())
-    {
-        for (i = TVPProgramArguments.begin(); i != TVPProgramArguments.end(); i++)
-        {
-            options += TJS_N(" ");
-            options += *i;
-        }
-    }
-    else
-    {
-        options += (const tjs_char*)TVPNone;
-    }
-    TVPAddImportantLog(options);
-}
 //---------------------------------------------------------------------------
 bool TVPGetCommandLine(const tjs_char* name, tTJSVariant* value)
 {
-    TVPInitProgramArgumentsAndDataPath(false);
-
-    tjs_int namelen = (tjs_int)TJS_strlen(name);
-    std::vector<ttstr>::const_iterator i;
-    for (i = TVPProgramArguments.begin(); i != TVPProgramArguments.end(); i++)
+    std::string ret;
+    if (krkrsdl3::KRKR_GetCommandLine(name, &ret))
     {
-        if (!TJS_strncmp(i->c_str(), name, namelen))
-        {
-            if (i->c_str()[namelen] == TJS_N('='))
-            {
-                // value is specified
-                const tjs_char* p = i->c_str() + namelen + 1;
-                if (value)
-                    *value = p;
-                return true;
-            }
-            else if (i->c_str()[namelen] == 0)
-            {
-                // value is not specified
-                if (value)
-                    *value = TJS_N("yes");
-                return true;
-            }
-        }
+        *value = ttstr(ret);
+        return true;
     }
-    return false;
+    else
+        return false;
 }
 //---------------------------------------------------------------------------
 void TVPSetCommandLine(const tjs_char* name, const ttstr& value)
 {
-    //	TVPInitProgramArgumentsAndDataPath(false);
-
-    tjs_int namelen = (tjs_int)TJS_strlen(name);
-    std::vector<ttstr>::iterator i;
-    for (i = TVPProgramArguments.begin(); i != TVPProgramArguments.end(); i++)
-    {
-        if (!TJS_strncmp(i->c_str(), name, namelen))
-        {
-            if (i->c_str()[namelen] == TJS_N('=') || i->c_str()[namelen] == 0)
-            {
-                // value found
-                *i = ttstr(i->c_str(), namelen) + TJS_N("=") + value;
-                TVPCommandLineArgumentGeneration++;
-                if (TVPCommandLineArgumentGeneration == 0)
-                    TVPCommandLineArgumentGeneration = 1;
-                return;
-            }
-        }
-    }
-
-    // value not found; insert argument into front
-    TVPProgramArguments.insert(TVPProgramArguments.begin(), ttstr(name) + TJS_N("=") + value);
-    TVPCommandLineArgumentGeneration++;
-    if (TVPCommandLineArgumentGeneration == 0)
-        TVPCommandLineArgumentGeneration = 1;
+    krkrsdl3::KRKR_SetCommandLine(name, value.c_str());
 }
 //---------------------------------------------------------------------------
 

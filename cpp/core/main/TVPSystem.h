@@ -85,7 +85,6 @@ struct tTVPAtExit
 //---------------------------------------------------------------------------
 // Command line parameter operations (implement in each platform)
 //---------------------------------------------------------------------------
-extern void SetCommandlineArguments(int argc, char* argv[]);
 extern bool TVPGetCommandLine(const tjs_char* name, tTJSVariant* value = 0);
 // retrieves command line parameter named "name".
 // command line parameter format must be "-name=value"

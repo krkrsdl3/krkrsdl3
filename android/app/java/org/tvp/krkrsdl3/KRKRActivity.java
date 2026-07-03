@@ -22,7 +22,7 @@ import java.util.ArrayList;
 import java.util.Objects;
 
 public class KRKRActivity extends SDLActivity {
-    private ArrayList<String> m_onsargs;
+    private ArrayList<String> m_gameargs;
 
     // override sdl functions
     static {
@@ -40,7 +40,7 @@ public class KRKRActivity extends SDLActivity {
 
     @Override
     protected String[] getArguments() {
-        return m_onsargs.toArray(new String[0]);
+        return m_gameargs.toArray(new String[0]);
     }
 
     @Override
@@ -49,7 +49,7 @@ public class KRKRActivity extends SDLActivity {
         setNativeAssetManager(getAssets());
         Intent intent = getIntent();
 
-        m_onsargs = intent.getStringArrayListExtra(SHAREDPREF_GAMECONFIG);
+        m_gameargs = intent.getStringArrayListExtra(SHAREDPREF_GAMECONFIG);
         this.fullscreen();
     }
 

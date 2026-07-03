@@ -12,7 +12,6 @@ extern "C"
 {
 #include "libswscale/swscale.h"
 };
-#include "TVPConfig.h"
 #include "xxhash.h"
 #include "opencv2/opencv.hpp"
 
@@ -4425,7 +4424,7 @@ iTVPRenderManager* TVPGetRenderManager()
     static iTVPRenderManager* _RenderManager;
     if (!_RenderManager)
     {
-        ttstr str = GameSetting::renderer;
+        ttstr str = "software";
         _RenderManager = TVPGetRenderManager(str);
     }
     return _RenderManager;

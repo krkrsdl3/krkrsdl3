@@ -64,7 +64,6 @@ set(KRKRSDL_CORE_SRC
     ${KRKRSDL_CORE_PATH}/render/LayerManager.cpp
     ${KRKRSDL_CORE_PATH}/render/LayerTreeOwner.cpp
     ${KRKRSDL_CORE_PATH}/render/RenderManager.cpp
-    ${KRKRSDL_CORE_PATH}/render/RenderManagerGL.cpp
     ${KRKRSDL_CORE_PATH}/render/TransIntf.cpp
     ${KRKRSDL_CORE_PATH}/render/TVPColor.cpp
     ${KRKRSDL_CORE_PATH}/script/tjsNativeAsyncTrigger.cpp

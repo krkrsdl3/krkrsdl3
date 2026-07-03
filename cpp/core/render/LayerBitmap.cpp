@@ -23,7 +23,6 @@
 #include "FreeTypeFontRasterizer.h"
 #include "PrerenderedFont.h"
 #include "TVPApplication.h"
-#include "TVPConfig.h"
 
 #include "ResampleImage.h"
 
@@ -2480,7 +2479,7 @@ bool tTVPNativeBaseBitmap::InternalBlendText(tTVPCharacterData* data,
     opa_id = _opa_id; \
     clr_id = _clr_id;
 
-    static bool fastGPURoute = !TVPIsSoftwareRenderManager() && !GameSetting::ogl_accurate_render;
+    static bool fastGPURoute = !TVPIsSoftwareRenderManager();
 
     iTVPTexture2D* pTexSrc;
     if (fastGPURoute && dtdata->bltmode == bmAlphaOnAlpha && dtdata->opa > 0)

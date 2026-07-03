@@ -180,8 +180,7 @@ public class MainActivity extends AppCompatActivity {
             return null;
         }
 
-        public int checkValid() {
-            if (m_validChecked) return m_validResult;
+        public int checkValid(String startfilename) {
             m_validChecked = true;
             int res = 0;
             boolean has_script = false;
@@ -192,7 +191,7 @@ public class MainActivity extends AppCompatActivity {
             String[] list = file.list();
             if (list != null) {
                 for (String name : list) {
-                    if ("data.xp3".equals(name)) {
+                    if (startfilename.equals(name)) {
                         has_script = true;
                         break;
                     }
@@ -308,8 +307,11 @@ public class MainActivity extends AppCompatActivity {
                     break;
             }
 
+            //
+            JSONObject gameConfig = m_db != null ? m_db.getGameConfig(gameinfo.m_path) : new JSONObject();
+
             // 有效性徽章
-            int valid = gameinfo.checkValid();
+            int valid = gameinfo.checkValid(gameConfig.optString("startup_file", "data.xp3"));
             if (valid == 7) {
                 holder.text_valid_badge.setVisibility(View.VISIBLE);
                 holder.text_valid_badge.setText("✓ 就绪");
@@ -1344,18 +1346,18 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void launchGame(GameInfo gameinfo) {
-        int gamemod = gameinfo.checkValid();
-        ArrayList<String> onsargs;
+        JSONObject gameConfig = m_db.getGameConfig(gameinfo.m_path);
+        int gamemod = gameinfo.checkValid(gameConfig.optString("startup_file", "data.xp3"));
+        ArrayList<String> m_gameargs;
 
         // 加载单人配置并合并
         if (m_db != null) {
-            JSONObject gameConfig = m_db.getGameConfig(gameinfo.m_path);
-            onsargs = buildLaunchArgs(gameinfo.getGameDir(), gameConfig);
+            m_gameargs = buildLaunchArgs(gameinfo.getGameDir(), gameConfig);
         } else {
-            onsargs = buildLaunchArgs(gameinfo.getGameDir(), null);
+            m_gameargs = buildLaunchArgs(gameinfo.getGameDir(), null);
         }
 
-        startkrkrsdl(gamemod, gameinfo.getRealPath(), onsargs, false);
+        startkrkrsdl(gamemod, gameinfo.getRealPath(), m_gameargs, false);
 
         if (m_listgameadaptor != null) {
             m_listgameadaptor.notifyGameLaunch(gameinfo);
@@ -1372,28 +1374,24 @@ public class MainActivity extends AppCompatActivity {
             return;
         }
         AlertDialog.Builder builder = new AlertDialog.Builder(MainActivity.this);
-        builder.setTitle("警告：游戏目录不完整");
+        builder.setTitle("错误：游戏目录不完整");
         StringBuilder message = new StringBuilder();
         message.append("路径: ").append(gamepath).append("\n\n");
         if ((mode & 4) == 0) message.append("⚠ 目录不可读\n");
         if ((mode & 2) == 0) message.append("⚠ 目录不可写\n");
-        if ((mode & 1) == 0) message.append("⚠ 未找到 data.xp3\n\n");
-        message.append("是否仍然启动？");
+        if ((mode & 1) == 0) message.append("⚠ 未找到 " + args.get(0) + "\n\n");
         builder.setMessage(message);
         builder.setCancelable(true);
-        builder.setPositiveButton("启动", (dialog, which) -> {
-            dialog.dismiss();
-            MainActivity.this.startkrkrsdl(args, usesaf);
-        });
+        builder.setPositiveButton("确认", (dialog, which) -> dialog.dismiss());
         builder.setNegativeButton("取消", (dialog, which) -> dialog.dismiss());
         AlertDialog dialog = builder.create();
         dialog.show();
     }
 
-    private void startkrkrsdl(ArrayList<String> onsargs, boolean usesaf) {
+    private void startkrkrsdl(ArrayList<String> m_gameargs, boolean usesaf) {
         Intent intent = new Intent();
         intent.setClass(this, KRKRActivity.class);
-        intent.putStringArrayListExtra(SHAREDPREF_GAMECONFIG, onsargs);
+        intent.putStringArrayListExtra(SHAREDPREF_GAMECONFIG, m_gameargs);
         startActivity(intent);
     }
 
@@ -1601,8 +1599,6 @@ public class MainActivity extends AppCompatActivity {
 
     @SuppressLint({"InflateParams", "SetTextI18n"})
     private void showGameDetail(GameInfo gameinfo, GamelistAdapter.ItemViewHolder cardHolder) {
-        int gamemod = gameinfo.checkValid();
-
         View view_gamedetail = LayoutInflater.from(MainActivity.this)
                 .inflate(R.layout.layout_gamedetail, null);
 
@@ -1632,14 +1628,16 @@ public class MainActivity extends AppCompatActivity {
         TextView badge_read = view_gamedetail.findViewById(R.id.badge_read);
         TextView badge_write = view_gamedetail.findViewById(R.id.badge_write);
         TextView badge_exec = view_gamedetail.findViewById(R.id.badge_exec);
-        badge_read.setVisibility((gamemod & 4) != 0 ? View.VISIBLE : View.GONE);
-        badge_write.setVisibility((gamemod & 2) != 0 ? View.VISIBLE : View.GONE);
-        badge_exec.setVisibility((gamemod & 1) != 0 ? View.VISIBLE : View.GONE);
 
         // 加载单人配置（如果有），并合并全局配置显示
         m_currentDetailGame = gameinfo;
         JSONObject gameConfig = m_db != null ? m_db.getGameConfig(gameinfo.m_path) : new JSONObject();
         final boolean hadCustomArgs = gameConfig.has("args");
+
+        int gamemod = gameinfo.checkValid(gameConfig.optString("startup_file", "data.xp3"));
+        badge_read.setVisibility((gamemod & 4) != 0 ? View.VISIBLE : View.GONE);
+        badge_write.setVisibility((gamemod & 2) != 0 ? View.VISIBLE : View.GONE);
+        badge_exec.setVisibility((gamemod & 1) != 0 ? View.VISIBLE : View.GONE);
 
         // 获取所有详情弹窗中的控件引用
         EditText text_gameargs = view_gamedetail.findViewById(R.id.text_detail_gameargs);
@@ -1655,7 +1653,7 @@ public class MainActivity extends AppCompatActivity {
         text_gameargs.setEnabled(canEditArgs);
 
         // 初始化启动文件（仅保留文件名，兼容旧版保存的全路径）
-        String startupFile = gameConfig.optString("startup_file", "");
+        String startupFile = gameConfig.optString("startup_file", "data.xp3");
         if (!startupFile.isEmpty()) {
             // 如果保存的是全路径，提取文件名
             int slashIdx = startupFile.lastIndexOf('/');

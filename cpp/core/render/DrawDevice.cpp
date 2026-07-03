@@ -26,9 +26,9 @@ bool TVPZoomInterpolation = true;
 //---------------------------------------------------------------------------
 static void TVPInitBasicDrawDeviceOptions()
 {
-    if (TVPBasicDrawDeviceOptionsGeneration == TVPGetCommandLineArgumentGeneration())
+    if (TVPBasicDrawDeviceOptionsGeneration == 1)
         return;
-    TVPBasicDrawDeviceOptionsGeneration = TVPGetCommandLineArgumentGeneration();
+    TVPBasicDrawDeviceOptionsGeneration = 1;
 
     tTJSVariant val;
     TVPZoomInterpolation = true;

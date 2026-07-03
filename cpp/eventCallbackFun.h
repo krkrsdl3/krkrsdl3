@@ -14,7 +14,7 @@ struct SDL_Sprite
 
 namespace krkrsdl3
 {
-// 
+// 事件传递
 SDL_Sprite* KRKR_Get_Current_Sprite();
 void KRKR_Trig_MouseDown(tTVPMouseButton mouseId, int x, int y);
 void KRKR_Trig_MouseUp(tTVPMouseButton mouseId, int x, int y);
@@ -23,7 +23,7 @@ void KRKR_Trig_MouseScroll(int dx, int dy, int x, int y);
 void KRKR_Trig_KeyDown(int vk);
 void KRKR_Trig_KeyUp(int vk);
 
-//
+// OpenGL
 void fetchGLInfo();
 
 // 
@@ -35,8 +35,24 @@ void SDL_GL_UpdateTexture(SDL_Sprite* sp, uint8_t* buff, int width, int height, 
 void SDL_GL_DepartTexture(SDL_Sprite* sp);
 void SDL_GL_DestroyTexture(SDL_Sprite* sp);
 
+// 附加菜单
 #define SDL_EVENT_MENU_CLICK (SDL_EVENT_USER + 1)
 void SDL_Invoke_Menu(int x, int y, void* _menu = NULL);
 void SDL_Trig_Menu(void* data);
+
+// 参数解析
+void KRKR_ParseArguments(int argc, char* argv[]);
+bool KRKR_GetCommandLine(const char* name, std::string* value);
+void KRKR_SetCommandLine(const char* name, const char* value);
+// 设置列表
+struct KRKR_Settings
+{
+    bool ogl_accurate_render;
+    std::string default_font;
+    bool force_default_font;
+    std::string renderer;
+    int software_draw_thread;
+};
+extern KRKR_Settings settings;
 
 } // namespace krkrsdl3

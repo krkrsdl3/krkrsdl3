@@ -16,7 +16,6 @@
 #include "FontRasterizer.h"
 #include "LayerManager.h"
 #include "TVPFont.h"
-#include "TVPConfig.h"
 
 #include "tjsNativeBitmap.h"
 #include "tjsNativeFont.h"
@@ -32,7 +31,7 @@ bool TVPFreeUnusedLayerCache = false;
 
 static bool IsGPU()
 {
-    static bool isGPU = !TVPIsSoftwareRenderManager() && !GameSetting::ogl_accurate_render;
+    static bool isGPU = !TVPIsSoftwareRenderManager();
     return isGPU;
 }
 

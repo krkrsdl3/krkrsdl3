@@ -73,7 +73,7 @@ set(KRKRSDL_SRC
     ${KRKRSDL_PLUGINS_SRC}
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp/krkrsdl.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/cpp/krkrsdl_gl.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/cpp/krkrsdl_menu.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/cpp/krkrsdl_tools.cpp
     )
 
 #

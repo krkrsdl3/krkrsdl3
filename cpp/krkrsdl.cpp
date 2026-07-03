@@ -35,6 +35,9 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[])
         return SDL_APP_FAILURE;
     }
 
+    // 参数解析
+    krkrsdl3::KRKR_ParseArguments(argc, argv);
+
     // 窗口
     SDL_PropertiesID props = SDL_CreateProperties();
     SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, "TVP Engine");
@@ -85,7 +88,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[])
         SDL_Log("At least two parameters are required.");
         return SDL_APP_FAILURE;
     }
-    if (!::Application->StartApplication(argc, argv))
+    if (!::Application->StartApplication())
     {
         SDL_Log("Game Start Failed.");
         return SDL_APP_FAILURE;

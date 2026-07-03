@@ -23,7 +23,6 @@
 #include "TextStream.h"
 #include "Platform.h"
 #include "tjsRandomGenerator.h"
-#include "TVPConfig.h"
 #include "TVPApplication.h"
 #include "WindowIntf.h"
 

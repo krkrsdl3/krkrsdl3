@@ -66,7 +66,7 @@ private:
 public:
     tTVPApplication();
     ~tTVPApplication();
-    bool StartApplication(int argc, char* argv[]);
+    bool StartApplication();
     void Run();
     void ProcessMessages();
 
