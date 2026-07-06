@@ -6,6 +6,8 @@
 #include "TVPStorage.h"
 #include "TextStream.h"
 
+#include "md5.h"
+
 #define NCB_MODULE_NAME TJS_N("scriptsEx.dll")
 
 template<typename CHAR, typename MASK>
@@ -837,12 +839,12 @@ tjs_error ScriptsAdd::getMD5HashString(tTJSVariant* result,
 
     tTJSVariantOctet* octet = param[0]->AsOctetNoAddRef();
 
-    TVP_md5_state_t st;
-    TVP_md5_init(&st);
-    TVP_md5_append(&st, octet->GetData(), (int)octet->GetLength());
+    md5_state_t st;
+    md5_init(&st);
+    md5_append(&st, octet->GetData(), (int)octet->GetLength());
 
     tjs_uint8 buffer[16];
-    TVP_md5_finish(&st, buffer);
+    md5_finish(&st, buffer);
 
     tjs_char ret[32 + 1];
     const tjs_char* hex = TJS_N("0123456789abcdef");

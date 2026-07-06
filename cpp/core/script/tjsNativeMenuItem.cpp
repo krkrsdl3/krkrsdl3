@@ -249,12 +249,9 @@ bool tTJSNI_MenuItem::GetVisible() const
     return IsVisible;
 }
 
-void TVPShowPopMenu(tTJSNI_MenuItem* menu);
-
 //---------------------------------------------------------------------------
 tjs_int tTJSNI_MenuItem::TrackPopup(tjs_uint32 flags, tjs_int x, tjs_int y) const
 {
-    TVPShowPopMenu((tTJSNI_MenuItem*)this);
     return 1;
 }
 

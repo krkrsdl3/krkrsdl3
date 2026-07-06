@@ -66,7 +66,6 @@ void tTJSSpinLock::lock()
     while (atom_lock.test_and_set(std::memory_order_acquire))
     {
         std::this_thread::yield();
-        //		TVPRelinquishCPU();
     }
 }
 

@@ -1,7 +1,7 @@
 #include "VideoReferenceClock.h"
 
 #include "tjsCommHead.h"
-#include "TickCount.h"
+#include "Platform.h"
 
 NS_KRMOVIE_BEGIN
 

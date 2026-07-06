@@ -66,9 +66,9 @@ tTVPLocalTempStorageHolder::tTVPLocalTempStorageHolder(const ttstr& name)
         catch (...)
         {
             if (FileMustBeDeleted)
-                TVPRemoveFile(LocalName);
+                TVPDeleteFile(LocalName.AsStdString());
             if (FolderMustBeDeleted)
-                TVPRemoveFolder(LocalFolder);
+                TVPDeleteFolder(LocalFolder.AsStdString());
             throw;
         }
     }
@@ -77,9 +77,9 @@ tTVPLocalTempStorageHolder::tTVPLocalTempStorageHolder(const ttstr& name)
 tTVPLocalTempStorageHolder::~tTVPLocalTempStorageHolder()
 {
     if (FileMustBeDeleted)
-        TVPRemoveFile(LocalName);
+        TVPDeleteFile(LocalName.AsStdString());
     if (FolderMustBeDeleted)
-        TVPRemoveFolder(LocalFolder);
+        TVPDeleteFolder(LocalFolder.AsStdString());
 }
 //---------------------------------------------------------------------------
 

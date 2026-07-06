@@ -35,40 +35,6 @@ inline extern void TVP_free(void* pp)
 extern tjs_int TVPGetAutoLoadPluginCount();
 //---------------------------------------------------------------------------
 
-//---------------------------------------------------------------------------
-extern int ZLIB_uncompress(unsigned char* dest,
-                           unsigned long* destlen,
-                           const unsigned char* source,
-                           unsigned long sourcelen);
-extern int ZLIB_compress(unsigned char* dest,
-                         unsigned long* destlen,
-                         const unsigned char* source,
-                         unsigned long sourcelen);
-extern int ZLIB_compress2(unsigned char* dest,
-                          unsigned long* destlen,
-                          const unsigned char* source,
-                          unsigned long sourcelen,
-                          int level);
-
-/*[*/
-
-//---------------------------------------------------------------------------
-// this stub includes exported function from Independent implementation of
-// MD5 (RFC 1321) by Aladdin Enterprises.
-//---------------------------------------------------------------------------
-// TVP_md5_init, TVP_md5_append, TVP_md5_finish are exported
-typedef struct TVP_md5_state_s
-{
-    tjs_uint8 buffer[4 * 2 + 8 + 4 * 4 + 8 + 64];
-} TVP_md5_state_t; // md5_state_t
-//---------------------------------------------------------------------------
-
-/*]*/
-
-extern void TVP_md5_init(TVP_md5_state_t* pms);
-extern void TVP_md5_append(TVP_md5_state_t* pms, const tjs_uint8* data, int nbytes);
-extern void TVP_md5_finish(TVP_md5_state_t* pms, tjs_uint8* digest);
-
 extern void TVPProcessApplicationMessages();
 extern void TVPHandleApplicationMessage();
 

@@ -30,7 +30,7 @@
             "default-features": false
         }
     ],
-    "builtin-baseline": "e5a1490e1409d175932ef6014519e9ae149ddb7c",
+    "builtin-baseline": "d87340acc46bdeda386037b38aca30136e667e47",
     "overrides": [
         {
             "name": "ffmpeg",

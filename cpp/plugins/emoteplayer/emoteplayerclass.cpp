@@ -2,8 +2,8 @@
 #include "emoteplayerclass.h"
 #include "tjsArray.h"
 #include "TVPStorage.h"
-#include "SDL3/SDL.h"
 #include "TickCount.h"
+#include "Platform.h"
 
 #include "tjsCommHead.h"
 #include "tjsNativeLayer.h"
@@ -96,7 +96,7 @@ ResourceManager::ResourceManager(iTJSDispatch2* kagWindow, tjs_int cacheSize)
         if (TJS_FAILED(kag->PropGet(0, TJS_N("poolLayer"), NULL, &baseLayer, kag)) ||
             baseLayer.Type() != tvtObject)
         {
-            SDL_Log("create motionWorkLayer failed");
+            TVPConsoleLog("create motionWorkLayer failed");
             return;
         }
         // 创建motionWorkLayer实例
@@ -296,7 +296,7 @@ void SeparateLayerAdaptor::checkDrawArea(tjs_int width, tjs_int height)
                                newfbodepthtexture, 0);
         if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
         {
-            SDL_Log("Framebuffer不完整!");
+            TVPConsoleLog("Framebuffer不完整!");
         }
         // 模板fbo
         GLuint newsuperfbotexture = createEmptyTexture(width, height);
@@ -308,7 +308,7 @@ void SeparateLayerAdaptor::checkDrawArea(tjs_int width, tjs_int height)
                                newsuperfbodepthtexture, 0);
         if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
         {
-            SDL_Log("Framebuffer不完整!");
+            TVPConsoleLog("Framebuffer不完整!");
         }
         // 清理旧物
         if (fbotexture != 0 && glIsTexture(fbotexture) == GL_TRUE)
@@ -702,7 +702,7 @@ void EmotePlayer::play(tTJSString name, int flag)
 }
 void EmotePlayer::initPhysics(tTJSVariant metadata)
 {
-    SDL_Log("EmotePlayer::initPhysics TODO");
+    TVPConsoleLog("EmotePlayer::initPhysics TODO");
 }
 void EmotePlayer::clear(iTJSDispatch2* layer, tjs_uint32 neutralColor)
 {
@@ -851,7 +851,7 @@ void EmotePlayer::draw(iTJSDispatch2* objthis)
 }
 void EmotePlayer::assign(iTJSDispatch2* anotherAdaptor)
 {
-    SDL_Log("EmotePlayer::assign TODO");
+    TVPConsoleLog("EmotePlayer::assign TODO");
 }
 void EmotePlayer::setCoord(tjs_real x, tjs_real y)
 {
@@ -872,7 +872,7 @@ void EmotePlayer::setRotate(tjs_real rotate)
 }
 void EmotePlayer::setColor(tjs_uint32 color)
 {
-    SDL_Log("EmotePlayer::setColor TODO");
+    TVPConsoleLog("EmotePlayer::setColor TODO");
 }
 void EmotePlayer::setVariable(tTJSString name, tjs_real value)
 {
@@ -895,7 +895,7 @@ tjs_real EmotePlayer::getVariable(tTJSString name)
 }
 void EmotePlayer::setOuterForce(tTJSString name, tjs_real ofx, tjs_real ofy)
 {
-    SDL_Log("EmotePlayer::setOuterForce TODO");
+    TVPConsoleLog("EmotePlayer::setOuterForce TODO");
 }
 void EmotePlayer::setDrawAffineTranslateMatrix(
     tjs_real a, tjs_real b, tjs_real c, tjs_real d, tjs_int tx, tjs_int ty)
@@ -915,11 +915,11 @@ void EmotePlayer::setCameraOffset(tjs_int w, tjs_int h)
 void EmotePlayer::startWind(
     tjs_real start, tjs_real goal, tjs_real speed, tjs_real powMin, tjs_real powMax)
 {
-    SDL_Log("EmotePlayer::startWind TODO");
+    TVPConsoleLog("EmotePlayer::startWind TODO");
 }
 void EmotePlayer::stopWind()
 {
-    SDL_Log("EmotePlayer::stopWind TODO");
+    TVPConsoleLog("EmotePlayer::stopWind TODO");
 }
 bool EmotePlayer::contains(tjs_real x, tjs_real y)
 {
@@ -931,7 +931,7 @@ bool EmotePlayer::contains(tjs_real x, tjs_real y)
 }
 void EmotePlayer::skip()
 {
-    SDL_Log("EmotePlayer::skip TODO");
+    TVPConsoleLog("EmotePlayer::skip TODO");
 }
 void EmotePlayer::skipToSync()
 {
@@ -939,18 +939,18 @@ void EmotePlayer::skipToSync()
     {
         clockPassed = emtEngine._mainfile->getSyncTime();
     }
-    SDL_Log("EmotePlayer::skipToSync TODO");
+    TVPConsoleLog("EmotePlayer::skipToSync TODO");
 }
 void EmotePlayer::pass()
 {
-    SDL_Log("EmotePlayer::pass TODO");
+    TVPConsoleLog("EmotePlayer::pass TODO");
 }
 void EmotePlayer::stop()
 {
     _isStop = true;
     _playing = false;
     _allplaying = false;
-    SDL_Log("EmotePlayer::stop TODO");
+    TVPConsoleLog("EmotePlayer::stop TODO");
 }
 void EmotePlayer::playTimeline(tTJSString name, tjs_int flags)
 {
@@ -1050,7 +1050,7 @@ void EmotePlayer::setTimelineBlendRatio(tTJSString name,
                                         tjs_real time,
                                         tjs_real easing)
 {
-    SDL_Log("EmotePlayer::setTimelineBlendRatio TODO");
+    TVPConsoleLog("EmotePlayer::setTimelineBlendRatio TODO");
 }
 void EmotePlayer::fadeInTimeline(tTJSString name, tjs_real time, tjs_real easing)
 {
@@ -1090,14 +1090,14 @@ tTJSVariant EmotePlayer::getVariableFrameList(tTJSString name)
         tTJSVariant itm;
         if (TJS_FAILED(root->PropGet(0, TJS_N("metadata"), NULL, &itm, root)))
         {
-            SDL_Log("emotefile donot contain metadata");
+            TVPConsoleLog("emotefile donot contain metadata");
             return tTJSVariant();
         }
         root->Release();
         root = itm.AsObject();
         if (TJS_FAILED(root->PropGet(0, TJS_N("variableList"), NULL, &itm, root)))
         {
-            SDL_Log("emotefile donot contain variableList");
+            TVPConsoleLog("emotefile donot contain variableList");
             return tTJSVariant();
         }
         root->Release();
@@ -1126,7 +1126,7 @@ tTJSVariant EmotePlayer::getVariableFrameList(tTJSString name)
     else
     {
         iTJSDispatch2* array = TJSCreateArrayObject();
-        SDL_Log("EmotePlayer::getVariableFrameList TODO");
+        TVPConsoleLog("EmotePlayer::getVariableFrameList TODO");
         tTJSVariant result(array, array);
         array->Release();
         return result;
@@ -1241,7 +1241,7 @@ void EmotePlayer::setOpenGLDrawArea(tjs_int width, tjs_int height)
                            0);
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
     {
-        SDL_Log("Framebuffer不完整!");
+        TVPConsoleLog("Framebuffer不完整!");
     }
     // 模板fbo
     GLuint newsuperfbotexture = createEmptyTexture(width, height);
@@ -1253,7 +1253,7 @@ void EmotePlayer::setOpenGLDrawArea(tjs_int width, tjs_int height)
                            newsuperfbodepthtexture, 0);
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
     {
-        SDL_Log("Framebuffer不完整!");
+        TVPConsoleLog("Framebuffer不完整!");
     }
     // 清理旧物
     if (fbotexture != 0 && glIsTexture(fbotexture) == GL_TRUE)

@@ -174,12 +174,6 @@ void TVPRemoveFromStorageCache(const ttstr& name);
 
 ttstr TVPGetTemporaryName();
 // retrieve file name to store temporary data ( must be unique, local name )
-bool TVPRemoveFile(const ttstr& name);
-// remove local file ( "name" is a local *native* name )
-// this must not throw an exception ( return false if error )
-bool TVPRemoveFolder(const ttstr& name);
-// remove local directory ( "name" is a local *native* name )
-// this must not throw an exception ( return false if error )
 
 ttstr TVPGetAppPath();
 // retrieve program path, in normalized storage name
@@ -211,11 +205,6 @@ int TVPCheckArchive(const ttstr& localname);
 tTJSBinaryStream* TVPCreateBinaryStreamForRead(const ttstr& name, const ttstr& modestr);
 tTJSBinaryStream* TVPCreateBinaryStreamForWrite(const ttstr& name, const ttstr& modestr);
 //---------------------------------------------------------------------------
-
-void TVPPreNormalizeStorageName(ttstr& name);
-// called by TVPNormalizeStorageName before it process the storage name.
-// user may pass the OS's native filename to the TVP storage system,
-// so that this function must convert it to the TVP storage name rules.
 
 //---------------------------------------------------------------------------
 

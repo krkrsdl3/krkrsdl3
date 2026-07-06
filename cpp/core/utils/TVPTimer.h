@@ -13,7 +13,7 @@
 
 #include "tjsNative.h"
 #include "TVPEvent.h"
-#include "TickCount.h"
+#include "Platform.h"
 
 //---------------------------------------------------------------------------
 // global variables

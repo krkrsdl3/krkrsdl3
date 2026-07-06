@@ -5,6 +5,8 @@
 #include "TVPThread.h"
 #include "NativeEventQueue.h"
 
+#include <algorithm>
+
 bool TVPLimitTimerCapacity = false;
 
 #define TVP_DEFAULT_TIMER_CAPACITY 6

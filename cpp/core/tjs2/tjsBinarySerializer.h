@@ -278,7 +278,7 @@ public:
             tmp[2] = (v >> 8) & 0xff;
             stream->Write(tmp, sizeof(tmp));
         }
-        else if (len <= ULONG_MAX)
+        else if (len <= UINT_MAX)
         {
             tjs_uint32 v = len;
             tjs_uint8 tmp[5];
@@ -348,7 +348,7 @@ public:
             tmp[2] = (v >> 8) & 0xff;
             stream->Write(tmp, sizeof(tmp));
         }
-        else if (count <= ULONG_MAX)
+        else if (count <= UINT_MAX)
         {
             tjs_uint32 v = count;
             tjs_uint8 tmp[5];
@@ -381,7 +381,7 @@ public:
             tmp[2] = (v >> 8) & 0xff;
             stream->Write(tmp, sizeof(tmp));
         }
-        else if (count <= ULONG_MAX)
+        else if (count <= UINT_MAX)
         {
             tjs_uint32 v = count;
             tjs_uint8 tmp[5];

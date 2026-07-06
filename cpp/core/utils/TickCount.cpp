@@ -9,7 +9,7 @@
 // safe 64bit System Tick Count
 //---------------------------------------------------------------------------
 #include "tjsCommHead.h"
-#include "TickCount.h"
+#include "Platform.h"
 
 #include "tjsUtils.h"
 #include "TVPSystem.h"

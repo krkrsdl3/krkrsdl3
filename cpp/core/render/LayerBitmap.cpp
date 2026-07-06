@@ -2017,9 +2017,6 @@ static tTVPCharacterData* TVPGetCharacter(const tTVPFontAndCharacterData& font,
 tTVPBitmap::tTVPBitmap(tjs_uint width, tjs_uint height, tjs_uint bpp)
 {
     // tTVPBitmap constructor
-
-    TVPInitWindowOptions(); // ensure window/bitmap usage options are initialized
-
     RefCount = 1;
 
     Allocate(width, height, bpp); // allocate initial bitmap
@@ -2028,8 +2025,6 @@ tTVPBitmap::tTVPBitmap(tjs_uint width, tjs_uint height, tjs_uint bpp)
 tTVPBitmap::tTVPBitmap(tjs_uint width, tjs_uint height, tjs_uint bpp, void* bits)
 {
     // tTVPBitmap constructor
-    TVPInitWindowOptions(); // ensure window/bitmap usage options are initialized
-
     RefCount = 1;
 
     BitmapInfo = new BitmapInfomation(width, height, bpp);
@@ -2072,8 +2067,6 @@ tTVPBitmap::~tTVPBitmap()
 tTVPBitmap::tTVPBitmap(const tTVPBitmap& r)
 {
     // constructor for cloning bitmap
-    TVPInitWindowOptions(); // ensure window/bitmap usage options are initialized
-
     RefCount = 1;
 
     // allocate bitmap which has the same metrics to r

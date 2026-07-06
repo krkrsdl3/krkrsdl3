@@ -22,6 +22,7 @@
 #ifdef _KRKRSDL3_WINDOWS
 #include <Windows.h>
 #else
+#include <sys/time.h>
 #include <unistd.h>
 #endif
 

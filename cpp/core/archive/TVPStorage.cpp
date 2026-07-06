@@ -20,7 +20,6 @@
 #include "TickCount.h"
 #include "Random.h"
 #include "XP3Archive.h"
-#include "Platform.h"
 
 #include <filesystem>
 
@@ -1156,24 +1155,6 @@ ttstr TVPGetTemporaryName()
 
     return TVPTempPath + TJS_N("krkr_") + ttstr(random) + TJS_N("_") + ttstr(num) + TJS_N("_") +
            ttstr(TVPProcessID);
-}
-//---------------------------------------------------------------------------
-
-//---------------------------------------------------------------------------
-// TVPRemoveFile
-//---------------------------------------------------------------------------
-bool TVPRemoveFile(const ttstr& name)
-{
-    return !remove(name.c_str());
-}
-//---------------------------------------------------------------------------
-
-//---------------------------------------------------------------------------
-// TVPRemoveFolder
-//---------------------------------------------------------------------------
-bool TVPRemoveFolder(const ttstr& name)
-{
-    return !TVPDeleteFile(name.c_str());
 }
 //---------------------------------------------------------------------------
 

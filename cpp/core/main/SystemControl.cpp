@@ -11,7 +11,7 @@
 #include "TVPStorage.h"
 #include "TVPDebug.h"
 #include "TVPApplication.h"
-#include "TickCount.h"
+#include "Platform.h"
 #include "Random.h"
 
 tTVPSystemControl* TVPSystemControl;

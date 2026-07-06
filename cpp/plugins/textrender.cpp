@@ -2,8 +2,8 @@
 
 #include <optional>
 
-#include "Log.h"
 #include "FreeTypeFontRasterizer.h"
+#include "Platform.h"
 
 #define NCB_MODULE_NAME TJS_N("textrender.dll")
 

@@ -1,15 +1,15 @@
 #include "emotefile.h"
 
-#include "Log.h"
 #include "TVPStorage.h"
 #include "UtilStreams.h"
+#include "Platform.h"
 #include "tjsArray.h"
 #include "tjsDictionary.h"
 
 #include "xp3filter.h"
 
+#include <SDL3/SDL_stdinc.h>
 #include <zlib.h>
-#include <SDL3/SDL.h>
 
 #include <sstream>
 #include <algorithm>
@@ -1500,7 +1500,7 @@ void emoteicon::ensureLoad()
         }
         else
         {
-            SDL_Log("unknow colorType");
+            TVPConsoleLog("unknow colorType");
         }
 #else
         if (_filePtr->colorType == 0)
@@ -1515,7 +1515,7 @@ void emoteicon::ensureLoad()
         }
         else if (_filePtr->colorType != 1)
         {
-            SDL_Log("unknow colorType");
+            TVPConsoleLog("unknow colorType");
         }
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
 #endif
@@ -2073,7 +2073,7 @@ bool emotefile::parseObject(std::map<std::string, uint32_t>& output, uint32_t _o
     }
     else if (static_cast<PSB::PSBObjType>(typeByte) != PSB::PSBObjType::Objects)
     {
-        SDL_Log("Invalidate Object");
+        TVPConsoleLog("Invalidate Object");
         return false;
     }
     output.clear();
@@ -2174,7 +2174,7 @@ bool emotefile::parseNumber(int64_t& output, uint32_t _objOffset)
             return false;
         }
         default:
-            SDL_Log("Invalidate Number");
+            TVPConsoleLog("Invalidate Number");
             return false;
     }
 }
@@ -2288,11 +2288,11 @@ bool emotefile::parseReal(double& output, uint32_t _objOffset)
                 }
                 catch (...)
                 {
-                    SDL_Log("Invalidate Real");
+                    TVPConsoleLog("Invalidate Real");
                     return false;
                 }
             }
-            SDL_Log("Invalidate Real");
+            TVPConsoleLog("Invalidate Real");
             return false;
         }
     }
@@ -2330,7 +2330,7 @@ bool emotefile::parseString(std::string& output, uint32_t _objOffset)
             return true;
         }
         default:
-            SDL_Log("Invalidate String");
+            TVPConsoleLog("Invalidate String");
             return false;
     }
 }
@@ -2344,7 +2344,7 @@ bool emotefile::parseList(std::vector<uint32_t>& output, uint32_t _objOffset)
     }
     else if (static_cast<PSB::PSBObjType>(typeByte) != PSB::PSBObjType::List)
     {
-        SDL_Log("Invalidate List");
+        TVPConsoleLog("Invalidate List");
         return false;
     }
     std::vector<uint32_t> _objsOffset;
@@ -2374,7 +2374,7 @@ bool emotefile::parseResource(int32_t& id, uint32_t _objOffset)
             return true;
         }
         default:
-            SDL_Log("Invalidate Resource");
+            TVPConsoleLog("Invalidate Resource");
             return false;
     }
 }
@@ -2410,7 +2410,7 @@ bool emotefile::GenerateAniTree()
     }
     else
     {
-        SDL_Log("unknown emoteType!!!");
+        TVPConsoleLog("unknown emoteType!!!");
     }
     // metadata
     _metadata = new emotemetadata(this, _rootData["metadata"]);
@@ -2577,7 +2577,7 @@ emoteicon* emotefile::findsourceByName(const std::string& name)
                 return tmp1->second;
             }
         }
-        SDL_Log("src find failed!!!");
+        TVPConsoleLog("src find failed!!!");
     }
     else
     {
@@ -2608,7 +2608,7 @@ emotemotion* emotefile::findmotionByName(const std::string& name)
                 return tmp1->second;
             }
         }
-        SDL_Log("motion find failed!!!");
+        TVPConsoleLog("motion find failed!!!");
     }
     else
     {
@@ -2744,14 +2744,14 @@ bool emotefile::readIconTobuffer(uint8_t* buff, uint32_t buffSize, uint32_t pitc
             }
             else
             {
-                SDL_Log("unknown icon format");
+                TVPConsoleLog("unknown icon format");
                 delete[] srcbuff;
                 return false;
             }
         }
         else
         {
-            SDL_Log("unknown icon format");
+            TVPConsoleLog("unknown icon format");
             delete[] srcbuff;
             return false;
         }

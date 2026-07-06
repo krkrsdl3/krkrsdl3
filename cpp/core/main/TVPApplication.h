@@ -12,7 +12,7 @@
 
 bool IsInMainThread();
 ttstr ExePath();
-void TVPInitWindowOptions();
+void TVPCheckMemory();
 
 // 見通しのよい方法に変更した方が良い
 
@@ -70,7 +70,6 @@ public:
     void Run();
     void ProcessMessages();
 
-    static void PrintConsole(const ttstr& mes, bool important = false);
     bool IsAttachConsole() { return is_attach_console_; }
 
     bool IsTarminate() const { return tarminate_; }

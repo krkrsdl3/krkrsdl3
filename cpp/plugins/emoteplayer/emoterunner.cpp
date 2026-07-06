@@ -1,6 +1,6 @@
 #include "emoterunner.h"
 
-#include <SDL3/SDL.h>
+#include "Platform.h"
 
 #define GLM_ASSERT_VALID(matrix) \
     do \
@@ -129,7 +129,7 @@ GLuint compileShader(GLenum type, const char* src)
     {
         char log[512];
         glGetShaderInfoLog(shader, 512, nullptr, log);
-        SDL_Log("Shader compile error: %s", log);
+        TVPConsoleLog("Shader compile error: %s", log);
     }
     return shader;
 }
@@ -147,7 +147,7 @@ GLuint createRenderProgram()
     {
         char log[512];
         glGetProgramInfoLog(prog, 512, nullptr, log);
-        SDL_Log("Program link error: %s", log);
+        TVPConsoleLog("Program link error: %s", log);
     }
     glDeleteShader(vs);
     glDeleteShader(fs);
@@ -177,7 +177,7 @@ GLuint createFBO(GLuint texture, GLuint depthtexture)
 
     if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
     {
-        SDL_Log("Framebuffer不完整!");
+        TVPConsoleLog("Framebuffer不完整!");
     }
 
     return result;
@@ -563,7 +563,7 @@ void emotenoderef::checkDrawStatus(float tick, std::vector<emoteRender>& renderL
         }
         else
         {
-            SDL_Log("source unsupported!!!--->%s", frame->src.c_str());
+            TVPConsoleLog("source unsupported!!!--->%s", frame->src.c_str());
             isNeedDraw = false;
             return;
         }
@@ -588,7 +588,7 @@ void emotenoderef::progress(float tick, std::vector<emoteRender>& renderList, em
         currentNode->frameList.at(currentNode->frameList.size() - 1)->type == 0 &&
         currentNode->frameList.at(currentNode->frameList.size() - 2)->type == 3)
     {
-        currTick = SDL_min(
+        currTick = std::min(
             currTick, (float)currentNode->frameList.at(currentNode->frameList.size() - 2)->time);
     }
     // 不会处理，先跳过
@@ -1357,7 +1357,7 @@ emotemotion* emoteengine::findmotionByName(const std::string& name)
                 }
             }
         }
-        SDL_Log("motion find failed!!!");
+        TVPConsoleLog("motion find failed!!!");
     }
     else
     {

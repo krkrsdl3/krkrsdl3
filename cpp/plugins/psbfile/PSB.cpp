@@ -3,7 +3,6 @@
 #include "ncbind/ncbind.hpp"
 
 #include "PSBMedia.h"
-#include "Log.h"
 
 #define NCB_MODULE_NAME TJS_N("psbfile.dll")
 

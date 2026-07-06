@@ -10,7 +10,6 @@ extern "C"
 #include "NativeEventQueue.h"
 #include "CodecVideo.h"
 #include "WaveMixer.h"
-#include "Log.h"
 
 #include "tjsNativeVideoOverlay.h"
 

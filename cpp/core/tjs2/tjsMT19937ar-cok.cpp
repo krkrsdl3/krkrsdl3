@@ -52,7 +52,7 @@
 #include <stdio.h>
 
 #include "tjsMT19937ar-cok.h"
-#include "TickCount.h"
+#include "Platform.h"
 
 namespace TJS
 {

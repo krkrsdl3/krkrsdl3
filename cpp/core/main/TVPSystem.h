@@ -22,8 +22,6 @@ extern ttstr TVPNativeDataPath;
 extern bool TVPProjectDirSelected;
 extern void TVPEnsureDataPathDirectory();
 
-extern bool TVPExecuteUserConfig();
-
 extern bool TVPTerminated;
 extern bool TVPTerminateOnWindowClose;
 extern bool TVPTerminateOnNoWindowStartup;
@@ -116,12 +114,6 @@ extern ttstr TVPGetSavedGamesPath();
 extern int TVPGetSupportTouchDevice();
 
 //---------------------------------------------------------------------------
-extern ttstr TVPGetPlatformName();
-// retrieve platform name (eg. "Win32")
-// implement in each platform.
-extern ttstr TVPGetOSName();
-// retrieve OS name
-// implement in each platform.
 extern void TVPFireOnApplicationActivateEvent(bool activate_or_deactivate);
 extern tjs_int TVPGetOSBits();
 //---------------------------------------------------------------------------

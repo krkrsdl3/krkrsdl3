@@ -53,7 +53,6 @@ set(KRKRSDL_CORE_SRC
     ${KRKRSDL_CORE_PATH}/media/sound/WaveIntf.cpp
     ${KRKRSDL_CORE_PATH}/media/sound/WaveLoopManager.cpp
     ${KRKRSDL_CORE_PATH}/media/sound/WaveSegmentQueue.cpp
-    ${KRKRSDL_CORE_PATH}/msg/Log.cpp
     ${KRKRSDL_CORE_PATH}/msg/TVPDebug.cpp
     ${KRKRSDL_CORE_PATH}/msg/TVPMsg.cpp
 	${KRKRSDL_CORE_PATH}/render/gl/blend_function.cpp
@@ -138,7 +137,4 @@ set(KRKRSDL_CORE_SRC
     ${KRKRSDL_CORE_PATH}/utils/VelocityTracker.cpp
 	${KRKRSDL_CORE_PATH}/utils/WeightFunctor.cpp
 	${KRKRSDL_CORE_PATH}/utils/math/md5.c
-	${KRKRSDL_CORE_PATH}/utils/math/xxhash.c
-	${KRKRSDL_CORE_PATH}/utils/math/xxtea.cpp
-	${KRKRSDL_CORE_PATH}/utils/simd/simd_image.cpp
     )

@@ -3,6 +3,7 @@
 #include "TVPMsg.h"
 #include "TVPStorage.h"
 #include "Platform.h"
+
 //---------------------------------------------------------------------------
 
 #define NCB_MODULE_NAME TJS_N("dirlist.dll")

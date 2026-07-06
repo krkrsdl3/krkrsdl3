@@ -1,6 +1,6 @@
 #include "tjsCommHead.h"
-#include "Log.h"
 #include "PSBData.h"
+#include "Platform.h"
 
 namespace PSB
 {

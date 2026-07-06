@@ -13,6 +13,8 @@
 
 #include "ComplexRect.h"
 
+#include "Platform.h"
+
 // Some algorithms and ideas are based on implementation of Mozilla,
 // gfx/src/nsRegion.cpp.
 
@@ -1205,7 +1207,6 @@ void tTVPComplexRect::RectangleSub(tTVPRegionRect* r, const tTVPRect* rr)
 }
 //---------------------------------------------------------------------------
 
-#include "Log.h"
 //---------------------------------------------------------------------------
 void tTVPComplexRect::DumpChain()
 {

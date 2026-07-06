@@ -10,7 +10,7 @@
 
 #include "tjsDictionary.h"
 #include "TVPScript.h"
-#include "TickCount.h"
+#include "Platform.h"
 
 static const tjs_char* const LAYER_BLEND_MODES[] = {
     TJS_N("opaque"),   TJS_N("alpha"),     TJS_N("add"),      TJS_N("sub"),

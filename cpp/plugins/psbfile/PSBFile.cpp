@@ -1,7 +1,7 @@
 #include "tjsCommHead.h"
 #include "PSBFile.h"
 
-#include "Log.h"
+#include "Platform.h"
 #include "TVPStorage.h"
 #include "UtilStreams.h"
 #include "tjsArray.h"

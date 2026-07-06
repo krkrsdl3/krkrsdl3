@@ -8,11 +8,6 @@
 #include "TVPApplication.h"
 #include "TVPEvent.h"
 #include "Platform.h"
-extern "C"
-{
-#include "libswscale/swscale.h"
-};
-#include "xxhash.h"
 #include "opencv2/opencv.hpp"
 
 //---------------------------------------------------------------------------
@@ -2236,8 +2231,6 @@ class tTVPSoftwareRenderManager : public iTVPRenderManager
     };
 
     tTVPBBStretchType StretchType;
-
-    SwsContext* sws_opts;
 
     iTVPTexture2D* tempTexture;
 

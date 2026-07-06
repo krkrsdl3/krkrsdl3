@@ -13,7 +13,6 @@
 
 //---------------------------------------------------------------------------
 tjs_uint64 TVPGetTickCount();
-tjs_uint32 TVPGetRoughTickCount32();
 void TVPStartTickCount();
 // this must be called before TVPGetTickCount(), in main thread.
 // this function can be called more than one time.

@@ -11,7 +11,7 @@
 
 #include "tjsCommHead.h"
 
-#include "Log.h"
+#include "Platform.h"
 
 #include <ctime>
 

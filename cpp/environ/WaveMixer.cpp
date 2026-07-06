@@ -2,13 +2,14 @@
 #include "WaveMixer.h"
 #include "TVPSystem.h"
 #include "TickCount.h"
-#include <iomanip>
 #include "TVPDebug.h"
+#include <iomanip>
 #include <unordered_set>
 #include <algorithm>
-#include <Log.h>
 
-#include "SDL3/SDL.h"
+#include <SDL3/SDL_audio.h>
+#include <SDL3/SDL_log.h>
+#include <SDL3/SDL_init.h>
 
 class tTVPSoundBufferSDL : public iTVPSoundBuffer
 {

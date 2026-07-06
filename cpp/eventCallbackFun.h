@@ -35,11 +35,6 @@ void SDL_GL_UpdateTexture(SDL_Sprite* sp, uint8_t* buff, int width, int height, 
 void SDL_GL_DepartTexture(SDL_Sprite* sp);
 void SDL_GL_DestroyTexture(SDL_Sprite* sp);
 
-// 附加菜单
-#define SDL_EVENT_MENU_CLICK (SDL_EVENT_USER + 1)
-void SDL_Invoke_Menu(int x, int y, void* _menu = NULL);
-void SDL_Trig_Menu(void* data);
-
 // 参数解析
 void KRKR_ParseArguments(int argc, char* argv[]);
 bool KRKR_GetCommandLine(const char* name, std::string* value);

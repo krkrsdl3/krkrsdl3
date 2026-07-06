@@ -15,7 +15,7 @@
 #include "TVPMsg.h"
 #include "TVPStorage.h"
 
-#include "Log.h"
+#include "Platform.h"
 
 #include <deque>
 #include <SDL3/SDL_iostream.h>
@@ -430,7 +430,11 @@ void TVPAddLog(const ttstr& line, bool appendtoimportant)
         // OutputDebugStringW( L"\n" );
 #endif // ENABLE_DEBUGGER
 
-    TVPConsoleLog(buf, appendtoimportant);
+    // safe guard
+    buf.Replace("%", "___\x01___");
+    buf.Replace("___\x01___", "%%");
+    // 
+    TVPConsoleLog(buf.c_str());
 
     if (TVPLoggingToFile)
         TVPLogStreamHolder.Log(buf);

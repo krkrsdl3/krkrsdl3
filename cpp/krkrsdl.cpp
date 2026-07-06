@@ -15,6 +15,7 @@
 #include "TVPApplication.h"
 #include "RenderManager.h"
 #include "MainWindowLayer.h"
+#include "Platform.h"
 
 #include "eventCallbackFun.h"
 
@@ -29,14 +30,21 @@ static SDL_GLContext tvp_glContext = NULL;
 
 SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[])
 {
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO))
-    { // for format converter
-        SDL_Log("Fail to initialize SDL.");
+    // exeName gameNamey args
+    if (argc < 2)
+    {
+        SDL_Log("At least two parameters are required.");
         return SDL_APP_FAILURE;
     }
 
     // 参数解析
     krkrsdl3::KRKR_ParseArguments(argc, argv);
+
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO))
+    { // for format converter
+        SDL_Log("Fail to initialize SDL.");
+        return SDL_APP_FAILURE;
+    }
 
     // 窗口
     SDL_PropertiesID props = SDL_CreateProperties();
@@ -82,12 +90,6 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[])
     SDL_DestroyProperties(props);
 
     // 启动游戏
-    if (argc < 2)
-    {
-        // exeName gameNamey
-        SDL_Log("At least two parameters are required.");
-        return SDL_APP_FAILURE;
-    }
     if (!::Application->StartApplication())
     {
         SDL_Log("Game Start Failed.");
@@ -124,7 +126,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event)
             {
                 int x = 0, y = 0;
                 SDL_GetWindowPosition(tvp_window, &x, &y);
-                krkrsdl3::SDL_Invoke_Menu(x, y);
+                TVPInvokeMenu(x, y);
                 break;
             }
 
@@ -273,7 +275,7 @@ void handleFingerDown(const SDL_TouchFingerEvent& e)
         SDL_GetWindowSize(tvp_window, &windowWidth, &windowHeight);
         int pixelX = static_cast<int>(f.x * windowWidth);
         int pixelY = static_cast<int>(f.y * windowHeight);
-        krkrsdl3::SDL_Invoke_Menu(pixelX, pixelY);
+        TVPInvokeMenu(pixelX, pixelY);
         fingers.clear();
         _state = STATE_IDLE;
     }
@@ -396,6 +398,25 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event)
         // 退出
         case SDL_EVENT_QUIT:
             return SDL_APP_SUCCESS;
+        // 键盘事件
+        case SDL_EVENT_KEY_DOWN:
+        {
+            if (event->key.scancode == SDL_SCANCODE_F1)
+            {
+                int x = 0, y = 0;
+                SDL_GetWindowPosition(tvp_window, &x, &y);
+                TVPInvokeMenu(x, y);
+                break;
+            }
+
+            krkrsdl3::KRKR_Trig_KeyDown(event->key.scancode);
+            break;
+        }
+        case SDL_EVENT_KEY_UP:
+        {
+            krkrsdl3::KRKR_Trig_KeyUp(event->key.scancode);
+            break;
+        }
         // 触屏事件
         case SDL_EVENT_FINGER_DOWN:
             handleFingerDown(event->tfinger);
@@ -405,10 +426,6 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event)
             break;
         case SDL_EVENT_FINGER_MOTION:
             handleFingerMotion(event->tfinger);
-            break;
-            // 菜单点击
-        case SDL_EVENT_MENU_CLICK:
-            krkrsdl3::SDL_Trig_Menu(event->user.data1);
             break;
         default:
             break;

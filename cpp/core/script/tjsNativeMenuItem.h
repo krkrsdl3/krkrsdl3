@@ -101,6 +101,8 @@ public:
     void OnClick(void); // fire onClick event
 };
 //---------------------------------------------------------------------------
+iTJSDispatch2* TVPGetMenuDispatch(tTVInteger hWnd);
+//---------------------------------------------------------------------------
 
 //---------------------------------------------------------------------------
 // tTJSNI_MenuItem : MenuItem Native Instance

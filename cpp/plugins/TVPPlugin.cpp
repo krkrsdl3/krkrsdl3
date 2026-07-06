@@ -145,25 +145,6 @@ int ZLIB_compress2(unsigned char* dest,
     return compress2(dest, destlen, source, sourcelen, level);
 }
 //---------------------------------------------------------------------------
-#include "md5.h"
-static char TVP_assert_md5_state_t_size[(sizeof(TVP_md5_state_t) >= sizeof(md5_state_t))];
-// if this errors, sizeof(TVP_md5_state_t) is not equal to sizeof(md5_state_t).
-// sizeof(TVP_md5_state_t) must be equal to sizeof(md5_state_t).
-//---------------------------------------------------------------------------
-void TVP_md5_init(TVP_md5_state_t* pms)
-{
-    md5_init((md5_state_t*)pms);
-}
-//---------------------------------------------------------------------------
-void TVP_md5_append(TVP_md5_state_t* pms, const tjs_uint8* data, int nbytes)
-{
-    md5_append((md5_state_t*)pms, (const md5_byte_t*)data, nbytes);
-}
-//---------------------------------------------------------------------------
-void TVP_md5_finish(TVP_md5_state_t* pms, tjs_uint8* digest)
-{
-    md5_finish((md5_state_t*)pms, digest);
-}
 
 //---------------------------------------------------------------------------
 bool TVPRegisterGlobalObject(const tjs_char* name, iTJSDispatch2* dsp)

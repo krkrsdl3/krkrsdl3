@@ -19,7 +19,6 @@
 #include "TVPDebug.h"
 #include "RenderManager.h"
 #include "Platform.h"
-#include "Log.h"
 
 #include "tjsNativeLayer.h"
 

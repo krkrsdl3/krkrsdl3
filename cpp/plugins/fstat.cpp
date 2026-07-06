@@ -3,6 +3,7 @@
 #include "TVPStorage.h"
 #include "TVPPlugin.h"
 #include "Platform.h"
+#include "md5.h"
 
 #include <filesystem>
 
@@ -184,16 +185,15 @@ class StoragesFstat
     {
         tTVP_stat st{};
         TVP_stat(filename.c_str(), st);
-        const bool isdir = (st.tvp_mode & 0170000) == S_IFDIR;
 
-        if (!isdir && size != nullptr)
+        if (!st.tvp_isdir && size != nullptr)
         {
             *size = static_cast<tjs_int64>(st.tvp_size);
         }
         storeDate(ctime, st.tvp_ctime, nullptr);
         storeDate(atime, st.tvp_atime, nullptr);
         storeDate(mtime, st.tvp_mtime, nullptr);
-        return isdir ? 2 : 1;
+        return st.tvp_isdir ? 2 : 1;
     }
     /**
      * ファイルのタイムスタンプを設定する
@@ -210,13 +210,12 @@ class StoragesFstat
     {
         tTVP_stat st{};
         TVP_stat(filename.c_str(), st);
-        const bool isdir = (st.tvp_mode & 0170000) == S_IFDIR;
 
         tjs_int64 m;
         const bool hasC = restoreDate(mtime, m);
         const bool r = TVP_utime(filename.AsStdString().c_str(), hasC ? m : 0);
 
-        return r ? 0 : isdir ? 2 : 1;
+        return r ? 0 : st.tvp_isdir ? 2 : 1;
     }
     static tjs_error _getTime(tTJSVariant* result, tTJSVariant const* param, bool chksize)
     {
@@ -666,7 +665,7 @@ public:
         dir = TVPNormalizeStorageName(dir);
         TVPGetLocalName(dir);
 
-        const bool r = TVPDeleteFile(dir.AsStdString());
+        const bool r = TVPDeleteFolder(dir.AsStdString());
         if (!r)
         {
             TVPAddLog(ttstr(TJS_N("removeDirectory : ")) + dir + TJS_N(" failed."));
@@ -1019,18 +1018,18 @@ public:
             TVPThrowExceptionMessage(
                 (ttstr(TJS_N("cannot open : ")) + param[0]->GetString()).c_str());
 
-        TVP_md5_state_t st;
-        TVP_md5_init(&st);
+        md5_state_t st;
+        md5_init(&st);
 
         tjs_uint8 buffer[1024]; // > 16 digestバッファ兼ねる
         uint16_t size = 0;
         while ((size = in->Read(buffer, sizeof buffer)) > 0)
         {
-            TVP_md5_append(&st, buffer, (int)size);
+            md5_append(&st, buffer, (int)size);
         }
         delete in;
 
-        TVP_md5_finish(&st, buffer);
+        md5_finish(&st, buffer);
 
         tjs_char ret[32 + 1]{};
         static constexpr tjs_char hex[17] = TJS_N("0123456789abcdef");

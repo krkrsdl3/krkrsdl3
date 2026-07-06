@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <string>
 #include <vector>
-#include <assert.h>
+#include <thread>
 
 #include "tjsError.h"
 #include "tjsDebug.h"
@@ -21,13 +21,8 @@
 #include "GraphicsLoadThread.h"
 #include "Platform.h"
 #include "TVPEvent.h"
-#include <thread>
 
 #include "TVPStorage.h"
-extern "C"
-{
-#include <libavutil/avstring.h>
-}
 #include "TVPColor.h"
 #include "TVPFont.h"
 #include "TVPTimer.h"
@@ -38,51 +33,7 @@ static tTJSCriticalSection _NoMemCallBackCS;
 static void* _reservedMem = malloc(1024 * 1024 * 4); // 4M reserved mem
 static bool _project_startup = false;
 tTJS* TVPAppScriptEngine;
-
-static void _do_compact()
-{
-    TVPDeliverCompactEvent(TVP_COMPACT_LEVEL_MAX);
-}
-
-static void _no_memory_cb()
-{
-    tTJSCSH lock(_NoMemCallBackCS);
-    free(_reservedMem);
-    if (TVPMainThreadID == std::this_thread::get_id())
-    {
-        _do_compact();
-    }
-    else
-    {
-        Application->PostUserMessage(_do_compact);
-    }
-    _reservedMem = realloc(0, 1024 * 1024 * 4);
-}
-
 static std::string _title, _msg, _retry, _cancel;
-static tTJSCriticalSection _cs;
-typedef void* F_alloc_t(void*, size_t);
-static void* __do_alloc_func(F_alloc_t* f, void* p, size_t c)
-{
-    void* ptr = f(p, c);
-
-    if (!ptr)
-    {
-        _no_memory_cb();
-        ptr = f(p, c);
-        if (!ptr)
-        {
-            tTJSCSH lock(_cs);
-            const char* btns[2] = {_retry.c_str(), _cancel.c_str()};
-            while (!ptr && TVPShowSimpleMessageBox(_msg.c_str(), _title.c_str(), 2, btns) == 0)
-            {
-                ptr = f(p, c);
-            }
-            // TVPExitApplication(-1);
-        }
-    }
-    return ptr;
-}
 
 ttstr TVPGetErrorDialogTitle()
 {
@@ -107,8 +58,6 @@ ttstr ExePath()
     return TVPNativeProjectDir;
 }
 
-bool TVPCheckAbout();
-bool TVPCheckPrintDataPath();
 void TVPOnError();
 void TVPLockSoundMixer();
 void TVPUnlockSoundMixer();
@@ -133,21 +82,6 @@ void TVPCheckMemory()
         }
     }
 #endif
-}
-
-int TVPShowSimpleMessageBox(const ttstr& text, const ttstr& caption)
-{
-    std::vector<ttstr> normal;
-    normal.emplace_back("OK");
-    return TVPShowSimpleMessageBox(text, caption, normal);
-}
-
-int TVPShowSimpleMessageBoxYesNo(const ttstr& text, const ttstr& caption)
-{
-    std::vector<ttstr> normal;
-    normal.emplace_back("Yes");
-    normal.emplace_back("No");
-    return TVPShowSimpleMessageBox(text, caption, normal);
 }
 
 tTVPApplication::tTVPApplication()
@@ -188,19 +122,11 @@ bool tTVPApplication::StartApplication()
         TVPInitializeBaseSystems();
 
         Initialize();
-
-        if (TVPCheckPrintDataPath())
-            return true;
-        if (TVPExecuteUserConfig())
-            return true;
-
+        
         image_load_thread_ = new tTVPAsyncImageLoader();
 
         TVPLoadPluigins(); // load plugin module *.tpm
         TVPSystemInit();
-
-        if (TVPCheckAbout())
-            return true; // version information dialog box;
 
         SetTitle(TVPKirikiri.operator const tjs_char*());
         TVPSystemControl = new tTVPSystemControl();
@@ -269,11 +195,6 @@ void tTVPApplication::CheckConsole()
 
 void tTVPApplication::CloseConsole()
 {
-}
-void TVPConsoleLog(const ttstr& mes, bool important);
-void tTVPApplication::PrintConsole(const ttstr& mes, bool important)
-{
-    TVPConsoleLog(mes, important);
 }
 
 void tTVPApplication::ShowException(const ttstr& e)
@@ -423,8 +344,4 @@ void tTVPApplication::RegisterActiveEvent(
         m_activeEvents.emplace(host, func);
     else
         m_activeEvents.erase(host);
-}
-
-void TVPInitWindowOptions()
-{
 }

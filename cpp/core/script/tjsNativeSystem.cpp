@@ -7,7 +7,6 @@
 #include "Platform.h"
 #include "TickCount.h"
 #include "TVPApplication.h"
-#include "TVPScreen.h"
 #include "TVPScript.h"
 #include "TVPGraphicsLoader.h"
 #include "TVPMsg.h"
@@ -81,9 +80,6 @@ tTJSNC_System::tTJSNC_System() : inherited(TJS_N("System"))
             return TJS_E_BADPARAMCOUNT;
 
         ttstr value = *param[2];
-
-        //	bool b = TVPInputQuery(*param[0], *param[1], value);
-
         ttstr caption = *param[0], prompt = *param[1];
         // this shows a dialog box which let user to input a string.
         // return false if the user selects "cancel", otherwise return true.

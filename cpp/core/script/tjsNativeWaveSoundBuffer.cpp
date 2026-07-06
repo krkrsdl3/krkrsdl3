@@ -12,6 +12,7 @@
 #include "TVPSystem.h"
 #include "NativeEventQueue.h"
 #include "Random.h"
+#include "TickCount.h"
 #include "Platform.h"
 
 #include "WaveMixer.h"
