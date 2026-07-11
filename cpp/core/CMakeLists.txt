@@ -32,20 +32,7 @@ set(KRKRSDL_CORE_SRC
     ${KRKRSDL_CORE_PATH}/media/image/SaveTLG5.cpp
     ${KRKRSDL_CORE_PATH}/media/image/SaveTLG6.cpp
     ${KRKRSDL_CORE_PATH}/media/image/TVPGraphicsLoader.cpp
-    ${KRKRSDL_CORE_PATH}/media/movie/CodecAudioFFmpeg.cpp
-    ${KRKRSDL_CORE_PATH}/media/movie/CodecDemuxFFmpeg.cpp
-    ${KRKRSDL_CORE_PATH}/media/movie/CodecVideoFFmpeg.cpp
-    ${KRKRSDL_CORE_PATH}/media/movie/InputStream.cpp
-    ${KRKRSDL_CORE_PATH}/media/movie/krffmpeg.cpp
-    ${KRKRSDL_CORE_PATH}/media/movie/KRMovieLayer.cpp
-	${KRKRSDL_CORE_PATH}/media/movie/KRMovieOverlay.cpp
-    ${KRKRSDL_CORE_PATH}/media/movie/KRStreamInfo.cpp
-    ${KRKRSDL_CORE_PATH}/media/movie/Message.cpp
-    ${KRKRSDL_CORE_PATH}/media/movie/MessageQueue.cpp
-    ${KRKRSDL_CORE_PATH}/media/movie/VideoPlayer.cpp
-    ${KRKRSDL_CORE_PATH}/media/movie/VideoPlayerAudio.cpp
-    ${KRKRSDL_CORE_PATH}/media/movie/VideoPlayerVideo.cpp
-    ${KRKRSDL_CORE_PATH}/media/movie/VideoReferenceClock.cpp
+    ${KRKRSDL_CORE_PATH}/media/movie/krmovie.cpp
     ${KRKRSDL_CORE_PATH}/media/sound/FFWaveDecoder.cpp
     ${KRKRSDL_CORE_PATH}/media/sound/OpusWaveDecoder.cpp
     ${KRKRSDL_CORE_PATH}/media/sound/VorbisWaveDecoder.cpp
@@ -102,4 +89,21 @@ set(KRKRSDL_CORE_SRC
     ${KRKRSDL_CORE_PATH}/utils/VelocityTracker.cpp
 	${KRKRSDL_CORE_PATH}/utils/WeightFunctor.cpp
 	${KRKRSDL_CORE_PATH}/utils/math/md5.c
-    )
+)
+
+set(KRKRSDL_CORE_FFMPEG_SRC
+    ${KRKRSDL_CORE_PATH}/media/movie/CodecAudioFFmpeg.cpp
+    ${KRKRSDL_CORE_PATH}/media/movie/CodecDemuxFFmpeg.cpp
+    ${KRKRSDL_CORE_PATH}/media/movie/CodecVideoFFmpeg.cpp
+    ${KRKRSDL_CORE_PATH}/media/movie/InputStream.cpp
+    ${KRKRSDL_CORE_PATH}/media/movie/krffmpeg.cpp
+    ${KRKRSDL_CORE_PATH}/media/movie/KRMovieLayer.cpp
+	${KRKRSDL_CORE_PATH}/media/movie/KRMovieOverlay.cpp
+    ${KRKRSDL_CORE_PATH}/media/movie/KRStreamInfo.cpp
+    ${KRKRSDL_CORE_PATH}/media/movie/Message.cpp
+    ${KRKRSDL_CORE_PATH}/media/movie/MessageQueue.cpp
+    ${KRKRSDL_CORE_PATH}/media/movie/VideoPlayer.cpp
+    ${KRKRSDL_CORE_PATH}/media/movie/VideoPlayerAudio.cpp
+    ${KRKRSDL_CORE_PATH}/media/movie/VideoPlayerVideo.cpp
+    ${KRKRSDL_CORE_PATH}/media/movie/VideoReferenceClock.cpp
+)

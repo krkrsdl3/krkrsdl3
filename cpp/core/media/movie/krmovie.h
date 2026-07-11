@@ -12,6 +12,8 @@
 #ifndef __KRMOVIE_H__
 #define __KRMOVIE_H__
 
+#include "tjsNativeVideoOverlay.h"
+
 //---------------------------------------------------------------------------
 enum tTVPVideoStatus
 {
@@ -128,6 +130,36 @@ public:
 #ifndef EC_COMPLETE
 #define EC_COMPLETE 0x01
 #endif
+//---------------------------------------------------------------------------
+
+//---------------------------------------------------------------------------
+void GetVideoOverlayObject(tTJSNI_VideoOverlay* callbackwin,
+                                  tTJSBinaryStream* stream,
+                                  const tjs_char* streamname,
+                                  const tjs_char* type,
+                                  uint64_t size,
+                                  class iTVPVideoOverlay** out);
+
+void GetVideoLayerObject(tTJSNI_VideoOverlay* callbackwin,
+                                tTJSBinaryStream* stream,
+                                const tjs_char* streamname,
+                                const tjs_char* type,
+                                uint64_t size,
+                                class iTVPVideoOverlay** out);
+
+void GetMixingVideoOverlayObject(tTJSNI_VideoOverlay* callbackwin,
+                                        tTJSBinaryStream* stream,
+                                        const tjs_char* streamname,
+                                        const tjs_char* type,
+                                        uint64_t size,
+                                        class iTVPVideoOverlay** out);
+
+void GetMFVideoOverlayObject(tTJSNI_VideoOverlay* callbackwin,
+                                    tTJSBinaryStream* stream,
+                                    const tjs_char* streamname,
+                                    const tjs_char* type,
+                                    uint64_t size,
+                                    class iTVPVideoOverlay** out);
 //---------------------------------------------------------------------------
 
 #endif

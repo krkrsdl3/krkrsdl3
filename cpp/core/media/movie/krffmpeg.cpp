@@ -1,4 +1,5 @@
 #include "tjsCommHead.h"
+
 extern "C"
 {
 #include "libswscale/swscale.h"
@@ -264,60 +265,4 @@ void TVPMoviePlayer::BitmapPicture::Clear()
     for (int i = 0; i < sizeof(data) / sizeof(data[0]); ++i)
         if (data[i])
             TJSAlignedDealloc(data[i]), data[i] = nullptr;
-}
-
-void GetVideoOverlayObject(tTJSNI_VideoOverlay* callbackwin,
-                           tTJSBinaryStream* stream,
-                           const tjs_char* streamname,
-                           const tjs_char* type,
-                           uint64_t size,
-                           iTVPVideoOverlay** out)
-{
-    *out = new KRMovie::MoviePlayerOverlay;
-
-    if (*out)
-        static_cast<KRMovie::MoviePlayerOverlay*>(*out)->BuildGraph(callbackwin, stream, streamname,
-                                                                    type, size);
-}
-
-void GetVideoLayerObject(tTJSNI_VideoOverlay* callbackwin,
-                         tTJSBinaryStream* stream,
-                         const tjs_char* streamname,
-                         const tjs_char* type,
-                         uint64_t size,
-                         iTVPVideoOverlay** out)
-{
-    *out = new KRMovie::MoviePlayerLayer;
-
-    if (*out)
-        static_cast<KRMovie::MoviePlayerLayer*>(*out)->BuildGraph(callbackwin, stream, streamname,
-                                                                  type, size);
-}
-
-void GetMixingVideoOverlayObject(tTJSNI_VideoOverlay* callbackwin,
-                                 tTJSBinaryStream* stream,
-                                 const tjs_char* streamname,
-                                 const tjs_char* type,
-                                 uint64_t size,
-                                 iTVPVideoOverlay** out)
-{
-    *out = new KRMovie::MoviePlayerOverlay;
-
-    if (*out)
-        static_cast<KRMovie::MoviePlayerOverlay*>(*out)->BuildGraph(callbackwin, stream, streamname,
-                                                                    type, size);
-}
-
-void GetMFVideoOverlayObject(tTJSNI_VideoOverlay* callbackwin,
-                             tTJSBinaryStream* stream,
-                             const tjs_char* streamname,
-                             const tjs_char* type,
-                             uint64_t size,
-                             iTVPVideoOverlay** out)
-{
-    *out = new KRMovie::MoviePlayerOverlay;
-
-    if (*out)
-        static_cast<KRMovie::MoviePlayerOverlay*>(*out)->BuildGraph(callbackwin, stream, streamname,
-                                                                    type, size);
 }

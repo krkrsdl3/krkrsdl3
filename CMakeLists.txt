@@ -32,6 +32,10 @@ elseif(WINDOWS)
 endif()
 set(CMAKE_TOOLCHAIN_FILE $ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake)
 
+# 视频解码后端: ON=FFmpeg, OFF=系统API(MediaFoundation/MediaCodec)
+# 感觉没必要禁用，OFF的实现基本没用༼ ༎ຶ ෴ ༎ຶ༽
+option(USE_FFMPEG "Use FFmpeg for video/audio decoding" ON)
+
 # 建立项目
 if(ONLYCONSOLE)
     project(tjs2 VERSION "0.0.6" LANGUAGES C CXX)

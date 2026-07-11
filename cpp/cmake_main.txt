@@ -13,6 +13,11 @@ set(KRKRSDL_SRC
 	${KRKRSDL_TJS2_SRC}
     )
 
+if(USE_FFMPEG)
+    list(APPEND KRKRSDL_SRC ${KRKRSDL_CORE_FFMPEG_SRC})
+    add_definitions(-D_KRKRSDL3_USE_FFMPEG=1)
+endif()
+
 #
 # 2.确定目标文件
 #
@@ -45,10 +50,12 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 )
 
 # 依赖库
-find_package(FFMPEG REQUIRED)
-target_include_directories(${PROJECT_NAME} PRIVATE ${FFMPEG_INCLUDE_DIRS})
-target_link_directories(${PROJECT_NAME} PRIVATE ${FFMPEG_LIBRARY_DIRS})
-target_link_libraries(${PROJECT_NAME} PRIVATE ${FFMPEG_LIBRARIES})
+if(USE_FFMPEG)
+    find_package(FFMPEG REQUIRED)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${FFMPEG_INCLUDE_DIRS})
+    target_link_directories(${PROJECT_NAME} PRIVATE ${FFMPEG_LIBRARY_DIRS})
+    target_link_libraries(${PROJECT_NAME} PRIVATE ${FFMPEG_LIBRARIES})
+endif()
 
 find_package(PNG REQUIRED)
 target_link_libraries(${PROJECT_NAME} PRIVATE PNG::PNG)
@@ -105,8 +112,13 @@ target_link_libraries(${PROJECT_NAME} PRIVATE plutovg::plutovg)
 if(ANDROID)
     # egl
     target_link_libraries(${PROJECT_NAME} PRIVATE EGL GLESv3)
+    # System video player (MediaCodec)
+    target_link_libraries(${PROJECT_NAME} PRIVATE android mediandk)
 elseif(LINUX)
     target_link_libraries(${PROJECT_NAME} PRIVATE GL)
+elseif(WINDOWS)
+    # System video player (Media Foundation)
+    target_link_libraries(${PROJECT_NAME} PRIVATE mfplat mfuuid mfreadwrite)
 endif()
 
 #

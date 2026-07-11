@@ -1,3 +1,5 @@
+#ifdef _KRKRSDL3_USE_FFMPEG
+
 #include "tjsCommHead.h"
 #include "FFWaveDecoder.h"
 #include "WaveIntf.h"
@@ -409,3 +411,5 @@ bool FFWaveDecoder::ReadPacket()
     }
     return false;
 }
+
+#endif

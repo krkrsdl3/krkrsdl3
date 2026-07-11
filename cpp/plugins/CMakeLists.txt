@@ -3,7 +3,6 @@ set(KRKRSDL_PLUGINS_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cpp/plugins)
 set(KRKRSDL_PLUGINS_SRC
     ${KRKRSDL_PLUGINS_PATH}/ncbind/ncbind.cpp
     ${KRKRSDL_PLUGINS_PATH}/addFont.cpp
-    ${KRKRSDL_PLUGINS_PATH}/AlphaMovie.cpp
     ${KRKRSDL_PLUGINS_PATH}/csvParser.cpp
     ${KRKRSDL_PLUGINS_PATH}/dirlist.cpp
     ${KRKRSDL_PLUGINS_PATH}/DrawDeviceD3D.cpp
@@ -21,7 +20,6 @@ set(KRKRSDL_PLUGINS_SRC
     ${KRKRSDL_PLUGINS_PATH}/LayerExBase.cpp
     ${KRKRSDL_PLUGINS_PATH}/LayerExBTOA.cpp
     ${KRKRSDL_PLUGINS_PATH}/LayerExImage.cpp
-    ${KRKRSDL_PLUGINS_PATH}/LayerExMovie.cpp
     ${KRKRSDL_PLUGINS_PATH}/LayerExPerspective.cpp
     ${KRKRSDL_PLUGINS_PATH}/LayerExRaster.cpp
     ${KRKRSDL_PLUGINS_PATH}/LayerExSave.cpp
@@ -65,3 +63,8 @@ set(KRKRSDL_PLUGINS_SRC
 	${KRKRSDL_PLUGINS_PATH}/sqlite3/sqlite3.cpp
 	${KRKRSDL_PLUGINS_PATH}/sqlite3/xp3_vfs.cpp
     )
+
+if(USE_FFMPEG)
+    list(APPEND KRKRSDL_PLUGINS_SRC ${KRKRSDL_PLUGINS_PATH}/AlphaMovie.cpp)
+    list(APPEND KRKRSDL_PLUGINS_SRC ${KRKRSDL_PLUGINS_PATH}/LayerExMovie.cpp)
+endif()

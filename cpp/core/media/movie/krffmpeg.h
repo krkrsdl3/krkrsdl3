@@ -151,31 +151,3 @@ protected:
     struct SwsContext* img_convert_ctx = nullptr;
     double m_curpts = 0;
 };
-
-extern void GetVideoOverlayObject(tTJSNI_VideoOverlay* callbackwin,
-                                  tTJSBinaryStream* stream,
-                                  const tjs_char* streamname,
-                                  const tjs_char* type,
-                                  uint64_t size,
-                                  class iTVPVideoOverlay** out);
-
-extern void GetVideoLayerObject(tTJSNI_VideoOverlay* callbackwin,
-                                tTJSBinaryStream* stream,
-                                const tjs_char* streamname,
-                                const tjs_char* type,
-                                uint64_t size,
-                                class iTVPVideoOverlay** out);
-
-extern void GetMixingVideoOverlayObject(tTJSNI_VideoOverlay* callbackwin,
-                                        tTJSBinaryStream* stream,
-                                        const tjs_char* streamname,
-                                        const tjs_char* type,
-                                        uint64_t size,
-                                        class iTVPVideoOverlay** out);
-
-extern void GetMFVideoOverlayObject(tTJSNI_VideoOverlay* callbackwin,
-                                    tTJSBinaryStream* stream,
-                                    const tjs_char* streamname,
-                                    const tjs_char* type,
-                                    uint64_t size,
-                                    class iTVPVideoOverlay** out);
