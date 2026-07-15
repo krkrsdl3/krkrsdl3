@@ -5,13 +5,13 @@
 #include "TVPSystem.h"
 #include "TVPEvent.h"
 #include "Platform.h"
-#include "TickCount.h"
 #include "TVPApplication.h"
 #include "TVPScript.h"
 #include "TVPStorage.h"
 #include "TVPGraphicsLoader.h"
 #include "TVPMsg.h"
 #include "Random.h"
+#include "PlatformView.h"
 #include "TVPSettings.h"
 
 #include "tjsNativeLayer.h"
@@ -497,8 +497,6 @@ tTJSNativeClass* TVPCreateNativeClass_System()
     {
         if (result)
         {
-            TVPStartTickCount();
-
             *result = (tjs_int64)TVPGetTickCount();
         }
         return TJS_S_OK;
@@ -669,7 +667,7 @@ tTJSNativeClass* TVPCreateNativeClass_System()
     //-- properties
 
     //----------------------------------------------------------------------
-    TJS_BEGIN_NATIVE_PROP_DECL(exePath){TJS_BEGIN_NATIVE_PROP_GETTER{* result = TVPGetAppPath();
+    TJS_BEGIN_NATIVE_PROP_DECL(exePath){TJS_BEGIN_NATIVE_PROP_GETTER{* result = TVPProjectDir;
     return TJS_S_OK;
 }
 TJS_END_NATIVE_PROP_GETTER
@@ -678,8 +676,7 @@ TJS_DENY_NATIVE_PROP_SETTER
 }
 TJS_END_NATIVE_STATIC_PROP_DECL_OUTER(cls, exePath)
 //----------------------------------------------------------------------
-TJS_BEGIN_NATIVE_PROP_DECL(personalPath){
-    TJS_BEGIN_NATIVE_PROP_GETTER{* result = TVPGetPersonalPath();
+TJS_BEGIN_NATIVE_PROP_DECL(personalPath){TJS_BEGIN_NATIVE_PROP_GETTER{* result = TVPProjectDir;
 return TJS_S_OK;
 }
 TJS_END_NATIVE_PROP_GETTER
@@ -688,7 +685,7 @@ TJS_DENY_NATIVE_PROP_SETTER
 }
 TJS_END_NATIVE_STATIC_PROP_DECL_OUTER(cls, personalPath)
 //----------------------------------------------------------------------
-TJS_BEGIN_NATIVE_PROP_DECL(appDataPath){TJS_BEGIN_NATIVE_PROP_GETTER{* result = TVPGetAppDataPath();
+TJS_BEGIN_NATIVE_PROP_DECL(appDataPath){TJS_BEGIN_NATIVE_PROP_GETTER{* result = TVPProjectDir;
 return TJS_S_OK;
 }
 TJS_END_NATIVE_PROP_GETTER
@@ -707,7 +704,7 @@ TJS_DENY_NATIVE_PROP_SETTER
 TJS_END_NATIVE_STATIC_PROP_DECL_OUTER(cls, dataPath)
 //----------------------------------------------------------------------
 TJS_BEGIN_NATIVE_PROP_DECL(exeName){
-    TJS_BEGIN_NATIVE_PROP_GETTER{static ttstr exename(TVPNormalizeStorageName(ExePath()));
+    TJS_BEGIN_NATIVE_PROP_GETTER{static ttstr exename(TVPNormalizeStorageName(TVPNativeExeName));
 *result = exename;
 return TJS_S_OK;
 }
@@ -717,8 +714,7 @@ TJS_DENY_NATIVE_PROP_SETTER
 }
 TJS_END_NATIVE_STATIC_PROP_DECL_OUTER(cls, exeName)
 //----------------------------------------------------------------------
-TJS_BEGIN_NATIVE_PROP_DECL(savedGamesPath){
-    TJS_BEGIN_NATIVE_PROP_GETTER{* result = TVPGetSavedGamesPath();
+TJS_BEGIN_NATIVE_PROP_DECL(savedGamesPath){TJS_BEGIN_NATIVE_PROP_GETTER{* result = TVPProjectDir;
 return TJS_S_OK;
 }
 TJS_END_NATIVE_PROP_GETTER
@@ -729,7 +725,7 @@ TJS_END_NATIVE_STATIC_PROP_DECL_OUTER(cls, savedGamesPath)
 //----------------------------------------------------------------------
 TJS_BEGIN_NATIVE_PROP_DECL(title){
     TJS_BEGIN_NATIVE_PROP_GETTER{if (!TVPAppTitleInit){TVPAppTitleInit = true;
-TVPAppTitle = Application->GetTitle();
+TVPAppTitle = TVPGetWindowTitle();
 }
 *result = TVPAppTitle;
 return TJS_S_OK;
@@ -739,7 +735,7 @@ TJS_END_NATIVE_PROP_GETTER
 TJS_BEGIN_NATIVE_PROP_SETTER
 {
     TVPAppTitle = *param;
-    Application->SetTitle(TVPAppTitle.AsStdString());
+    TVPSetWindowTitle(TVPAppTitle.c_str());
     return TJS_S_OK;
 }
 TJS_END_NATIVE_PROP_SETTER

@@ -90,7 +90,7 @@ static voidpf ZCALLBACK fopen_file_func (voidpf opaque, const char* filename, in
         modemask = TJS_BS_WRITE;
     else
         return NULL;
-    tTVPLocalFileStream* rw = new tTVPLocalFileStream("", filename, modemask);
+    tTJSBinaryStream* rw = TVPCreateLocalFileStream("", filename, modemask);
     return (voidpf)rw;
 }
 
@@ -102,17 +102,17 @@ static voidpf ZCALLBACK fopen64_file_func (voidpf opaque, const void* filename, 
 
 static uLong ZCALLBACK fread_file_func (voidpf opaque, voidpf stream, void* buf, uLong size)
 {
-    return (uLong)((tTVPLocalFileStream*)stream)->Read(buf, size);
+    return (uLong)((tTJSBinaryStream*)stream)->Read(buf, size);
 }
 
 static uLong ZCALLBACK fwrite_file_func (voidpf opaque, voidpf stream, const void* buf, uLong size)
 {
-    return (uLong)((tTVPLocalFileStream*)stream)->Write(buf, size);
+    return (uLong)((tTJSBinaryStream*)stream)->Write(buf, size);
 }
 
 static ZPOS64_T ZCALLBACK ftell64_file_func (voidpf opaque, voidpf stream)
 {
-    return (ZPOS64_T)((tTVPLocalFileStream*)stream)->Seek(0, TJS_BS_SEEK_CUR);
+    return (ZPOS64_T)((tTJSBinaryStream*)stream)->Seek(0, TJS_BS_SEEK_CUR);
 }
 
 static long ZCALLBACK ftell_file_func (voidpf opaque, voidpf stream)
@@ -137,7 +137,7 @@ static long ZCALLBACK fseek_file_func (voidpf  opaque, voidpf stream, uLong offs
         break;
     default: return -1;
     }
-    return ((tTVPLocalFileStream*)stream)->Seek(offset, fseek_origin);
+    return ((tTJSBinaryStream*)stream)->Seek(offset, fseek_origin);
 }
 
 static long ZCALLBACK fseek64_file_func (voidpf  opaque, voidpf stream, ZPOS64_T offset, int origin)
@@ -157,13 +157,13 @@ static long ZCALLBACK fseek64_file_func (voidpf  opaque, voidpf stream, ZPOS64_T
         default:
             return -1;
     }
-    return ((tTVPLocalFileStream*)stream)->Seek(offset, fseek_origin);
+    return ((tTJSBinaryStream*)stream)->Seek(offset, fseek_origin);
 }
 
 
 static int ZCALLBACK fclose_file_func (voidpf opaque, voidpf stream)
 {
-    delete ((tTVPLocalFileStream*)stream);
+    delete ((tTJSBinaryStream*)stream);
     return 0;
 }
 

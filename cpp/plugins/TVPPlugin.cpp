@@ -58,9 +58,10 @@ struct tTVPFoundPlugin
     bool operator<(const tTVPFoundPlugin& rhs) const { return Name < rhs.Name; }
 };
 static tjs_int TVPAutoLoadPluginCount = 0;
-static void TVPSearchPluginsAt(std::vector<tTVPFoundPlugin>& list, std::string folder)
+static void TVPSearchPluginsAt(std::vector<tTVPFoundPlugin>& list, const ttstr& folder)
 {
-    TVPListDir(folder,
+    std::string folderName = TVPGetLocallyAccessibleName(folder).AsStdString();
+    TVPListDir(folderName,
                [&](const std::string& filename, int mask)
                {
                    if (mask & S_IFREG)
@@ -68,7 +69,7 @@ static void TVPSearchPluginsAt(std::vector<tTVPFoundPlugin>& list, std::string f
                        if (!TJS_strcasecmp(filename.c_str() + filename.length() - 4, ".tpm"))
                        {
                            tTVPFoundPlugin fp;
-                           fp.Path = folder;
+                           fp.Path = folderName;
                            fp.Name = filename;
                            list.emplace_back(fp);
                        }
@@ -90,11 +91,9 @@ void TVPLoadPluigins(void)
     // search plugins from path: (exepath), (exepath)\system, (exepath)\plugin
     std::vector<tTVPFoundPlugin> list;
 
-    std::string exepath = TVPNativeProjectDir.AsStdString();
-
-    TVPSearchPluginsAt(list, exepath);
-    TVPSearchPluginsAt(list, exepath + "/system");
-    TVPSearchPluginsAt(list, exepath + "/plugin");
+    TVPSearchPluginsAt(list, TVPProjectDir);
+    TVPSearchPluginsAt(list, TVPProjectDir + "system");
+    TVPSearchPluginsAt(list, TVPProjectDir + "plugin");
 
     // sort by filename
     std::sort(list.begin(), list.end());

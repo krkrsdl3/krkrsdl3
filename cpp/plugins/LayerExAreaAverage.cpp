@@ -1,6 +1,6 @@
 #include "ncbind/ncbind.hpp"
 
-#include "TickCount.h"
+#include "Platform.h"
 
 #define NCB_MODULE_NAME TJS_N("layerExAreaAverage.dll")
 

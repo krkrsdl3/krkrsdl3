@@ -3152,9 +3152,9 @@ public:
                     pts_src_y[i] -= rcsrc.top;
                 }
                 if (rcsrc.right > src_img_w)
-                    src_img_w = rcsrc.get_width();
+                    rcsrc.set_width(src_img_w - rcsrc.left);
                 if (rcsrc.bottom > src_img_h)
-                    src_img_h = rcsrc.get_height();
+                    rcsrc.set_height(src_img_h - rcsrc.top);
                 src_img_w = rcsrc.get_width();
                 src_img_h = rcsrc.get_height();
             }

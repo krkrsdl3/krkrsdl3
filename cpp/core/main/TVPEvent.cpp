@@ -6,11 +6,11 @@
 #include "tjsDictionary.h"
 #include "TVPMsg.h"
 #include "TVPScript.h"
-#include "TickCount.h"
 
 #include "SystemControl.h"
 #include "TVPApplication.h"
 #include "NativeEventQueue.h"
+#include "Platform.h"
 #include "PlatformThread.h"
 
 //---------------------------------------------------------------------------
@@ -852,7 +852,6 @@ void TVPRemoveContinuousEventHook(tTVPContinuousEventCallbackIntf* cb)
 //---------------------------------------------------------------------------
 static void _TVPDeliverContinuousEvent() // internal
 {
-    TVPStartTickCount();
     tjs_uint64 tick = TVPGetTickCount();
 
     if (TVPContinuousEventVector.size())

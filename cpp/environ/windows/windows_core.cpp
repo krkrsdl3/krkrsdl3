@@ -4,6 +4,7 @@
 #include "PlatformFile.h"
 #include "TVPMsg.h"
 #include "TVPApplication.h"
+#include "TVPSystem.h"
 #include "MainWindowLayer.h"
 
 #include "tjsNativeMenuItem.h"
@@ -93,7 +94,7 @@ tTJSBinaryStream* tTVPFileMedia::Open(const ttstr& name, tjs_uint32 flags)
     ttstr _name(name);
     GetLocalName(_name);
 
-    return new tTVPLocalFileStream(origname, _name, flags);
+    return TVPCreateLocalFileStream(origname, _name, flags);
 }
 //---------------------------------------------------------------------------
 void tTVPFileMedia::GetListAt(const ttstr& _name, iTVPStorageLister* lister)
@@ -184,7 +185,9 @@ iTVPStorageMedia* TVPCreateFileMedia()
 //---------------------------------------------------------------------------
 tTVPMemoryStream* GetResourceStream(const ttstr& filename)
 {
-    tTJSBinaryStream* tmp = TVPCreateBinaryStreamForRead(ExePath() + ttstr("/") + filename, 0);
+    static ttstr resourceBasePath = TVPNormalizeStorageName(TVPNativeExeDir) + TJS_N("Res/");
+    tTJSBinaryStream* tmp = TVPCreateBinaryStreamForRead(resourceBasePath + filename, 0);
+    if (!tmp) return nullptr;
     tTVPMemoryStream* ret = new tTVPMemoryStream(nullptr, tmp->GetSize());
     tmp->ReadBuffer(ret->GetInternalBuffer(), tmp->GetSize());
     delete tmp;

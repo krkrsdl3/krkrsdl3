@@ -97,21 +97,21 @@ public:
 //---------------------------------------------------------------------------
 class TVPElapsedTimer
 {
-    unsigned int startTime;
-    unsigned int totalWaitTime;
+    tjs_uint64 startTime;
+    tjs_uint64 totalWaitTime;
     bool isInfiniteValue = false;
 
 public:
     inline TVPElapsedTimer() : startTime(0), totalWaitTime(0) {}
-    inline TVPElapsedTimer(unsigned int millisecondsIntoTheFuture)
-      : startTime(TVPGetRoughTickCount32()),
+    inline TVPElapsedTimer(tjs_uint64 millisecondsIntoTheFuture)
+      : startTime(TVPGetRoughTickCount()),
         totalWaitTime(millisecondsIntoTheFuture)
     {
     }
 
     inline void Set(unsigned int millisecondsIntoTheFuture)
     {
-        startTime = TVPGetRoughTickCount32();
+        startTime = TVPGetRoughTickCount();
         totalWaitTime = millisecondsIntoTheFuture;
     }
     inline bool IsTimePast() const
@@ -119,24 +119,24 @@ public:
         if (isInfiniteValue)
             return false;
         return (totalWaitTime == 0 ? true
-                                   : (TVPGetRoughTickCount32() - startTime) >= totalWaitTime);
+                                   : (TVPGetRoughTickCount() - startTime) >= totalWaitTime);
     }
 
-    inline unsigned int MillisLeft() const
+    inline tjs_uint64 MillisLeft() const
     {
         if (isInfiniteValue)
             return UINT_MAX;
         if (totalWaitTime == 0)
             return 0;
-        unsigned int timeWaitedAlready = (TVPGetRoughTickCount32() - startTime);
+        tjs_uint64 timeWaitedAlready = (TVPGetRoughTickCount() - startTime);
         return (timeWaitedAlready >= totalWaitTime) ? 0 : (totalWaitTime - timeWaitedAlready);
     }
 
     inline void SetExpired() { totalWaitTime = 0; }
     inline void SetInfinite() { isInfiniteValue = true; }
     inline bool IsInfinite(void) const { return isInfiniteValue; }
-    inline unsigned int GetInitialTimeoutValue(void) const { return totalWaitTime; }
-    inline unsigned int GetStartTime(void) const { return startTime; }
+    inline tjs_uint64 GetInitialTimeoutValue(void) const { return totalWaitTime; }
+    inline tjs_uint64 GetStartTime(void) const { return startTime; }
 };
 
 //---------------------------------------------------------------------------

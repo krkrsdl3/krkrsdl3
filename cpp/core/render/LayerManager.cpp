@@ -17,7 +17,6 @@
 #include "TVPStorage.h"
 #include "TVPEvent.h"
 #include "TVPSystem.h"
-#include "TickCount.h"
 #include "TVPDebug.h"
 #include "LayerTreeOwner.h"
 

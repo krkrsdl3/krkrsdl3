@@ -431,39 +431,33 @@ void layerExImage::generateWhiteNoise()
 
 static const char* copyright =
     "----- CxImage Copyright START -----\n"
-    "CxImage version 5.99c 17/Oct/2004\n"
-    "CxImage : Copyright (C) 2001 - 2004, Davide Pizzolato\n"
+    "CxImage version 7.0.2 07/Feb/2011\n"
+    "CxImage : Copyright (C) 2001 - 2011, Davide Pizzolato\n"
     "Original CImage and CImageIterator implementation are:\n"
     "Copyright (C) 1995, Alejandro Aguilar Sierra (asierra(at)servidor(dot)unam(dot)mx)\n"
     "----- CxImage Copyright END -----\n";
 
-// ----------------------------------- ･ｯ･鬣ｹ､ﾎｵﾇ乕
+// ----------------------------------- クラスの登録
 
 NCB_GET_INSTANCE_HOOK(layerExImage){
-    // ･､･ｹ･ｿ･ｹ･ｲ･ﾃ･ｿ
+    // インスタンスゲッタ
     NCB_INSTANCE_GETTER(objthis){
-        // objthis ､・iTJSDispatch2* ﾐﾍ､ﾎﾒﾊ､ﾈ､ｹ､・
-        ClassT* obj = GetNativeInstance(
-            objthis); // ･ﾍ･､･ﾆ･｣･ﾖ･､･ｹ･ｿ･ｹ･ﾝ･､･ｿﾈ｡ｵﾃ
-if (!obj)
-{
-    obj = new ClassT(objthis); // ､ﾊ､､因ｺﾏ､ﾏﾉ嵭ﾉ､ｹ､・
-    SetNativeInstance(
-        objthis,
-        obj); // objthis ､ﾋ obj
-              // ､ﾍ･､･ﾆ･｣･ﾖ･､･ｹ･ｿ･ｹ､ﾈ､ｷ､ﾆｵﾇ乕､ｹ､・
-}
-obj->reset();
-return obj;
-}
-// ･ﾇ･ｹ･ﾈ･鬣ｯ･ｿ｣ｨ携・､ﾎ･皈ｽ･ﾃ･ﾉ､ｬｺﾐ､・ｿ矣､ﾋｺﾐ､・・ｩ
-~NCB_GET_INSTANCE_HOOK_CLASS()
-{
-}
-}
-;
-
-// ･ﾕ･ﾃ･ｯ､ﾄ､ｭ･｢･ｿ･ﾃ･ﾁ
+        // objthis を iTJSDispatch2* 型の引数とする
+        ClassT* obj = GetNativeInstance(objthis); // ネイティブインスタンスポインタ取得
+        if (!obj)
+        {
+            obj = new ClassT(objthis);       // ない場合は生成する
+            SetNativeInstance(objthis, obj); // objthis に obj をネイティブインスタンスとして登録する
+        }
+        obj->reset();
+        return obj;
+    }
+    // デストラクタ（実際のメソッドが呼ばれた後に呼ばれる）
+    ~NCB_GET_INSTANCE_HOOK_CLASS()
+    {
+    }
+};
+// フックつきアタッチ
 NCB_ATTACH_CLASS_WITH_HOOK(layerExImage, Layer)
 {
     NCB_METHOD(light);

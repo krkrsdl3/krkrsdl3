@@ -93,7 +93,7 @@ tTJSBinaryStream* tTVPFileMedia::Open(const ttstr& name, tjs_uint32 flags)
     ttstr _name(name);
     GetLocalName(_name);
 
-    return new tTVPLocalFileStream(origname, _name, flags);
+    return TVPCreateLocalFileStream(origname, _name, flags);
 }
 
 //---------------------------------------------------------------------------

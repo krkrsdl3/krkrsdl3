@@ -73,9 +73,6 @@ TVP_MSG_DEFINE(TVPInfoDataPathDoesNotExistTryingToMakeIt,
                "(info) Data path does not exist, trying to make it ... %1")
 TVP_MSG_DEFINE(TVPOk, "ok.")
 TVP_MSG_DEFINE(TVPFaild, "failed.")
-TVP_MSG_DEFINE(TVPInfoDataPath, "(info) Data path : %1")
-TVP_MSG_DEFINE(TVPInfoSpecifiedOptionEarlierItemHasMorePriority,
-               "(info) Specified option(s) (earlier item has more priority) :")
 TVP_MSG_DEFINE(TVPNone, " (none)")
 TVP_MSG_DEFINE(TVPInfoCpuClockRoughly, "(info) CPU clock (roughly) : %dMHz")
 TVP_MSG_DEFINE(TVPProgramStartedOn, "Program started on %1 (%2)")

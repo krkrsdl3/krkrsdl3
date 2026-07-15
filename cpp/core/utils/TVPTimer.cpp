@@ -1,7 +1,6 @@
 
 #include "tjsCommHead.h"
 #include "TVPTimer.h"
-#include "TickCount.h"
 #include "TVPSystem.h"
 #include "PlatformThread.h"
 #include "NativeEventQueue.h"
@@ -51,10 +50,10 @@ static struct t_timer_idx
             unsigned int _idx_v4 : 6;
             unsigned int _idx_v5 : 6;
         };
-        uint32_t _idx;
+        uint64_t _idx;
     };
-    t_timer_idx(uint32_t idx) : _idx(idx) {}
-} _timer_idx(TVPGetRoughTickCount32());
+    t_timer_idx(uint64_t idx) : _idx(idx) {}
+} _timer_idx(TVPGetRoughTickCount());
 
 void tTVPTimerImpl::Set()
 {
@@ -115,9 +114,9 @@ void tTVPTimerImpl::FireNext()
 
 void TVPTimer::ProgressAllTimer()
 {
-    uint32_t curTick = TVPGetRoughTickCount32();
-    int past = curTick - _timer_idx._idx;
-    for (int i = 0; i < past; ++i)
+    uint64_t curTick = TVPGetRoughTickCount();
+    uint64_t past = curTick - _timer_idx._idx;
+    for (uint64_t i = 0; i < past; ++i)
     {
         _timer_v1[_timer_idx._idx_v1].FireNext();
         ++_timer_idx._idx;

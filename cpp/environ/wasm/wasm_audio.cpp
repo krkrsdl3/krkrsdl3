@@ -18,7 +18,6 @@
 #include "PlatformMutex.h"
 #include "PlatformThread.h"
 #include "TVPSystem.h"
-#include "TickCount.h"
 #include "TVPDebug.h"
 #include "WaveIntf.h"
 
@@ -144,7 +143,7 @@ public:
     virtual bool Init() override
     {
         if (_format.BitsPerSample != 16 && _format.BitsPerSample != 32) {
-            TVPAddLog(ttstr(TJS_W("wasm_audio: unsupported bits: ")) + ttstr((int)_format.BitsPerSample));
+            TVPAddLog(ttstr(TJS_N("wasm_audio: unsupported bits: ")) + ttstr((int)_format.BitsPerSample));
             delete this; return false;
         }
         if (!g_audioCtxDone) {
@@ -152,9 +151,9 @@ public:
             g_sampleRate = _format.SamplesPerSec;
             g_audioCtxNeeded = true;
         }
-        TVPAddLog(ttstr(TJS_W("wasm_audio: Init() freq=")) + ttstr((int)_format.SamplesPerSec)
-                  + ttstr(TJS_W(" ch=")) + ttstr((int)_format.Channels)
-                  + ttstr(TJS_W(" bits=")) + ttstr((int)_format.BitsPerSample));
+        TVPAddLog(ttstr(TJS_N("wasm_audio: Init() freq=")) + ttstr((int)_format.SamplesPerSec)
+                  + ttstr(TJS_N(" ch=")) + ttstr((int)_format.Channels)
+                  + ttstr(TJS_N(" bits=")) + ttstr((int)_format.BitsPerSample));
         return true;
     }
 
@@ -238,7 +237,7 @@ static bool g_devInited = false;
 
 void TVPInitDirectSound(int freq)
 {
-    if (!g_devInited) { g_devInited = true; TVPAddLog(ttstr(TJS_W("wasm_audio: TVPInitDirectSound"))); }
+    if (!g_devInited) { g_devInited = true; TVPAddLog(ttstr(TJS_N("wasm_audio: TVPInitDirectSound"))); }
 }
 
 void TVPUninitDirectSound() {}
@@ -253,9 +252,9 @@ void wasmAudioTick()
 {
     if (!g_audioCtxDone && g_audioCtxNeeded && emscripten_is_main_browser_thread()) {
         g_audioCtxDone = true;
-        TVPAddLog(ttstr(TJS_W("wasm_audio: creating AudioContext...")));
+        TVPAddLog(ttstr(TJS_N("wasm_audio: creating AudioContext...")));
         wasmAudioInitJS(g_sampleRate, g_ringChannels);
-        TVPAddLog(ttstr(TJS_W("wasm_audio: AudioContext created")));
+        TVPAddLog(ttstr(TJS_N("wasm_audio: AudioContext created")));
     }
     wasmAudioResume();
 }

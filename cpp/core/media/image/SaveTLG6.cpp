@@ -1080,7 +1080,7 @@ void SaveTLG6(tTJSBinaryStream* stream, const iTVPBaseBitmap* bmp, bool is24)
     tTJSBinaryStream* out = stream;
 
     // DWORD medstart, medend;
-    tjs_uint reordertick;
+    tjs_uint64 reordertick;
 #ifdef WRITE_ENTROPY_VALUES
     FILE* vs = fopen("vs.bin", "wb");
 #endif
@@ -1230,7 +1230,7 @@ void SaveTLG6(tTJSBinaryStream* stream, const iTVPBaseBitmap* bmp, bool is24)
                     // Odd lines are stored backward (right to left).
 
                     wp = 0;
-                    tjs_uint32 reorderstart = TVPGetRoughTickCount32();
+                    tjs_uint64 reorderstart = TVPGetRoughTickCount();
                     for (int yy = y; yy < ylim; yy++)
                     {
                         int ofs;
@@ -1278,7 +1278,7 @@ void SaveTLG6(tTJSBinaryStream* stream, const iTVPBaseBitmap* bmp, bool is24)
                             }
                         }
                     }
-                    reordertick += TVPGetRoughTickCount32() - reorderstart;
+                    reordertick += TVPGetRoughTickCount() - reorderstart;
                 }
 
                 for (int p = 0; p < 2; p++)

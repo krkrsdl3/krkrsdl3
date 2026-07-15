@@ -546,23 +546,18 @@ void TVPInitScriptEngine()
             //			}
         }
     }
-    // Set Read text encoding
-#ifdef TVP_START_UP_SCRIPT_NAME
-    TVPStartupScriptName = TVP_START_UP_SCRIPT_NAME;
-#else
     // Set startup script name
     if (TVPGetCommandLine(TJS_N("-startup"), &val))
     {
         ttstr str(val);
         TVPStartupScriptName = str;
     }
-#endif
 
     // create script engine object
     TVPScriptEngine = new tTJS();
 
     // add kirikiriz
-    // TVPScriptEngine->SetPPValue( TJS_N("kirikiriz"), 1 );
+    // TVPScriptEngine->SetPPValue( TJS_N("kirikiriz"), 1);
 
     // set TJSGetRandomBits128
     TJSGetRandomBits128 = TVPGetRandomBits128;
@@ -1038,10 +1033,12 @@ bool TVPStartupSuccess = false;
 //---------------------------------------------------------------------------
 void TVPExecuteStartupScript()
 {
+    // execute "patch.tjs"
     ttstr strPatchError;
     try
     {
-        ttstr patch = TVPGetAppPath() + "patch.tjs";
+        ttstr patch = TVPProjectDir + "patch.tjs";
+        TVPAddLog(TJS_N("(info) Loading patch script : ") + patch);
         if (TVPIsExistentStorageNoSearch(patch))
             TVPExecuteStorage(patch);
     }
@@ -1120,7 +1117,7 @@ void TVPExecuteStartupScript()
         TVPAddLog(TJS_N("(info) Startup script ended."));
         try
         {
-            ttstr patch = TVPGetAppPath() + "AfterStartup.tjs";
+            ttstr patch = TVPProjectDir + "AfterStartup.tjs";
             if (TVPIsExistentStorageNoSearch(patch))
                 TVPExecuteStorage(patch);
         }

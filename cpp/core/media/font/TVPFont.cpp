@@ -160,13 +160,13 @@ void TVPInitFontNames()
         if (!userFont.IsEmpty() && TVPEnumFontsProc(userFont))
             break;
 
-        if (TVPEnumFontsProc(TVPGetAppPath() + "default.ttf"))
+        if (TVPEnumFontsProc(TVPProjectDir + "default.ttf"))
             break;
-        if (TVPEnumFontsProc(TVPGetAppPath() + "default.ttc"))
+        if (TVPEnumFontsProc(TVPProjectDir + "default.ttc"))
             break;
-        if (TVPEnumFontsProc(TVPGetAppPath() + "default.otf"))
+        if (TVPEnumFontsProc(TVPProjectDir + "default.otf"))
             break;
-        if (TVPEnumFontsProc(TVPGetAppPath() + "default.otc"))
+        if (TVPEnumFontsProc(TVPProjectDir + "default.otc"))
             break;
 
         auto stream = GetResourceStream("DroidSansFallback.ttf");
@@ -195,7 +195,7 @@ void TVPInitFontNames()
                 list.emplace_back(name);
             }
         };
-        TVPGetLocalFileListAt(TVPGetAppPath() + "/fonts", lister);
+        TVPGetLocalFileListAt(TVPGetLocallyAccessibleName(TVPProjectDir + "fonts"), lister);
         auto itend = list.end();
         for (auto it = list.begin(); it != itend; ++it)
         {

@@ -20,6 +20,17 @@
 // archive delimiter
 //---------------------------------------------------------------------------
 extern tjs_char TVPArchiveDelimiter; //  = '>';
+//---------------------------------------------------------------------------
+// base archive
+//---------------------------------------------------------------------------
+extern ttstr TVPNativeExeName; // */TVP/krkrsdl3.exe  
+extern ttstr TVPNativeExeDir;  // */TVP/
+extern ttstr TVPNativeProjectData; // */Game/data.xp3 or */Game/data/
+extern ttstr TVPNativeProjectDir;  // */Game/
+extern ttstr TVPNativeDataPath;    // */Game/savedata/
+extern ttstr TVPProjectData;       // file://*/Game/data.xp3> or */Game/data/
+extern ttstr TVPProjectDir;        // file://*/Game/
+extern ttstr TVPDataPath;          // file://*/Game/savedata/
 
 //---------------------------------------------------------------------------
 class iTVPStorageLister // callback class for GetListAt
@@ -175,9 +186,6 @@ void TVPRemoveFromStorageCache(const ttstr& name);
 ttstr TVPGetTemporaryName();
 // retrieve file name to store temporary data ( must be unique, local name )
 
-ttstr TVPGetAppPath();
-// retrieve program path, in normalized storage name
-
 //---------------------------------------------------------------------------
 // utilities
 //---------------------------------------------------------------------------
@@ -204,6 +212,5 @@ tTJSBinaryStream* TVPCreateBinaryStreamForWrite(const ttstr& name, const ttstr& 
 bool TVPSelectFile(iTJSDispatch2* params);
 
 ttstr ReplaceStringAll(ttstr src, const ttstr& target, const ttstr& dest);
-ttstr GetDataPathDirectory(const ttstr& exename);
 
 #endif

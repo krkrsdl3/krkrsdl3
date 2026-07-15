@@ -13,6 +13,9 @@
 
 #include <map>
 #include <vector>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 
 #include "TVPApplication.h"
 #include "RenderManager.h"
@@ -22,6 +25,7 @@
 #include "eventCallbackFun.h"
 #include "TVPSettings.h"
 #include "TVPCompositor.h"
+#include "TVPDebug.h"
 
 #ifndef _DEBUG
 #ifdef _KRKRSDL3_WINDOWS
@@ -29,8 +33,8 @@
 #endif
 #endif
 
-SDL_Window* tvp_window;
-SDL_Renderer* tvp_renderer = NULL;
+static SDL_Window* tvp_window;
+static SDL_Renderer* tvp_renderer = NULL;
 static SDL_GLContext tvp_glContext = NULL;
 static int winWidth = 1280, winHeight = 720;
 
@@ -44,7 +48,8 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[])
     }
 
     // 参数解析
-    TVPParseArguments(argc, argv);
+    if (!TVPParseArguments(argc, argv))
+        return SDL_APP_FAILURE;
 
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO))
     { // for format converter
@@ -409,14 +414,10 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event)
     return SDL_APP_CONTINUE;
 }
 
-extern std::vector<TVPSprite*> renderTexture;
-static SDL_FRect rectBuff;
-
 SDL_AppResult SDL_AppIterate(void* appstate)
 {
     ::Application->Run();
     iTVPTexture2D::RecycleProcess();
-
     // 写入缓冲区
     int RW = 1280, RH = 720;
     SDL_GetWindowSize(tvp_window, &RW, &RH);
@@ -458,6 +459,11 @@ void TVPSetWindowTitle(const char* title)
     SDL_SetWindowTitle(tvp_window, title);
 }
 
+std::string TVPGetWindowTitle()
+{
+    return SDL_GetWindowTitle(tvp_window);
+}
+
 void TVPSetWindowFullscreen(bool isFullscreen)
 {
     SDL_SetWindowFullscreen(tvp_window, isFullscreen);
@@ -475,8 +481,8 @@ void TVPSetWindowSize(int w, int h)
 
 int TVPDrawSceneOnce(int interval)
 {
-    static tjs_uint64 lastTick = TVPGetRoughTickCount32();
-    tjs_uint64 curTick = TVPGetRoughTickCount32();
+    static tjs_uint64 lastTick = TVPGetRoughTickCount();
+    tjs_uint64 curTick = TVPGetRoughTickCount();
     int remain = interval - (curTick - lastTick);
     if (remain <= 0)
     {
@@ -493,6 +499,16 @@ int TVPDrawSceneOnce(int interval)
     {
         return remain;
     }
+}
+
+void TVPShowIME(int x, int y, int w, int h)
+{
+    SDL_StartTextInput(tvp_window);
+}
+
+void TVPHideIME()
+{
+    SDL_StopTextInput(tvp_window);
 }
 
 int TVPConvertKeyCodeToVKCode(int keyCode)
@@ -633,4 +649,58 @@ int TVPConvertKeyCodeToVKCode(int keyCode)
         default:
             return 0;
     }
+}
+
+std::vector<std::string> TVPListAllRenderBackend()
+{
+    ttstr log(TJS_N("Available Render:"));
+    std::vector<std::string> backends;
+    int count = SDL_GetNumRenderDrivers();
+    for (int i = 0; i < count; i++)
+    {
+        const char* name = SDL_GetRenderDriver(i);
+        if (name)
+        {
+            backends.push_back(name);
+            log += " " + ttstr((const char*)name);
+        }
+    }
+    TVPAddImportantLog(log);
+
+    return backends;
+}
+
+void TVPCreateTextureBackend(TVPSprite& sp)
+{
+    sp.texture.swTexture = SDL_CreateTexture(tvp_renderer, SDL_PIXELFORMAT_ABGR8888,
+                                             SDL_TEXTUREACCESS_STREAMING, sp.width, sp.height);
+    SDL_BlendMode customBlendMode =
+        SDL_ComposeCustomBlendMode(SDL_BLENDFACTOR_ONE,                 // 源因子
+                                   SDL_BLENDFACTOR_ZERO,                // 目标因子
+                                   SDL_BLENDOPERATION_ADD,              // 混合操作
+                                   SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, // 源因子（Alpha）
+                                   SDL_BLENDFACTOR_SRC_ALPHA,           // 目标因子（Alpha）
+                                   SDL_BLENDOPERATION_ADD               // 混合操作（Alpha）
+        );
+    SDL_SetTextureBlendMode((SDL_Texture*)sp.texture.swTexture, customBlendMode);
+}
+
+void TVPUpdateTextureBackend(TVPSprite* sp, uint8_t* buff, int width, int height, int pitch)
+{
+    SDL_UpdateTexture((SDL_Texture*)sp->texture.swTexture, nullptr, buff, pitch);
+}
+
+void TVPDestroyTextureBackend(TVPSprite* sp)
+{
+    SDL_DestroyTexture((SDL_Texture*)sp->texture.swTexture);
+}
+
+void TVPRenderTextureBackend(TVPSprite* sp, int posX, int posY, int width, int height)
+{
+    SDL_FRect rectBuff;
+    rectBuff.x = posX;
+    rectBuff.y = posY;
+    rectBuff.w = width;
+    rectBuff.h = height;
+    SDL_RenderTexture(tvp_renderer, (SDL_Texture*)sp->texture.swTexture, NULL, &rectBuff);
 }

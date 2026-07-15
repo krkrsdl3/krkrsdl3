@@ -15,7 +15,6 @@
 #include "tjsHashSearch.h"
 #include "TVPMsg.h"
 #include "TVPSystem.h"
-#include "TickCount.h"
 #include "TVPDebug.h"
 #include "RenderManager.h"
 #include "Platform.h"

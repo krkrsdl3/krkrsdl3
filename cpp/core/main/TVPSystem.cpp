@@ -9,7 +9,6 @@
 #include "TVPApplication.h"
 #include "TVPGraphicsLoader.h"
 
-#include "TickCount.h"
 #include "Random.h"
 #include "tvpinputdefs.h"
 #include "SystemControl.h"
@@ -123,7 +122,6 @@ bool TVPShellExecute(const ttstr& target, const ttstr& param)
 //---------------------------------------------------------------------------
 
 static tTJSVariant RegisterData;
-ttstr TVPGetAppDataPath();
 void TVPExecuteStorage(const ttstr& name,
                        tTJSVariant* result,
                        bool isexpression,
@@ -133,7 +131,7 @@ static void InitRegisterData()
     static bool dataInited = false;
     if (!dataInited)
     {
-        ttstr regfile = TVPGetAppDataPath() + TJS_N("RegisterData.tjs");
+        ttstr regfile = TVPProjectDir + TJS_N("RegisterData.tjs");
         if (TVPIsExistentStorageNoSearch(regfile))
         {
             TVPExecuteStorage(regfile, &RegisterData, true, TJS_N(""));
@@ -203,33 +201,6 @@ void TVPReadRegValue(tTJSVariant& result, const ttstr& key)
         return;
     }
     result = CurrentNode;
-}
-//---------------------------------------------------------------------------
-
-//---------------------------------------------------------------------------
-// TVPGetPersonalPath
-//---------------------------------------------------------------------------
-ttstr TVPGetPersonalPath()
-{
-    return TVPGetAppPath();
-}
-//---------------------------------------------------------------------------
-
-//---------------------------------------------------------------------------
-// TVPGetAppDataPath
-//---------------------------------------------------------------------------
-ttstr TVPGetAppDataPath()
-{
-    return TVPGetAppPath();
-}
-//---------------------------------------------------------------------------
-
-//---------------------------------------------------------------------------
-// TVPGetSavedGamesPath
-//---------------------------------------------------------------------------
-ttstr TVPGetSavedGamesPath()
-{
-    return TVPGetAppPath();
 }
 //---------------------------------------------------------------------------
 
@@ -360,21 +331,11 @@ extern void TVPDoSaveSystemVariables()
 }
 
 //---------------------------------------------------------------------------
-// global data
-//---------------------------------------------------------------------------
-ttstr TVPProjectDir; // project directory (in unified storage name)
-ttstr TVPDataPath;   // data directory (in unified storage name)
-//---------------------------------------------------------------------------
-
-extern void TVPGL_C_Init();
-//---------------------------------------------------------------------------
 // TVPSystemInit : Entire System Initialization
 //---------------------------------------------------------------------------
 void TVPSystemInit(void)
 {
     TVPBeforeSystemInit();
-
-    TVPInitScriptEngine();
 
     TVPInitTVPGL();
 
@@ -460,8 +421,6 @@ static void TVPCauseAtExit()
 //---------------------------------------------------------------------------
 // global data
 //---------------------------------------------------------------------------
-ttstr TVPNativeProjectDir;
-ttstr TVPNativeDataPath;
 bool TVPProjectDirSelected = false;
 //---------------------------------------------------------------------------
 
@@ -1192,7 +1151,7 @@ void TVPDumpHWException(void)
 //---------------------------------------------------------------------------
 static void TVPInitRandomGenerator()
 {
-    tjs_uint32 tick = TVPGetRoughTickCount32();
+    tjs_uint64 tick = TVPGetRoughTickCount();
     TVPPushEnvironNoise(&tick, sizeof(tick));
     uint64_t tid = TVPGetCurrentThreadID();
     TVPPushEnvironNoise(&tid, sizeof(tid));
@@ -1212,9 +1171,7 @@ void TVPInitializeBaseSystems()
         TVPArchiveDelimiter = ttstr(v)[0];
 
     // set default current directory
-    {
-        TVPSetCurrentDirectory(IncludeTrailingBackslash(ExePath()));
-    }
+    TVPSetCurrentDirectory(IncludeTrailingBackslash(TVPProjectDir));
 
     // load message map file
     bool load_msgmap = GetSystemSecurityOption("disablemsgmap") == 0;
@@ -1239,15 +1196,11 @@ void TVPBeforeSystemInit()
     if (TVPGetCommandLine(TJS_N("-arcdelim"), &v))
         TVPArchiveDelimiter = ttstr(v)[0];
 
-    if (TVPIsExistentStorageNoSearchNoNormalize(TVPProjectDir))
+    if (TVPIsExistentStorageNoSearchNoNormalize(TVPProjectData))
     {
-        TVPProjectDir += TVPArchiveDelimiter;
+        TVPProjectData += TVPArchiveDelimiter;
     }
-    else
-    {
-        TVPProjectDir += TJS_N("/");
-    }
-    TVPSetCurrentDirectory(TVPProjectDir);
+    TVPSetCurrentDirectory(TVPProjectData);
 
 #ifdef TVP_REPORT_HW_EXCEPTION
     // __dee_hacked_set_getExceptionObjectHook(TVP__dee_hacked_getExceptionObjectHook);

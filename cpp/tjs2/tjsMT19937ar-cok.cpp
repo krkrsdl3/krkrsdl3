@@ -317,7 +317,7 @@ tTJSMersenneTwister& tTJSMersenneTwister::sharedInstance()
 {
     static tTJSMersenneTwister* instance = nullptr;
     if (!instance)
-        instance = new tTJSMersenneTwister(TVPGetRoughTickCount32());
+        instance = new tTJSMersenneTwister(TVPGetRoughTickCount());
     return *instance;
 }
 

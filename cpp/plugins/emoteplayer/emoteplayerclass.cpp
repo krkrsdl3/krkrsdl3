@@ -2,7 +2,6 @@
 #include "emoteplayerclass.h"
 #include "tjsArray.h"
 #include "TVPStorage.h"
-#include "TickCount.h"
 #include "Platform.h"
 
 #include "tjsCommHead.h"

@@ -4,6 +4,7 @@
 #include "TVPMsg.h"
 #include "TVPStorage.h"
 #include "TVPEvent.h"
+#include "Platform.h"
 #include "PlatformVideo.h"
 #include "krnull.h"
 
@@ -23,6 +24,7 @@ static void TryCreateOverlay(tTJSNI_VideoOverlay* callbackwin,
                               uint64_t /*size*/,
                               iTVPVideoOverlay** out)
 {
+    TVPConsoleLog("CreateOverlay----->%s", streamname);
     OverlayVideoPlayer* player = CreateOverlayVideoPlayer();
     if (player && player->OpenStream(stream, ttstr(streamname))) {
         *out = player;

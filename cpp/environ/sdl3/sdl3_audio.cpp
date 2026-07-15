@@ -2,7 +2,6 @@
 #include "PlatformAudio.h"
 #include "PlatformMutex.h"
 #include "TVPSystem.h"
-#include "TickCount.h"
 #include "TVPDebug.h"
 #include <iomanip>
 #include <unordered_set>

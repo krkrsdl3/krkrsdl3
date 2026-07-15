@@ -1,11 +1,11 @@
 #include "tjsNativeTimer.h"
 
-#include "TickCount.h"
 #include "TVPSystem.h"
 #include "PlatformThread.h"
 #include "PlatformMutex.h"
 #include "NativeEventQueue.h"
 #include "TVPSettings.h"
+#include "Platform.h"
 
 #include <algorithm>
 
@@ -416,7 +416,6 @@ void tTVPTimerThread::Init()
 {
     if (!TVPTimerThread)
     {
-        TVPStartTickCount(); // in TickCount.cpp
         TVPTimerThread = new tTVPTimerThread();
     }
 }

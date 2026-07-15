@@ -1,19 +1,6 @@
-//---------------------------------------------------------------------------
-/*
-        TVP2 ( T Visual Presenter 2 )  A script authoring tool
-        Copyright (C) 2000 W.Dee <dee@kikyou.info> and contributors
-
-        See details of license at "license.txt"
-*/
-//---------------------------------------------------------------------------
-// WASM 原生视频播放 — 基于浏览器 &lt;video&gt; 元素的实现。
-//
-// 使用场景：
-//   - Overlay 模式：把 &lt;video&gt; 元素覆盖在 canvas 上显示
-//   - Layer 模式：从 &lt;video&gt; 捕获帧并以 RGBA 像素数据输出
-//
-// 依赖浏览器原生解码能力（MP4/WebM/OGV），无需 FFmpeg。
-//---------------------------------------------------------------------------
+﻿// WASM video player 鈥?browser <video> element based
+// Overlay mode: <video> element positioned over canvas (self-displayed)
+// Layer mode:  captures frames via canvas drawImage 鈫?GetFrontBuffer
 
 #include "tjsCommHead.h"
 #include "PlatformVideo.h"
@@ -22,10 +9,12 @@
 #include "TVPStorage.h"
 #include "TVPDebug.h"
 #include "LayerBitmap.h"
+#include "tjsNativeVideoOverlay.h"
+#include "TVPEvent.h"
 
 #include <emscripten.h>
 #include <emscripten/html5.h>
-
+#include <unistd.h>
 #include <thread>
 #include <vector>
 #include <atomic>
@@ -33,223 +22,160 @@
 #include <string>
 
 // ============================================================
-// JS 辅助函数
+// JS helpers
 // ============================================================
-
-// 从 WASM 内存创建一个 Blob URL 供 &lt;video&gt; 加载
-EM_JS(char*, wasmVideoCreateBlob, (const char* mime, int dataAddr, int dataLen), {
+EM_ASYNC_JS(int, wasmCreateVideo, (const char* mime, int dataAddr, int dataLen), {
     try {
-        var data = new Uint8Array(Module.HEAPU8.buffer, dataAddr, dataLen);
-        var blob = new Blob([data], { type: UTF8ToString(mime) });
+        var src = HEAPU8.slice(dataAddr, dataAddr + dataLen);
+        var copy = new Uint8Array(src.length); copy.set(src);
+        var blob = new Blob([copy], {type:UTF8ToString(mime)});
         var url = URL.createObjectURL(blob);
-        // 返回 URL 字符串（需用 free 释放）
-        var len = lengthBytesUTF8(url) + 1;
-        var ptr = Module._malloc(len);
-        stringToUTF8(url, ptr, len);
-        return ptr;
-    } catch(e) {
-        console.log('[wasm_video] createBlob error:', e);
-        return 0;
-    }
-});
-
-EM_JS(void, wasmVideoFreeBlob, (const char* url), {
-    try {
-        URL.revokeObjectURL(UTF8ToString(url));
-    } catch(e) {}
-});
-
-// 创建 &lt;video&gt; 元素（隐藏，用于解码）
-EM_JS(int, wasmVideoCreateElement, (const char* url), {
-    try {
-        var el = document.createElement('video');
-        el.crossOrigin = 'anonymous';
-        el.preload = 'auto';
-        el.muted = true;   // 避免浏览器自动播放限制
-        el.playsInline = true;
-        el.src = UTF8ToString(url);
+        var el = document.getElementById('wasm-video');
+        el.src = url;
+        el.style.pointerEvents = 'none';
+        el.addEventListener('play', function once(){ el.muted = false; }, {once:true});
+        el.addEventListener('canplay', function(){ el.muted = false; }, {once:true});
         el.load();
-        // 存储到全局数组以便后续操作
-        if (!window.__wasmVideoEls) window.__wasmVideoEls = [];
-        window.__wasmVideoEls.push(el);
-        var id = window.__wasmVideoEls.length - 1;
-        // 监听元数据加载完成
-        return id;
-    } catch(e) {
-        console.log('[wasm_video] createElement error:', e);
-        return -1;
-    }
+        return 0;
+    } catch(e) { console.error('[video] create:', e.message); return -1; }
 });
 
-// 显示/隐藏 overlay 视频元素
-EM_JS(void, wasmVideoShowOverlay, (int vid, int show), {
+EM_JS(void, wasmVideoDump, (int vid), {
     try {
-        var el = window.__wasmVideoEls[vid];
+        var el = document.getElementById('wasm-video');
+        if (!el) { console.log('[video] dump: null'); return; }
+        var s = el.style;
+        console.log('[video] dump:',
+            'inDOM=' + (el.parentNode ? 1 : 0),
+            'display=' + s.display,
+            'zIndex=' + s.zIndex,
+            'pos=' + s.position,
+            'rect=' + s.left + ',' + s.top + ' ' + s.width + 'x' + s.height,
+            'readyState=' + el.readyState,
+            'networkState=' + el.networkState,
+            'paused=' + el.paused,
+            'ended=' + el.ended,
+            'error=' + (el.error ? el.error.code + ':' + el.error.message : 'null'),
+            'videoWidth=' + el.videoWidth,
+            'videoHeight=' + el.videoHeight,
+            'duration=' + el.duration,
+            'currentTime=' + el.currentTime,
+            'src=' + (el.src ? el.src.substring(0, 50) : 'null')
+        );
+    } catch(e) { console.log('[video] dump error:', e); }
+});
+
+EM_JS(int, wasmVideoEvents, (int vid), {
+    try { var el = document.getElementById('wasm-video'); return el ? el.__events || 0 : -1; } catch(e) { return -1; }
+});
+EM_JS(void, wasmVideoPlay, (int id), { try { var e = document.getElementById('wasm-video'); if (e) { if (e.readyState === 0) e.load(); e.play().catch(function(){}); } } catch(e) {} });
+EM_JS(void, wasmVideoPause, (int id), { try { var e = document.getElementById('wasm-video'); if (e) e.pause(); } catch(e) {} });
+EM_JS(void, wasmVideoStop, (int id), { try { var e = document.getElementById('wasm-video'); if (e) { e.pause(); e.currentTime = 0; } } catch(e) {} });
+EM_JS(double, wasmVideoDur, (int id), { try { return document.getElementById('wasm-video') ? document.getElementById('wasm-video').duration : 0; } catch(e) { return 0; } });
+EM_JS(double, wasmVideoTime, (int id), { try { return document.getElementById('wasm-video') ? document.getElementById('wasm-video').currentTime : 0; } catch(e) { return 0; } });
+EM_JS(void, wasmVideoSeek, (int id, double t), { try { var e = document.getElementById('wasm-video'); if (e) e.currentTime = t; } catch(e) {} });
+EM_JS(int, wasmVideoEnded, (int id), { try { var e = document.getElementById('wasm-video'); return e ? (e.ended ? 1 : 0) : 0; } catch(e) { return 0; } });
+EM_JS(int, wasmVideoWidth, (int id), { try { var e = document.getElementById('wasm-video'); return e ? (e.videoWidth || 0) : 0; } catch(e) { return 0; } });
+EM_JS(int, wasmVideoHeight, (int id), { try { var e = document.getElementById('wasm-video'); return e ? (e.videoHeight || 0) : 0; } catch(e) { return 0; } });
+EM_JS(int, wasmVideoReady, (int id), { try { var e = document.getElementById('wasm-video'); return e ? (e.readyState || 0) : 0; } catch(e) { return 0; } });
+EM_JS(void, wasmShowOverlay, (int vid, int show, int l, int t, int r, int b), {
+    try {
+        var el = document.getElementById('wasm-video-wrap');
         if (!el) return;
-        if (show) {
-            el.style.position = 'fixed';
-            el.style.top = '0';
-            el.style.left = '0';
-            el.style.width = '100vw';
-            el.style.height = '100vh';
-            el.style.objectFit = 'contain';
-            el.style.zIndex = '999';
-            el.style.pointerEvents = 'none';
-            el.style.background = 'transparent';
-            document.body.appendChild(el);
-        } else {
-            if (el.parentNode) el.parentNode.removeChild(el);
-        }
-    } catch(e) {
-        console.log('[wasm_video] showOverlay error:', e);
-    }
-});
-
-EM_JS(void, wasmVideoPlay, (int vid), {
-    try { var el = window.__wasmVideoEls[vid]; if (el) el.play(); } catch(e) {}
-});
-
-EM_JS(void, wasmVideoPause, (int vid), {
-    try { var el = window.__wasmVideoEls[vid]; if (el) el.pause(); } catch(e) {}
-});
-
-EM_JS(void, wasmVideoStop, (int vid), {
-    try {
-        var el = window.__wasmVideoEls[vid];
-        if (el) { el.pause(); el.currentTime = 0; }
+        el.style.display = show ? 'block' : 'none';
     } catch(e) {}
 });
-
-EM_JS(double, wasmVideoGetDuration, (int vid), {
-    try { var el = window.__wasmVideoEls[vid]; return el ? el.duration : 0; } catch(e) { return 0; }
-});
-
-EM_JS(double, wasmVideoGetCurrentTime, (int vid), {
-    try { var el = window.__wasmVideoEls[vid]; return el ? el.currentTime : 0; } catch(e) { return 0; }
-});
-
-EM_JS(void, wasmVideoSetCurrentTime, (int vid, double t), {
-    try { var el = window.__wasmVideoEls[vid]; if (el) el.currentTime = t; } catch(e) {}
-});
-
-EM_JS(int, wasmVideoGetReadyState, (int vid), {
-    try { var el = window.__wasmVideoEls[vid]; return el ? el.readyState : 0; } catch(e) { return 0; }
-});
-
-EM_JS(int, wasmVideoGetEnded, (int vid), {
-    try { var el = window.__wasmVideoEls[vid]; return el ? (el.ended ? 1 : 0) : 0; } catch(e) { return 0; }
-});
-
-EM_JS(int, wasmVideoGetWidth, (int vid), {
-    try { var el = window.__wasmVideoEls[vid]; return el ? (el.videoWidth || 0) : 0; } catch(e) { return 0; }
-});
-
-EM_JS(int, wasmVideoGetHeight, (int vid), {
-    try { var el = window.__wasmVideoEls[vid]; return el ? (el.videoHeight || 0) : 0; } catch(e) { return 0; }
-});
-
-// 从 &lt;video&gt; 捕获当前帧到 RGBA 缓冲区（layer 模式用）
-EM_JS(int, wasmVideoCaptureFrame, (int vid, int rgbaAddr, int bufSize), {
+EM_JS(int, wasmCaptureFrame, (int id, int buf, int size), {
     try {
-        var el = window.__wasmVideoEls[vid];
-        if (!el || !el.videoWidth || !el.videoHeight) return 0;
-        var w = el.videoWidth, h = el.videoHeight;
-        var needed = w * h * 4;
-        if (needed > bufSize) return 0;
-        // 使用离屏 canvas 绘制视频帧
-        if (!window.__wasmVideoCanvas) {
-            window.__wasmVideoCanvas = document.createElement('canvas');
-            window.__wasmVideoCtx = window.__wasmVideoCanvas.getContext('2d');
-        }
-        window.__wasmVideoCanvas.width = w;
-        window.__wasmVideoCanvas.height = h;
-        if (el.readyState < 1) return 0;
-        window.__wasmVideoCtx.drawImage(el, 0, 0, w, h);
-        var imageData = window.__wasmVideoCtx.getImageData(0, 0, w, h);
-        var dst = new Uint8Array(Module.HEAPU8.buffer, rgbaAddr, needed);
-        dst.set(imageData.data);
+        var el = document.getElementById('wasm-video'); if (!el || !el.videoWidth) return 0;
+        if (!window.__vctx) { window.__vc = document.createElement('canvas'); window.__vctx = window.__vc.getContext('2d'); }
+        var w = el.videoWidth, h = el.videoHeight, n = w * h * 4;
+        if (n > size) return 0;
+        window.__vc.width = w; window.__vc.height = h;
+        window.__vctx.drawImage(el, 0, 0, w, h);
+        var d = new Uint8Array(Module.HEAPU8.buffer, buf, n);
+        d.set(window.__vctx.getImageData(0, 0, w, h).data);
         return 1;
-    } catch(e) {
-        console.log('[wasm_video] captureFrame error:', e);
-        return 0;
-    }
+    } catch(e) { console.log('[video] capture:', e); return 0; }
 });
 
 // ============================================================
-// WasmVideoPlayer — 同时实现 OverlayVideoPlayer 与 LayerVideoPlayer
+// WasmVideoPlayer
 // ============================================================
-class WasmVideoPlayer : public OverlayVideoPlayer, public LayerVideoPlayer
+class WasmVideoPlayer : public OverlayVideoPlayer, public LayerVideoPlayer,
+                        public tTVPContinuousEventCallbackIntf
 {
     uint32_t ref = 1;
+    tTJSNI_VideoOverlay* m_cb = nullptr;
 
-    // 视频数据
     uint8_t* streamData = nullptr;
     size_t streamSize = 0;
-    char* blobUrl = nullptr;
-    char* mimeType = nullptr;
-
-    // 视频元素 ID
     int videoId = -1;
-
-    // 视频信息
-    int vWidth = 0, vHeight = 0;
+    int vW = 0, vH = 0;
     double duration = 0;
-
-    // 播放状态
-    std::atomic<bool> playing{false};
-    std::atomic<bool> paused{false};
-    std::atomic<bool> ended{false};
-    std::atomic<int> pendingSeek{-1}; // ms
-
-    // Layer 模式输出缓冲
-    tTVPBaseTexture* bmp[2] = {};
-    long bmpSize = 0;
     std::vector<uint8_t> rgbaScratch;
 
-    // Overlay 模式标记
     bool overlayVisible = false;
+    bool hasEnded = false;
+    bool _metadataReady = false;
+    int _lastL = 0, _lastT = 0, _lastR = 0, _lastB = 0;
 
 public:
-    WasmVideoPlayer() {}
-    ~WasmVideoPlayer() { Close(); }
+    WasmVideoPlayer() { TVPAddLog(ttstr(TJS_N("[wasm_video] constructed"))); }
+    ~WasmVideoPlayer()
+    {
+        TVPRemoveContinuousEventHook(this);
+        Close();
+        TVPAddLog(ttstr(TJS_N("[wasm_video] destroyed")));
+    }
 
     void Close()
     {
-        playing = false; paused = false; ended = true;
-        if (videoId >= 0) {
-            wasmVideoStop(videoId);
-            wasmVideoShowOverlay(videoId, 0);
-        }
-        if (blobUrl) { wasmVideoFreeBlob(blobUrl); free(blobUrl); blobUrl = nullptr; }
-        if (mimeType) { free(mimeType); mimeType = nullptr; }
+        if (videoId >= 0) { wasmVideoStop(0); wasmShowOverlay(0, 0, 0, 0, 0, 0); }
         delete[] streamData; streamData = nullptr;
+        overlayVisible = false;
     }
 
-    // ── 工具：从流名推断 MIME ──────────────────────────────
-    static const char* GuessMime(const ttstr& streamname)
+    // 鈹€鈹€ OverlayVideoPlayer 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    void SetWindow(class tTJSNI_Window* w) override
     {
-        ttstr ext = TVPExtractStorageExt(streamname);
-        ext.ToLowerCase();
-        if (ext == TJS_N(".mp4"))  return "video/mp4";
-        if (ext == TJS_N(".webm")) return "video/webm";
-        if (ext == TJS_N(".ogv"))  return "video/ogg";
-        if (ext == TJS_N(".mkv"))  return "video/x-matroska";
-        if (ext == TJS_N(".avi"))  return "video/avi";
-        if (ext == TJS_N(".mov"))  return "video/quicktime";
-        if (ext == TJS_N(".mpg") || ext == TJS_N(".mpeg")) return "video/mpeg";
-        return "video/mp4";
+        TVPAddLog(ttstr(TJS_N("[wasm_video] SetWindow")));
+    }
+    void SetMessageDrainWindow(void* w) override
+    {
+        m_cb = (tTJSNI_VideoOverlay*)w;
+        TVPAddLog(ttstr(TJS_N("[wasm_video] SetMessageDrainWindow cb=")) + ttstr((int64_t)(intptr_t)w));
     }
 
-    // ── OpenStream ──────────────────────────────────────────
+    void SetRect(int l, int t, int r, int b) override
+    {
+        _lastL = l; _lastT = t; _lastR = r; _lastB = b;
+        TVPAddLog(ttstr(TJS_N("[wasm_video] SetRect ")) + ttstr(l) + ttstr(TJS_N(",")) + ttstr(t) +
+                  ttstr(TJS_N(",")) + ttstr(r) + ttstr(TJS_N(",")) + ttstr(b));
+        if (overlayVisible && videoId >= 0)
+            wasmShowOverlay(videoId, 1, l, t, r, b);
+    }
+
+    void SetVisible(bool v) override
+    {
+        TVPAddLog(ttstr(TJS_N("[wasm_video] SetVisible ")) + ttstr((int)v));
+        overlayVisible = v;
+        if (videoId >= 0)
+            wasmShowOverlay(videoId, v ? 1 : 0, _lastL, _lastT, _lastR, _lastB);
+    }
+
     bool OpenStream(TJS::tTJSBinaryStream* stream, const ttstr& streamname) override
     {
-        // 读取全部流数据到内存
+        TVPAddLog(ttstr(TJS_N("[wasm_video] OpenStream ")) + streamname);
+        if (!stream) { TVPAddLog(ttstr(TJS_N("[wasm_video]   ERROR: null stream"))); return false; }
         streamSize = (size_t)stream->GetSize();
-        if (streamSize == 0 || streamSize > 200 * 1024 * 1024) {
-            TVPAddLog(ttstr(TJS_W("wasm_video: stream too large or empty")));
+        TVPAddLog(ttstr(TJS_N("[wasm_video]   streamSize=")) + ttstr((int)streamSize));
+        if (streamSize == 0 || streamSize > 500 * 1024 * 1024) {
+            TVPAddLog(ttstr(TJS_N("[wasm_video]   ERROR: bad size")));
             return false;
         }
         streamData = new uint8_t[streamSize];
+        if (!streamData) { TVPAddLog(ttstr(TJS_N("[wasm_video]   ERROR: alloc failed"))); return false; }
         stream->SetPosition(0);
         size_t total = 0;
         while (total < streamSize) {
@@ -258,214 +184,161 @@ public:
             total += n;
         }
         if (total != streamSize) {
-            TVPAddLog(ttstr(TJS_W("wasm_video: failed to read entire stream")));
-            delete[] streamData; streamData = nullptr;
-            return false;
+            TVPAddLog(ttstr(TJS_N("[wasm_video]   ERROR: read only ")) + ttstr((int)total) + ttstr(TJS_N("/")) + ttstr((int)streamSize));
+            delete[] streamData; streamData = nullptr; return false;
         }
+        TVPAddLog(ttstr(TJS_N("[wasm_video]   read OK, ")) + ttstr((int)streamSize) + ttstr(TJS_N(" bytes")));
 
-        // 推断 MIME 类型
-        const char* mime = GuessMime(streamname);
-        mimeType = (char*)malloc(strlen(mime) + 1);
-        strcpy(mimeType, mime);
+        ttstr ext = TVPExtractStorageExt(streamname);
+        ext.ToLowerCase();
+        const char* mime = "video/mp4";
+        if (ext == TJS_N(".webm")) mime = "video/webm";
+        else if (ext == TJS_N(".ogv")) mime = "video/ogg";
+        else if (ext == TJS_N(".mpg") || ext == TJS_N(".mpeg")) mime = "video/mpeg";
+        TVPAddLog(ttstr(TJS_N("[wasm_video]   mime=")) + ttstr(mime));
+        TVPAddLog(ttstr(TJS_N("[wasm_video]   streaming ")) + ttstr((int)streamSize) + TJS_N(" bytes to video"));
 
-        // 创建 Blob URL
-        blobUrl = (char*)wasmVideoCreateBlob(mime, (int)(uintptr_t)streamData, (int)streamSize);
-        if (!blobUrl) {
-            TVPAddLog(ttstr(TJS_W("wasm_video: failed to create blob URL")));
-            delete[] streamData; streamData = nullptr;
-            return false;
-        }
-
-        // 创建视频元素
-        videoId = wasmVideoCreateElement(blobUrl);
+        // Pass data directly — EM_ASYNC_JS copies from HEAP to regular ArrayBuffer in JS
+        videoId = wasmCreateVideo(mime, (int)(uintptr_t)streamData, (int)streamSize);
         if (videoId < 0) {
-            TVPAddLog(ttstr(TJS_W("wasm_video: failed to create video element")));
-            wasmVideoFreeBlob(blobUrl); free(blobUrl); blobUrl = nullptr;
-            delete[] streamData; streamData = nullptr;
-            return false;
+            TVPAddLog(ttstr(TJS_N("[wasm_video]   ERROR: createVideo failed")));
+            delete[] streamData; streamData = nullptr; return false;
         }
+        TVPAddLog(ttstr(TJS_N("[wasm_video]   videoId=")) + ttstr(videoId));
 
-        // 等待元数据加载完成
-        // 用轮询方式等待 readyState >= 1 (HAVE_METADATA)
-        for (int i = 0; i < 200; i++) {
-            if (wasmVideoGetReadyState(videoId) >= 1) break;
-            emscripten_sleep(50);
-        }
-
-        vWidth = wasmVideoGetWidth(videoId);
-        vHeight = wasmVideoGetHeight(videoId);
-        duration = wasmVideoGetDuration(videoId);
-
-        TVPAddLog(ttstr(TJS_W("wasm_video: opened ")) + streamname +
-                  ttstr(TJS_W(" (")) + ttstr((int)vWidth) + ttstr(TJS_W("x")) + ttstr((int)vHeight) +
-                  ttstr(TJS_W(", ")) + ttstr((int)duration) + ttstr(TJS_W("s)")));
-
-        if (vWidth > 0 && vHeight > 0)
-            rgbaScratch.resize(vWidth * vHeight * 4);
-
+        // Don't block — metadata/error arrive via browser event loop which
+        // can't run while emscripten_sleep blocks the main thread.
+        // Just return true and check in OnContinuousCallback.
+        TVPAddLog(ttstr(TJS_N("[wasm_video]   opened (async metadata)")));
         return true;
     }
 
-    // ── iTVPVideoOverlay ────────────────────────────────────
+    // 鈹€鈹€ iTVPVideoOverlay 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
     void AddRef() override { ref++; }
     void Release() override { if (--ref == 0) delete this; }
-
-    void SetWindow(class tTJSNI_Window*) override {}
-    void SetMessageDrainWindow(void*) override {}
-    void SetRect(int l, int t, int r, int b) override {}
-    void SetVisible(bool v) override {}
 
     void Play() override
     {
         if (videoId < 0) return;
-        if (wasmVideoGetEnded(videoId)) {
-            wasmVideoSetCurrentTime(videoId, 0);
-        }
+        TVPAddLog(ttstr(TJS_N("[wasm_video] Play")));
+        TVPAddContinuousEventHook(this);
+        if (wasmVideoEnded(videoId)) wasmVideoSeek(videoId, 0);
         wasmVideoPlay(videoId);
-        wasmVideoShowOverlay(videoId, 1);
-        overlayVisible = true;
-        playing = true; paused = false; ended = false;
+        if (overlayVisible) wasmShowOverlay(videoId, 1, _lastL, _lastT, _lastR, _lastB);
+        hasEnded = false;
     }
 
     void Stop() override
     {
-        if (videoId < 0) return;
-        wasmVideoStop(videoId);
-        wasmVideoShowOverlay(videoId, 0);
+        TVPAddLog(ttstr(TJS_N("[wasm_video] Stop")));
+        if (videoId >= 0) { wasmVideoStop(videoId); wasmShowOverlay(videoId, 0, 0, 0, 0, 0); }
         overlayVisible = false;
-        playing = false; paused = false; ended = true;
     }
 
     void Pause() override
     {
-        if (videoId < 0) return;
-        wasmVideoPause(videoId);
-        paused = true; playing = false;
+        TVPAddLog(ttstr(TJS_N("[wasm_video] Pause")));
+        if (videoId >= 0) wasmVideoPause(videoId);
     }
 
     void SetPosition(uint64_t tick) override
     {
-        if (videoId < 0) return;
-        // tick in ms -> seconds
-        wasmVideoSetCurrentTime(videoId, tick / 1000.0);
+        if (videoId >= 0) wasmVideoSeek(videoId, tick / 1000.0);
     }
-
     void GetPosition(uint64_t* tick) override
     {
-        if (!tick) return;
-        if (videoId < 0) { *tick = 0; return; }
-        *tick = (uint64_t)(wasmVideoGetCurrentTime(videoId) * 1000.0);
+        *tick = videoId >= 0 ? (uint64_t)(wasmVideoTime(videoId) * 1000.0) : 0;
     }
-
     void GetStatus(tTVPVideoStatus* s) override
     {
         if (!s) return;
-        if (videoId < 0) { *s = vsStopped; return; }
-        if (wasmVideoGetEnded(videoId)) { *s = vsEnded; return; }
-        if (paused) { *s = vsPaused; return; }
-        if (playing) { *s = vsPlaying; return; }
-        *s = vsStopped;
+        if (videoId < 0 || hasEnded) { *s = vsStopped; return; }
+        if (wasmVideoEnded(videoId)) { *s = vsEnded; return; }
+        *s = vsPlaying;
     }
-
-    void Rewind() override
-    {
-        if (videoId >= 0) wasmVideoSetCurrentTime(videoId, 0);
-        ended = false;
-    }
-
-    void SetFrame(int f) override
-    {
-        // 近似帧定位
-        double fps = 30.0;
-        if (videoId >= 0)
-            wasmVideoSetCurrentTime(videoId, f / fps);
-    }
-
-    void GetFrame(int* f) override
-    {
-        if (!f) return;
-        double t = (videoId >= 0) ? wasmVideoGetCurrentTime(videoId) : 0;
-        *f = (int)(t * 30.0); // 近似 30fps
-    }
-
-    void GetFPS(double* fps) override { if (fps) *fps = 30.0; }
-
-    void GetNumberOfFrame(int* n) override
-    {
-        if (!n) return;
-        if (duration > 0) *n = (int)(duration * 30.0);
-        else *n = 0;
-    }
-
-    void GetTotalTime(int64_t* t) override
-    {
-        if (!t) return;
-        *t = (int64_t)(duration * 1000.0);
-    }
-
-    void GetVideoSize(long* w, long* h) override
-    {
-        if (w) *w = vWidth;
-        if (h) *h = vHeight;
-    }
+    void Rewind() override { if (videoId >= 0) wasmVideoSeek(videoId, 0); hasEnded = false; }
+    void SetFrame(int f) override { if (videoId >= 0) wasmVideoSeek(videoId, f / 30.0); }
+    void GetFrame(int* f) override { *f = videoId >= 0 ? (int)(wasmVideoTime(videoId) * 30.0) : 0; }
+    void GetFPS(double* f) override { *f = 30.0; }
+    void GetNumberOfFrame(int* n) override { *n = (int)(duration * 30.0); }
+    void GetTotalTime(int64_t* t) override { *t = (int64_t)(duration * 1000.0); }
+    void GetVideoSize(long* w, long* h) override { if (w) *w = vW; if (h) *h = vH; }
 
     tTVPBaseTexture* GetFrontBuffer() override
     {
-        if (videoId < 0 || vWidth <= 0 || vHeight <= 0) return nullptr;
-        // 捕获当前帧到 scratch buffer
-        int capOk = wasmVideoCaptureFrame(videoId,
-            (int)(uintptr_t)rgbaScratch.data(),
-            (int)rgbaScratch.size());
-        if (!capOk) return nullptr;
-        // 更新纹理
-        if (bmp[0]) {
-            bmp[0]->Update(rgbaScratch.data(), vWidth * 4, 0, 0, vWidth, vHeight);
-            return bmp[0];
-        }
-        return nullptr;
+        if (videoId < 0 || vW <= 0) return nullptr;
+        int ok = wasmCaptureFrame(videoId, (int)(uintptr_t)rgbaScratch.data(), (int)rgbaScratch.size());
+        if (!ok) return nullptr;
+        return nullptr; // layer mode: caller should manage texture output
     }
 
-    void SetVideoBuffer(tTVPBaseTexture* b1, tTVPBaseTexture* b2, long size) override
-    {
-        bmp[0] = b1; bmp[1] = b2; bmpSize = size;
-    }
+    void SetVideoBuffer(tTVPBaseTexture* b1, tTVPBaseTexture* b2, long size) override {}
 
     void OnContinuousCallback(tjs_uint64 tick) override
     {
-        // 检查视频是否结束
-        if (playing && videoId >= 0 && wasmVideoGetEnded(videoId)) {
-            playing = false;
-            ended = true;
-            if (overlayVisible) {
-                wasmVideoShowOverlay(videoId, 0);
-                overlayVisible = false;
-            }
+        if (videoId < 0) return;
+
+        static int _dumpCtr = 0;
+        if (++_dumpCtr % 120 == 1) wasmVideoDump(videoId);
+        int ev = wasmVideoEvents(videoId);
+        int rs = wasmVideoReady(videoId);
+
+        // Check if metadata just arrived
+        if (!_metadataReady && rs >= 1) {
+            vW = wasmVideoWidth(videoId);
+            vH = wasmVideoHeight(videoId);
+            duration = wasmVideoDur(videoId);
+            _metadataReady = true;
+            if (vW > 0) rgbaScratch.resize(vW * vH * 4);
+            TVPAddLog(ttstr(TJS_N("[wasm_video] metadata ready ")) + ttstr(vW) + ttstr(TJS_N("x")) + ttstr(vH));
+        }
+
+        // Check for decode error
+        if (ev & 8 && !hasEnded) {
+            hasEnded = true;
+            TVPAddLog(ttstr(TJS_N("[wasm_video] browser decode error, posting EC_COMPLETE")));
+            if (m_cb) { NativeEvent ev(WM_GRAPHNOTIFY); ev.WParam = EC_COMPLETE; ev.LParam = 0; m_cb->PostEvent(ev); }
+            if (overlayVisible) { wasmShowOverlay(videoId, 0, 0, 0, 0, 0); overlayVisible = false; }
+            return;
+        }
+
+        if (wasmVideoEnded(videoId) && !hasEnded) {
+            hasEnded = true;
+            TVPAddLog(ttstr(TJS_N("[wasm_video] ended, posting EC_COMPLETE")));
+            if (m_cb) { NativeEvent ev(WM_GRAPHNOTIFY); ev.WParam = EC_COMPLETE; ev.LParam = 0; m_cb->PostEvent(ev); }
+            if (overlayVisible) { wasmShowOverlay(videoId, 0, 0, 0, 0, 0); overlayVisible = false; }
+        }
+        else if (!hasEnded && m_cb && rs >= 1) {
+            NativeEvent ev(WM_GRAPHNOTIFY);
+            ev.WParam = EC_UPDATE;
+            ev.LParam = (int)(wasmVideoTime(videoId) * 30.0);
+            m_cb->WndProc(ev);
         }
     }
 
     void SetStopFrame(int) override {}
-    void GetStopFrame(int* f) override { if (f) *f = 0; }
+    void GetStopFrame(int* f) override { *f = 0; }
     void SetDefaultStopFrame() override {}
     void SetPlayRate(double) override {}
-    void GetPlayRate(double* r) override { if (r) *r = 1.0; }
+    void GetPlayRate(double* r) override { *r = 1.0; }
     void SetAudioBalance(long) override {}
-    void GetAudioBalance(long* b) override { if (b) *b = 0; }
+    void GetAudioBalance(long* b) override { *b = 0; }
     void SetAudioVolume(long) override {}
-    void GetAudioVolume(long* v) override { if (v) *v = 100; }
-    void GetNumberOfAudioStream(unsigned long* c) override { if (c) *c = 1; }
+    void GetAudioVolume(long* v) override { *v = 100; }
+    void GetNumberOfAudioStream(unsigned long* c) override { *c = 1; }
     void SelectAudioStream(unsigned long) override {}
-    void GetEnableAudioStreamNum(long* n) override { if (n) *n = 0; }
+    void GetEnableAudioStreamNum(long* n) override { *n = 0; }
     void DisableAudioStream() override {}
-    void GetNumberOfVideoStream(unsigned long* c) override { if (c) *c = 1; }
+    void GetNumberOfVideoStream(unsigned long* c) override { *c = 1; }
     void SelectVideoStream(unsigned long) override {}
-    void GetEnableVideoStreamNum(long* n) override { if (n) *n = 1; }
+    void GetEnableVideoStreamNum(long* n) override { *n = 1; }
     void SetLoopSegement(int, int) override {}
     void SetMixingBitmap(class tTVPBaseTexture* dest, float alpha) override {}
     void ResetMixingBitmap() override {}
     void SetMixingMovieAlpha(float) override {}
-    void GetMixingMovieAlpha(float* a) override { if (a) *a = 1.0f; }
+    void GetMixingMovieAlpha(float* a) override { *a = 1.0f; }
     void SetMixingMovieBGColor(unsigned long) override {}
-    void GetMixingMovieBGColor(unsigned long* c) override { if (c) *c = 0xFF000000; }
+    void GetMixingMovieBGColor(unsigned long* c) override { *c = 0xFF000000; }
     void PresentVideoImage() override {}
 
     void GetContrastRangeMin(float* v) override { if (v) *v = -1.0f; }
@@ -474,21 +347,18 @@ public:
     void GetContrastStepSize(float* v) override { if (v) *v = 0.01f; }
     void GetContrast(float* v) override { if (v) *v = 0.0f; }
     void SetContrast(float) override {}
-
     void GetBrightnessRangeMin(float* v) override { if (v) *v = -1.0f; }
     void GetBrightnessRangeMax(float* v) override { if (v) *v = 1.0f; }
     void GetBrightnessDefaultValue(float* v) override { if (v) *v = 0.0f; }
     void GetBrightnessStepSize(float* v) override { if (v) *v = 0.01f; }
     void GetBrightness(float* v) override { if (v) *v = 0.0f; }
     void SetBrightness(float) override {}
-
     void GetHueRangeMin(float* v) override { if (v) *v = -180.0f; }
     void GetHueRangeMax(float* v) override { if (v) *v = 180.0f; }
     void GetHueDefaultValue(float* v) override { if (v) *v = 0.0f; }
     void GetHueStepSize(float* v) override { if (v) *v = 1.0f; }
     void GetHue(float* v) override { if (v) *v = 0.0f; }
     void SetHue(float) override {}
-
     void GetSaturationRangeMin(float* v) override { if (v) *v = -1.0f; }
     void GetSaturationRangeMax(float* v) override { if (v) *v = 1.0f; }
     void GetSaturationDefaultValue(float* v) override { if (v) *v = 0.0f; }
@@ -497,8 +367,9 @@ public:
     void SetSaturation(float) override {}
 };
 
-// ============================================================
-// Factory functions
-// ============================================================
 OverlayVideoPlayer* CreateOverlayVideoPlayer() { return new WasmVideoPlayer(); }
 LayerVideoPlayer*    CreateLayerVideoPlayer()    { return new WasmVideoPlayer(); }
+
+
+
+

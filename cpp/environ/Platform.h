@@ -60,7 +60,8 @@ ttstr TVPGetOSName();
 ttstr TVPGetPlatformName();
 std::string TVPGetCurrentLanguage();
 void TVPOpenPatchLibUrl();
-tjs_uint32 TVPGetRoughTickCount32();
+tjs_uint64 TVPGetRoughTickCount();
+#define TVPGetTickCount TVPGetRoughTickCount
 //
 void TVPShowIME(int x, int y, int w, int h);
 void TVPHideIME();

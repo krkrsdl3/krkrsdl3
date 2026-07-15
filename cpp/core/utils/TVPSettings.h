@@ -6,7 +6,7 @@
 //---------------------------------------------------------------------------
 // Command line parameter operations (implement in each platform)
 //---------------------------------------------------------------------------
-void TVPParseArguments(int argc, char* argv[]);
+bool TVPParseArguments(int argc, char* argv[]);
 //
 bool TVPGetCommandLine(const tjs_char* name, tTJSVariant* value = 0);
 // retrieves command line parameter named "name".

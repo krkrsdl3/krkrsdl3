@@ -10,7 +10,8 @@
 //---------------------------------------------------------------------------
 tTVPMemoryStream* GetResourceStream(const ttstr& filename)
 {
-    tTJSBinaryStream* tmp = TVPCreateBinaryStreamForRead(ExePath() + ttstr("/") + filename, 0);
+    static ttstr resourceBasePath = TVPNormalizeStorageName(TVPNativeExeDir) + TJS_N("Res/");
+    tTJSBinaryStream* tmp = TVPCreateBinaryStreamForRead(resourceBasePath + filename, 0);
     tTVPMemoryStream* ret = new tTVPMemoryStream(nullptr, tmp->GetSize());
     tmp->ReadBuffer(ret->GetInternalBuffer(), tmp->GetSize());
     delete tmp;

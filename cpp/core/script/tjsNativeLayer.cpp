@@ -10,12 +10,12 @@
 #include "TVPStorage.h"
 #include "TVPEvent.h"
 #include "tvpinputdefs.h"
-#include "TickCount.h"
 #include "tjsDictionary.h"
 #include "RenderManager.h"
 #include "FontRasterizer.h"
 #include "LayerManager.h"
 #include "TVPFont.h"
+#include "Platform.h"
 
 #include "tjsNativeBitmap.h"
 #include "tjsNativeFont.h"
@@ -7758,7 +7758,6 @@ void tTJSNI_BaseLayer::StartTransition(const ttstr& name,
             TVPAddContinuousEventHook(&TransIdleCallback);
 
         // initial tick count
-        TVPStartTickCount();
         if (UseTransTickCallback)
         {
             TransTick = 0;

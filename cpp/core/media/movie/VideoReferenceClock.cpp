@@ -17,7 +17,7 @@ CDVDClock::CDVDClock()
     m_frameTime = DVD_TIME_BASE / 60.0;
     m_speedAfterPause = 0;
     m_systemUsed = 1000;
-    m_systemOffset = TVPGetRoughTickCount32();
+    m_systemOffset = TVPGetRoughTickCount();
 }
 
 CDVDClock::~CDVDClock()
@@ -27,13 +27,13 @@ CDVDClock::~CDVDClock()
 double CDVDClock::GetClock()
 {
     tTJSCSH lock(m_critSection);
-    return SystemToPlaying(TVPGetRoughTickCount32());
+    return SystemToPlaying(TVPGetRoughTickCount());
 }
 
 double CDVDClock::GetClock(double& absolute)
 {
     tTJSCSH lock(m_critSection);
-    int64_t current = TVPGetRoughTickCount32();
+    int64_t current = TVPGetRoughTickCount();
     absolute = SystemToAbsolute(current);
     return SystemToPlaying(current);
 }
@@ -41,7 +41,7 @@ double CDVDClock::GetClock(double& absolute)
 double CDVDClock::GetAbsoluteClock()
 {
     tTJSCSH lock(m_critSection);
-    return SystemToAbsolute(TVPGetRoughTickCount32());
+    return SystemToAbsolute(TVPGetRoughTickCount());
 }
 
 void CDVDClock::SetSpeed(int iSpeed)
@@ -57,11 +57,11 @@ void CDVDClock::SetSpeed(int iSpeed)
     if (iSpeed == DVD_PLAYSPEED_PAUSE)
     {
         if (!m_pauseClock)
-            m_pauseClock = TVPGetRoughTickCount32();
+            m_pauseClock = TVPGetRoughTickCount();
         return;
     }
 
-    int64_t current = TVPGetRoughTickCount32();
+    int64_t current = TVPGetRoughTickCount();
     int64_t newfreq = 1000 * DVD_PLAYSPEED_NORMAL / iSpeed;
 
     if (m_pauseClock)

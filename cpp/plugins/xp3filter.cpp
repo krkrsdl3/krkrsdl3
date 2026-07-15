@@ -588,7 +588,7 @@ void TVPSetXP3FilterScript(ttstr content)
 
 static void PostRegistCallback()
 {
-    ttstr path = TVPGetAppPath() + TJS_N("xp3filter.tjs");
+    ttstr path = TVPProjectDir + TJS_N("xp3filter.tjs");
     if (TVPIsExistentStorageNoSearch(path))
     {
         iTJSTextReadStream* stream = TVPCreateTextStreamForRead(path, "");

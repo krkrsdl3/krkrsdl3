@@ -16,9 +16,6 @@ extern void TVPDumpHWException();
 
 extern void TVPInitializeBaseSystems();
 
-extern ttstr TVPNativeProjectDir;
-extern ttstr TVPNativeDataPath;
-
 extern bool TVPProjectDirSelected;
 extern void TVPEnsureDataPathDirectory();
 
@@ -39,10 +36,6 @@ extern int TVPTerminateCode;
 //---------------------------------------------------------------------------
 // System initialization and uninitialization
 //---------------------------------------------------------------------------
-
-//-- global data
-extern ttstr TVPProjectDir; // project directory
-extern ttstr TVPDataPath;   // data directory
 
 //-- implementation in this unit
 extern void TVPSystemInit(void);
@@ -93,9 +86,6 @@ extern void TVPDoSaveSystemVariables();
 //---------------------------------------------------------------------------
 extern void TVPReadRegValue(tTJSVariant& result, const ttstr& key);
 extern bool TVPCreateAppLock(const ttstr& lockname);
-extern ttstr TVPGetPersonalPath();
-extern ttstr TVPGetAppDataPath();
-extern ttstr TVPGetSavedGamesPath();
 extern int TVPGetSupportTouchDevice();
 
 //---------------------------------------------------------------------------

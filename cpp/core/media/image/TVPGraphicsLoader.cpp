@@ -22,9 +22,9 @@
 #include "tjsDictionary.h"
 #include "TVPEvent.h"
 #include "TVPApplication.h"
-#include "TickCount.h"
 #include "TVPDebug.h"
 #include "GraphicsLoadThread.h"
+#include "Platform.h"
 
 #include "tjsNativeBitmap.h"
 #include "tjsNativeLayer.h"

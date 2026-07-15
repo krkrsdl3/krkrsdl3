@@ -10,20 +10,20 @@ set(KRKRSDL_ENVIRON_CONSOLE_SRC
 set(KRKRSDL_ENVIRON_SRC
     ${KRKRSDL_ENVIRON_PATH}/Platform.cpp
     ${KRKRSDL_ENVIRON_PATH}/sdl3/sdl3_dialog.cpp
-    ${KRKRSDL_ENVIRON_PATH}/sdl3/sdl3_file.cpp
     ${KRKRSDL_ENVIRON_PATH}/sdl3/sdl3_utils.cpp
     ${KRKRSDL_ENVIRON_PATH}/sdl3/sdl3_entry.cpp
-    ${KRKRSDL_ENVIRON_PATH}/sdl3/sdl3_render.cpp
     )
 
 if(ANDROID)
     list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/android/android_core.cpp)
     list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/unix/unix_file.cpp)
+    list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/sdl3/sdl3_file.cpp)
     list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/sdl3/sdl3_thread.cpp)
     list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/sdl3/sdl3_audio.cpp)
 elseif(LINUX)
     list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/linux/linux_core.cpp)
     list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/unix/unix_file.cpp)
+    list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/sdl3/sdl3_file.cpp)
     list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/sdl3/sdl3_input.cpp)
     list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/sdl3/sdl3_thread.cpp)
     list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/sdl3/sdl3_audio.cpp)
@@ -36,6 +36,7 @@ elseif(EMSCRIPTEN)
     list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/sdl3/sdl3_input.cpp)
 elseif(WINDOWS)
     list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/windows/windows_core.cpp)
+    list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/sdl3/sdl3_file.cpp)
     list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/sdl3/sdl3_input.cpp)
     list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/sdl3/sdl3_thread.cpp)
     list(APPEND KRKRSDL_ENVIRON_SRC ${KRKRSDL_ENVIRON_PATH}/sdl3/sdl3_audio.cpp)

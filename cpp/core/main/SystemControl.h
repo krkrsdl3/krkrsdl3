@@ -22,12 +22,12 @@ private: // ユーザー宣言
 
     bool EventEnable;
 
-    uint32_t LastCompactedTick;
-    uint32_t LastCloseClickedTick;
-    uint32_t LastShowModalWindowSentTick;
-    uint32_t LastRehashedTick;
+    uint64_t LastCompactedTick;
+    uint64_t LastCloseClickedTick;
+    uint64_t LastShowModalWindowSentTick;
+    uint64_t LastRehashedTick;
 
-    uint32_t MixedIdleTick;
+    uint64_t MixedIdleTick;
 
 public:
     tTVPSystemControl();

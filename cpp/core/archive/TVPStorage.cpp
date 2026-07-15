@@ -18,7 +18,6 @@
 #include "TVPEvent.h"
 #include "Platform.h"
 #include "PlatformFile.h"
-#include "TickCount.h"
 #include "Random.h"
 #include "XP3Archive.h"
 #include "PlatformMutex.h"
@@ -32,6 +31,17 @@
 // archive delimiter
 // this changes '>' from '#' since 2.19 beta 14
 tjs_char TVPArchiveDelimiter = '>';
+//---------------------------------------------------------------------------
+// base archive
+//---------------------------------------------------------------------------
+ttstr TVPNativeExeName;    
+ttstr TVPNativeExeDir;     
+ttstr TVPNativeProjectData;
+ttstr TVPNativeProjectDir; 
+ttstr TVPNativeDataPath;   
+ttstr TVPProjectData;      
+ttstr TVPProjectDir;       
+ttstr TVPDataPath;         
 
 //---------------------------------------------------------------------------
 
@@ -1153,27 +1163,17 @@ static bool TVPTempPathInit = false;
 static tjs_int TVPProcessID;
 ttstr TVPGetTemporaryName()
 {
-    static tjs_int TVPTempUniqueNum = (tjs_int)TVPGetRoughTickCount32();
-    tjs_int num = TVPTempUniqueNum++;
-    ttstr TVPTempPath = TVPGetAppPath();
+    static tjs_uint64 TVPTempUniqueNum = (tjs_uint64)TVPGetRoughTickCount();
+    tjs_uint64 num = TVPTempUniqueNum++;
+    ttstr TVPTempPath = TVPProjectDir;
     unsigned char buf[16];
     TVPGetRandomBits128(buf);
     tjs_char random[128];
     TJS_snprintf(random, sizeof(random) / sizeof(tjs_char), TJS_N("%02x%02x%02x%02x%02x%02x"),
                  buf[0], buf[1], buf[2], buf[3], buf[4], buf[5]);
 
-    return TVPTempPath + TJS_N("krkr_") + ttstr(random) + TJS_N("_") + ttstr(num) + TJS_N("_") +
+    return TVPTempPath + TJS_N("krkr_") + ttstr(random) + TJS_N("_") + ttstr(static_cast<tjs_int>(num)) + TJS_N("_") +
            ttstr(TVPProcessID);
-}
-//---------------------------------------------------------------------------
-
-//---------------------------------------------------------------------------
-// TVPGetAppPath
-//---------------------------------------------------------------------------
-ttstr TVPGetAppPath()
-{
-    static ttstr apppath(TVPExtractStoragePath(TVPProjectDir));
-    return apppath;
 }
 //---------------------------------------------------------------------------
 
@@ -1474,12 +1474,4 @@ ttstr ReplaceStringAll(ttstr src, const ttstr& target, const ttstr& dest)
 {
     src.Replace(target, dest);
     return src;
-}
-
-ttstr GetDataPathDirectory(const ttstr& exename)
-{
-    ttstr nativeDataPath = TVPGetAppPath();
-    TVPGetLocalName(nativeDataPath);
-    nativeDataPath += "/savedata/";
-    return nativeDataPath;
 }

@@ -21,6 +21,13 @@ static tTVPMouseButton _mouseBtn;
 static tjs_uint8 _scancode[0x200];
 static tjs_uint16 _keymap[0x200];
 
+enum
+{
+    mrOk,
+    mrAbort,
+    mrCancel,
+};
+
 bool TVPGetKeyMouseAsyncState(tjs_uint keycode, bool getcurrent)
 {
     if (keycode >= sizeof(_scancode) / sizeof(_scancode[0]))
@@ -104,7 +111,7 @@ class TVPWindowLayer : public iWindowLayer
     bool UseMouseKey = false, MouseLeftButtonEmulatedPushed = false,
          MouseRightButtonEmulatedPushed = false;
     bool LastMouseMoved = false, Visible = false;
-    tjs_uint32 LastMouseKeyTick = 0;
+    tjs_uint64 LastMouseKeyTick = 0;
     tjs_int MouseKeyXAccel = 0;
     tjs_int MouseKeyYAccel = 0;
     int LastMouseDownX = 0, LastMouseDownY = 0;
@@ -541,7 +548,7 @@ public:
 
     virtual void InternalKeyDown(tjs_uint16 key, tjs_uint32 shift) override
     {
-        tjs_uint32 tick = TVPGetRoughTickCount32();
+        tjs_uint64 tick = TVPGetRoughTickCount();
         TVPPushEnvironNoise(&tick, sizeof(tick));
         TVPPushEnvironNoise(&key, sizeof(key));
         TVPPushEnvironNoise(&shift, sizeof(shift));
@@ -812,7 +819,7 @@ public:
         {
             MouseLeftButtonEmulatedPushed = false;
             MouseRightButtonEmulatedPushed = false;
-            LastMouseKeyTick = TVPGetRoughTickCount32();
+            LastMouseKeyTick = TVPGetRoughTickCount();
         }
         else
         {
@@ -835,7 +842,7 @@ public:
     {
         //	TranslateWindowToDrawArea(x, y);
         //	ReleaseMouseCapture();
-        MouseVelocityTracker.addMovement(TVPGetRoughTickCount32(), (float)x, (float)y);
+        MouseVelocityTracker.addMovement(TVPGetRoughTickCount(), (float)x, (float)y);
     }
 
     virtual void ResetTouchVelocity(tjs_int id) override { TouchVelocityTracker.end(id); }

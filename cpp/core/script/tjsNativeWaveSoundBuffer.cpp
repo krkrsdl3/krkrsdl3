@@ -1,6 +1,8 @@
 #include "tjsCommHead.h"
 #include "tjsNativeWaveSoundBuffer.h"
 
+#include <atomic>
+#include <algorithm>
 #include "WaveIntf.h"
 #include "TVPEvent.h"
 #include "TVPMsg.h"
@@ -13,7 +15,6 @@
 #include "TVPStorage.h"
 #include "NativeEventQueue.h"
 #include "Random.h"
-#include "TickCount.h"
 #include "Platform.h"
 #include "PlatformAudio.h"
 #include "PlatformFile.h"
@@ -1183,6 +1184,11 @@ static tjs_int TVPL2BufferLength =
 static bool TVPDirectSoundUse3D = false;
 static tjs_int TVPVolumeLogFactor = 3322;
 static bool TVPPrimarySoundBufferPlaying = false;
+#if defined(_KRKRSDL3_EMSCRIPTEN)
+static int TVPDecodeThreadCount = 1;
+#else
+static int TVPDecodeThreadCount = 0; // 0 = auto (number of CPUs)
+#endif
 //---------------------------------------------------------------------------
 static void TVPInitSoundOptions()
 {
@@ -1324,6 +1330,13 @@ static void TVPInitSoundOptions()
             TVPVolumeLogFactor = n;
     }
 
+    if (TVPGetCommandLine(TJS_N("-wsdecodethreads"), &val))
+    {
+        tjs_int n = (tjs_int)val;
+        if (n >= 0 && n <= TVPMaxThreadNum)
+            TVPDecodeThreadCount = n;
+    }
+
     TVPSoundOptionsInit = true;
 }
 //---------------------------------------------------------------------------
@@ -1418,8 +1431,8 @@ class tTVPWaveSoundBufferThread : public tTVPThread
     // HWND UtilWindow; // utility window to notify the pending events occur
     bool PendingLabelEventExists;
     bool WndProcToBeCalled;
-    uint32_t NextLabelEventTick;
-    uint32_t LastFilledTick;
+    uint64_t NextLabelEventTick;
+    uint64_t LastFilledTick;
 
     NativeEventQueue<tTVPWaveSoundBufferThread> EventQueue;
 
@@ -1505,7 +1518,7 @@ void tTVPWaveSoundBufferThread::UtilWndProc(NativeEvent& ev)
         if (nearest_next != TVP_TIMEOFS_INVALID_VALUE)
         {
             PendingLabelEventExists = true;
-            NextLabelEventTick = TVPGetRoughTickCount32() + nearest_next;
+            NextLabelEventTick = TVPGetRoughTickCount() + nearest_next;
         }
         else
         {
@@ -1522,13 +1535,13 @@ void tTVPWaveSoundBufferThread::ReschedulePendingLabelEvent(tjs_int tick)
 {
     if (tick == TVP_TIMEOFS_INVALID_VALUE)
         return; // no need to reschedule
-    uint32_t eventtick = TVPGetRoughTickCount32() + tick;
+    uint64_t eventtick = TVPGetRoughTickCount() + tick;
 
     tTJSCriticalSectionHolder holder(TVPWaveSoundBufferVectorCS);
 
     if (PendingLabelEventExists)
     {
-        if ((tjs_int32)NextLabelEventTick - (tjs_int32)eventtick > 0)
+        if (NextLabelEventTick - eventtick > 0)
             NextLabelEventTick = eventtick;
     }
     else
@@ -1544,7 +1557,7 @@ void tTVPWaveSoundBufferThread::Execute(void)
     while (!GetTerminated())
     {
         // thread loop for playing thread
-        uint32_t time = TVPGetRoughTickCount32();
+        uint64_t time = TVPGetRoughTickCount();
         TVPPushEnvironNoise(&time, sizeof(time));
 
         { // thread-protected
@@ -1588,8 +1601,8 @@ void tTVPWaveSoundBufferThread::Execute(void)
             }
         } // end-of-thread-protected
 
-        uint32_t time2;
-        time2 = TVPGetRoughTickCount32();
+        uint64_t time2;
+        time2 = TVPGetRoughTickCount();
         time = time2 - time;
 
         if (time < TVP_WSB_THREAD_SLEEP_TIME)
@@ -1715,117 +1728,136 @@ bool TVPGetWaveSoundBufferUse3DMode()
 //---------------------------------------------------------------------------
 
 //---------------------------------------------------------------------------
-// tTVPWaveSoundBufferDcodeThread : decoding thread
+// tTVPWaveSoundBufferDecodePool : shared decode thread pool
 //---------------------------------------------------------------------------
-class tTVPWaveSoundBufferDecodeThread : public tTVPThread
+class tTVPWaveSoundBufferDecodePool
 {
-    tTJSNI_WaveSoundBuffer* Owner;
-    tTVPThreadEvent Event;
-    tTJSCriticalSection OneLoopCS;
-    volatile bool Running;
+    friend class tTVPWaveSoundBufferDecodePoolWorker;
+
+    class tTVPWaveSoundBufferDecodePoolWorker : public tTVPThread
+    {
+        tTVPWaveSoundBufferDecodePool* Pool;
+    public:
+        tTVPWaveSoundBufferDecodePoolWorker(tTVPWaveSoundBufferDecodePool* pool)
+          : tTVPThread(), Pool(pool) { Resume(); }
+        ~tTVPWaveSoundBufferDecodePoolWorker()
+        {
+            Terminate();
+            Resume();
+            WaitFor();
+        }
+        void Execute() override
+        {
+            while (!GetTerminated())
+                Pool->WorkerLoop();
+        }
+    };
+
+    tTJSCriticalSection _cs;
+    tTVPThreadEvent _wakeEvent;
+    std::atomic_bool _terminated{false};
+    std::vector<tTVPWaveSoundBufferDecodePoolWorker*> _workers;
+    std::vector<tTJSNI_WaveSoundBuffer*> _buffers;
+    std::atomic_size_t _nextCheck{0};
+
+    tTVPWaveSoundBufferDecodePool()
+    {
+        int n = TVPDecodeThreadCount;
+        if (n <= 0)
+            n = std::max(1, TVPGetProcessorNum());
+        n = std::min(n, TVPMaxThreadNum);
+        _workers.resize(n);
+        for (int i = 0; i < n; i++)
+            _workers[i] = new tTVPWaveSoundBufferDecodePoolWorker(this);
+    }
+
+    ~tTVPWaveSoundBufferDecodePool()
+    {
+        _terminated = true;
+        _wakeEvent.Set();
+        for (auto* w : _workers)
+            delete w;
+    }
 
 public:
-    tTVPWaveSoundBufferDecodeThread(tTJSNI_WaveSoundBuffer* owner);
-    ~tTVPWaveSoundBufferDecodeThread();
-
-    void Execute(void);
-
-    void Interrupt();
-    void Continue();
-
-    bool GetRunning() const { return Running; }
-};
-//---------------------------------------------------------------------------
-tTVPWaveSoundBufferDecodeThread::tTVPWaveSoundBufferDecodeThread(tTJSNI_WaveSoundBuffer* owner)
-  : tTVPThread()
-{
-    TVPInitSoundOptions();
-
-    Owner = owner;
-    SetPriority(TVPDecodeThreadHighPriority);
-    Running = false;
-    Resume();
-}
-//---------------------------------------------------------------------------
-tTVPWaveSoundBufferDecodeThread::~tTVPWaveSoundBufferDecodeThread()
-{
-    SetPriority(TVPDecodeThreadHighPriority);
-    Running = false;
-    Terminate();
-    Resume();
-    Event.Set();
-    WaitFor();
-}
-//---------------------------------------------------------------------------
-#define TVP_WSB_DECODE_THREAD_SLEEP_TIME 110
-void tTVPWaveSoundBufferDecodeThread::Execute(void)
-{
-    while (!GetTerminated())
+    static tTVPWaveSoundBufferDecodePool& Instance()
     {
-        // decoder thread main loop
-        uint32_t st = TVPGetTickCount();
-        while (Running)
+        static tTVPWaveSoundBufferDecodePool pool;
+        return pool;
+    }
+
+    void AddBuffer(tTJSNI_WaveSoundBuffer* buf)
+    {
+        tTJSCriticalSectionHolder holder(_cs);
+        _buffers.push_back(buf);
+    }
+
+    void RemoveBuffer(tTJSNI_WaveSoundBuffer* buf)
+    {
+        buf->DecodeActive.store(false, std::memory_order_release);
         {
-            bool wait;
-            uint32_t et;
-
-            if (Running)
+            tTJSCriticalSectionHolder holder(_cs);
+            for (auto it = _buffers.begin(); it != _buffers.end(); ++it)
             {
-                volatile tTJSCriticalSectionHolder cs_holder(OneLoopCS);
-                wait = !Owner->FillL2Buffer(false, true); // fill
-            }
-
-            if (GetTerminated())
-                break;
-
-            if (Running)
-            {
-                et = TVPGetTickCount();
-                TVPPushEnvironNoise(&et, sizeof(et));
-                if (wait)
+                if (*it == buf)
                 {
-                    // buffer is full; sleep longer
-                    uint32_t elapsed = et - st;
-                    if (elapsed < TVP_WSB_DECODE_THREAD_SLEEP_TIME)
-                    {
-                        Event.WaitFor(TVP_WSB_DECODE_THREAD_SLEEP_TIME - elapsed);
-                    }
+                    _buffers.erase(it);
+                    break;
                 }
-                else
-                {
-                    // buffer is not full; sleep shorter
-                    TVPRelinquishCPU();
-                    if (!GetTerminated())
-                        SetPriority(TVPDecodeThreadLowPriority);
-                }
-                st = et;
             }
         }
-        if (GetTerminated())
-            break;
-        // sleep while running
-        Event.WaitFor(/*INFINITE*/ 0);
+        // Wait for any in-flight decode on this buffer to complete
+        while (buf->DecodeInProgress.load(std::memory_order_acquire))
+            TVPSleepFor(1);
     }
-}
-//---------------------------------------------------------------------------
-void tTVPWaveSoundBufferDecodeThread::Interrupt()
-{
-    // interrupt the thread
-    if (!Running)
-        return;
-    SetPriority(TVPDecodeThreadHighPriority);
-    Event.Set();
-    tTJSCriticalSectionHolder cs_holder(OneLoopCS);
-    // this ensures that this function stops the decoding
-    Running = false;
-}
-//---------------------------------------------------------------------------
-void tTVPWaveSoundBufferDecodeThread::Continue()
-{
-    SetPriority(TVPDecodeThreadHighPriority);
-    Running = true;
-    Event.Set();
-}
+
+    void Wake()
+    {
+        _wakeEvent.Set();
+    }
+
+private:
+    void WorkerLoop()
+    {
+        tTJSNI_WaveSoundBuffer* target = nullptr;
+
+        {
+            tTJSCriticalSectionHolder holder(_cs);
+            size_t n = _buffers.size();
+            if (n == 0)
+            {
+                _wakeEvent.WaitFor(10);
+                return;
+            }
+            size_t start = _nextCheck.fetch_add(1, std::memory_order_relaxed) % n;
+            for (size_t i = 0; i < n; i++)
+            {
+                size_t idx = (start + i) % n;
+                auto* buf = _buffers[idx];
+                if (buf->DecodeActive.load(std::memory_order_acquire))
+                {
+                    bool expected = false;
+                    if (buf->DecodeInProgress.compare_exchange_strong(expected, true,
+                            std::memory_order_acq_rel))
+                    {
+                        target = buf;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (target)
+        {
+            target->FillL2Buffer(false, true);
+            target->DecodeInProgress.store(false, std::memory_order_release);
+        }
+        else
+        {
+            _wakeEvent.WaitFor(10);
+        }
+    }
+};
 //---------------------------------------------------------------------------
 
 //---------------------------------------------------------------------------
@@ -1840,7 +1872,6 @@ tTJSNI_WaveSoundBuffer::tTJSNI_WaveSoundBuffer()
     TVPInitLogTable();
     Decoder = NULL;
     LoopManager = NULL;
-    Thread = NULL;
     UseVisBuffer = false;
     VisBuffer = NULL;
     ThreadCallbackEnabled = false;
@@ -1861,7 +1892,7 @@ tTJSNI_WaveSoundBuffer::tTJSNI_WaveSoundBuffer()
     L1BufferUnits = 0;
     L2BufferUnits = 0;
     TVPAddWaveSoundBuffer(this);
-    Thread = new tTVPWaveSoundBufferDecodeThread(this);
+    tTVPWaveSoundBufferDecodePool::Instance().AddBuffer(this);
     memset(&C_InputFormat, 0, sizeof(C_InputFormat));
     memset(&InputFormat, 0, sizeof(InputFormat));
     Looping = false;
@@ -1902,8 +1933,7 @@ void tTJSNI_WaveSoundBuffer::Invalidate()
 
     DestroySoundBuffer();
 
-    if (Thread)
-        delete Thread, Thread = NULL;
+    tTVPWaveSoundBufferDecodePool::Instance().RemoveBuffer(this);
 
     TVPRemoveWaveSoundBuffer(this);
 }
@@ -2164,7 +2194,7 @@ void tTJSNI_WaveSoundBuffer::Clear()
     // clear all status and unload current decoder
     Stop();
     ThreadCallbackEnabled = false;
-    Thread->Interrupt();
+    DecodeActive.store(false, std::memory_order_release);
     if (LoopManager)
         delete LoopManager, LoopManager = NULL;
     ClearFilterChain();
@@ -2202,10 +2232,6 @@ tjs_uint tTJSNI_WaveSoundBuffer::Decode(void* buffer,
 //---------------------------------------------------------------------------
 bool tTJSNI_WaveSoundBuffer::FillL2Buffer(bool firstwrite, bool fromdecodethread)
 {
-    if (!fromdecodethread && Thread->GetRunning())
-        Thread->SetPriority(ttpHighest);
-    // make decoder thread priority high, before entering critical section
-
     tTJSCriticalSectionHolder holder(L2BufferCS);
 
     if (firstwrite)
@@ -2218,25 +2244,16 @@ bool tTJSNI_WaveSoundBuffer::FillL2Buffer(bool firstwrite, bool fromdecodethread
     }
 
     {
-        tTVPThreadPriority ttpbefore = TVPDecodeThreadHighPriority;
         bool retflag = false;
-        if (Thread->GetRunning())
-        {
-            ttpbefore = Thread->GetPriority();
-            Thread->SetPriority(TVPDecodeThreadHighPriority);
-        }
         {
             tTJSCriticalSectionHolder holder(L2BufferRemainCS);
             if (L2BufferRemain == L2BufferUnits)
                 retflag = true;
         }
         if (!retflag)
-            UpdateFilterChain(); // if the buffer is not full, update filter
-                                 // internal state
-        if (Thread->GetRunning())
-            Thread->SetPriority(ttpbefore);
+            UpdateFilterChain();
         if (retflag)
-            return false; // buffer is full
+            return false;
     }
 
     if (L2BufferEnded)
@@ -2261,18 +2278,8 @@ bool tTJSNI_WaveSoundBuffer::FillL2Buffer(bool firstwrite, bool fromdecodethread
         L2BufferWritePos = 0;
 
     {
-        tTVPThreadPriority ttpbefore = TVPDecodeThreadHighPriority;
-        if (Thread->GetRunning())
-        {
-            ttpbefore = Thread->GetPriority();
-            Thread->SetPriority(TVPDecodeThreadHighPriority);
-        }
-        {
-            tTJSCriticalSectionHolder holder(L2BufferRemainCS);
-            L2BufferRemain++;
-        }
-        if (Thread->GetRunning())
-            Thread->SetPriority(ttpbefore);
+        tTJSCriticalSectionHolder holder(L2BufferRemainCS);
+        L2BufferRemain++;
     }
 
     return true;
@@ -2282,11 +2289,6 @@ void tTJSNI_WaveSoundBuffer::PrepareToReadL2Buffer(bool firstread)
 {
     if (L2BufferRemain == 0 && !L2BufferEnded)
         FillL2Buffer(firstread, false);
-
-    if (Thread->GetRunning())
-        Thread->SetPriority(TVPDecodeThreadHighPriority);
-    // make decoder thread priority higher than usual,
-    // before entering critical section
 }
 //---------------------------------------------------------------------------
 tjs_uint tTJSNI_WaveSoundBuffer::ReadL2Buffer(void* buffer, tTVPWaveSegmentQueue& segments)
@@ -2384,9 +2386,6 @@ bool tTJSNI_WaveSoundBuffer::FillBuffer(bool firstwrite, bool allowpause)
         tTJSCriticalSectionHolder holder(L2BufferRemainCS);
         bufferremain = L2BufferRemain;
     }
-
-    if (Thread->GetRunning() && bufferremain < TVP_WSB_ACCESS_FREQ)
-        Thread->SetPriority(ttpNormal); // buffer remains under 1 sec
 
     // check buffer playing position
     tjs_int writepos;
@@ -2600,10 +2599,6 @@ void tTJSNI_WaveSoundBuffer::StartPlay()
     // play from first
 
     { // thread protected block
-        if (Thread->GetRunning())
-        {
-            Thread->SetPriority(TVPDecodeThreadHighPriority);
-        }
         tTJSCriticalSectionHolder holder(BufferCS);
         tTJSCriticalSectionHolder l2holder(L2BufferCS);
 
@@ -2635,7 +2630,8 @@ void tTJSNI_WaveSoundBuffer::StartPlay()
     // ensure thread
     TVPEnsureWaveSoundBufferWorking(); // wake the playing thread up again
     ThreadCallbackEnabled = true;
-    Thread->Continue();
+    DecodeActive.store(true, std::memory_order_release);
+    tTVPWaveSoundBufferDecodePool::Instance().Wake();
 }
 //---------------------------------------------------------------------------
 void tTJSNI_WaveSoundBuffer::StopPlay()
@@ -2645,10 +2641,6 @@ void tTJSNI_WaveSoundBuffer::StopPlay()
     if (!SoundBuffer)
         return;
 
-    if (Thread->GetRunning())
-    {
-        Thread->SetPriority(TVPDecodeThreadHighPriority);
-    }
     tTJSCriticalSectionHolder holder(BufferCS);
     tTJSCriticalSectionHolder l2holder(L2BufferCS);
 
@@ -2669,10 +2661,6 @@ void tTJSNI_WaveSoundBuffer::Play()
 
     TVPEnsurePrimaryBufferPlay(); // let primary buffer to start running
 
-    if (Thread->GetRunning())
-    {
-        Thread->SetPriority(TVPDecodeThreadHighPriority);
-    }
     tTJSCriticalSectionHolder holder(BufferCS);
     tTJSCriticalSectionHolder l2holder(L2BufferCS);
 
@@ -2685,9 +2673,9 @@ void tTJSNI_WaveSoundBuffer::Stop()
     // stop playing
     StopPlay();
 
-    // delete thread
+    // stop decode thread
     ThreadCallbackEnabled = false;
-    Thread->Interrupt();
+    DecodeActive.store(false, std::memory_order_release);
 
     // set status
     if (Status != ssUnload)
@@ -2717,10 +2705,6 @@ void tTJSNI_WaveSoundBuffer::SetBufferPaused(bool bPaused)
 //---------------------------------------------------------------------------
 void tTJSNI_WaveSoundBuffer::SetPaused(bool b)
 {
-    if (Thread->GetRunning())
-    { /*orgpri = Thread->Priority;*/
-        Thread->SetPriority(TVPDecodeThreadHighPriority);
-    }
     tTJSCriticalSectionHolder holder(BufferCS);
     tTJSCriticalSectionHolder l2holder(L2BufferCS);
 
@@ -2736,7 +2720,7 @@ void tTJSNI_WaveSoundBuffer::TimerBeatHandler()
     {
         // buffer was stopped
         ThreadCallbackEnabled = false;
-        Thread->Interrupt();
+        DecodeActive.store(false, std::memory_order_release);
         SetStatusAsync(ssStop);
     }
 }

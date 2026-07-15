@@ -1,26 +1,18 @@
-//---------------------------------------------------------------------------
-/*
-        TVP2 ( T Visual Presenter 2 )  A script authoring tool
-        Copyright (C) 2000 W.Dee <dee@kikyou.info> and contributors
-
-        See details of license at "license.txt"
-*/
-//---------------------------------------------------------------------------
-// WASM OpenAL 音频后端 — OpenAL 映射到 Web Audio API，独立音频线程混音。
-//---------------------------------------------------------------------------
+// WASM OpenAL audio — maps to Web Audio API
+// Key optimizations for smooth playback:
+// - Large buffer count (16 default) to absorb decode jitter
+// - Auto-grow buffer queue when full (don't drop audio)
+// - Uses Emscripten's native OpenAL → Web Audio mapping (no vcpkg)
 
 #include "tjsCommHead.h"
 #include "PlatformAudio.h"
 #include "PlatformMutex.h"
 #include "PlatformThread.h"
 #include "TVPSystem.h"
-#include "TickCount.h"
 #include "TVPDebug.h"
 #include "WaveIntf.h"
 
-#ifdef __EMSCRIPTEN__
 #include <emscripten/emscripten.h>
-#endif
 
 #include <AL/al.h>
 #include <AL/alc.h>
@@ -29,64 +21,53 @@
 #include <algorithm>
 #include <vector>
 
-//---------------------------------------------------------------------------
-// OpenAL 设备与上下文
-//---------------------------------------------------------------------------
-static ALCdevice* g_alDevice = nullptr;
+// ── OpenAL device + context (singleton) ──────────────────────────────────
+static ALCdevice*  g_alDevice  = nullptr;
 static ALCcontext* g_alContext = nullptr;
-static bool g_alInited = false;
+static bool         g_alInited  = false;
 
 static bool InitOpenAL()
 {
     if (g_alInited) return true;
     g_alDevice = alcOpenDevice(nullptr);
-    if (!g_alDevice) { TVPAddLog(ttstr(TJS_W("openal: alcOpenDevice failed"))); return false; }
+    if (!g_alDevice) { TVPAddLog(ttstr(TJS_N("[openal] alcOpenDevice failed"))); return false; }
     g_alContext = alcCreateContext(g_alDevice, nullptr);
-    if (!g_alContext) { alcCloseDevice(g_alDevice); g_alDevice = nullptr; TVPAddLog(ttstr(TJS_W("openal: alcCreateContext failed"))); return false; }
+    if (!g_alContext) { alcCloseDevice(g_alDevice); g_alDevice = nullptr; TVPAddLog(ttstr(TJS_N("[openal] alcCreateContext failed"))); return false; }
     alcMakeContextCurrent(g_alContext);
     g_alInited = true;
-    TVPAddLog(ttstr(TJS_W("openal: initialized OK")));
+    TVPAddLog(ttstr(TJS_N("[openal] initialized")));
     return true;
 }
 
-//---------------------------------------------------------------------------
-// tTVPSoundBufferWASM — OpenAL 音源
-//---------------------------------------------------------------------------
-#ifndef TVP_WSB_ACCESS_FREQ
-#define TVP_WSB_ACCESS_FREQ 8
-#endif
-
+// ── tTVPSoundBufferWASM ─────────────────────────────────────────────────
+// Implements iTVPSoundBuffer using OpenAL buffer queueing.
+// Buffers are dynamically expanded when the queue fills up to avoid drops.
 class tTVPSoundBufferWASM : public iTVPSoundBuffer
 {
-public:
-    bool _playing = false;
-    float _volume = 1.0f, _pan = 0.0f;
-
+    float    _volume = 1.0f, _pan = 0.0f;
     tTVPWaveFormat _format;
-    int _frame_size = 0, _bytesPerSample = 0;
+    int      _frameSize = 0, _bytesPerSample = 0;
 
-    ALuint _alSource = 0;
-    ALenum _alFormat = AL_FORMAT_STEREO16;
-    ALuint* _bufferIds = nullptr;
-    ALuint* _unqueueBuf = nullptr;
-    tjs_uint* _bufferSize = nullptr;
-    tjs_uint _bufferCount = 0;
-    int _bufferIdx = -1;
-    int _sendedSamples = 0;
+    ALuint   _alSource = 0;
+    ALenum   _alFormat = AL_FORMAT_STEREO16;
+
+    // Dynamic buffer pool — grows when needed
+    std::vector<ALuint>  _bufIds;      // OpenAL buffer IDs
+    std::vector<tjs_uint> _bufSizes;   // bytes in each buffer
+    int      _bufIdx = -1;             // round-robin write index
+    tjs_uint _sentSamples = 0;         // total samples enqueued
+
+    bool     _playing = false;
     tTJSCriticalSection _mtx;
 
+public:
     tTVPSoundBufferWASM(tTVPWaveFormat& fmt, int bufcount)
-      : _frame_size(fmt.BytesPerSample * fmt.Channels),
-        _bufferCount(bufcount > 0 ? bufcount : 4)
+      : _frameSize(fmt.BytesPerSample * fmt.Channels), _bytesPerSample(fmt.BytesPerSample)
     {
         _format = fmt;
-        _bytesPerSample = fmt.BytesPerSample;
-
-        // 先分配内存，Init() 中创建 OpenAL 对象
-        _bufferIds = new ALuint[_bufferCount];
-        _unqueueBuf = new ALuint[_bufferCount];
-        _bufferSize = new tjs_uint[_bufferCount];
-        memset(_bufferSize, 0, sizeof(tjs_uint) * _bufferCount);
+        int n = bufcount > 0 ? bufcount : 16;          // default 16 buffers
+        _bufIds.resize(n);
+        _bufSizes.resize(n, 0);
 
         if (fmt.Channels == 1)
             _alFormat = (fmt.BitsPerSample == 16) ? AL_FORMAT_MONO16 : AL_FORMAT_MONO8;
@@ -94,211 +75,184 @@ public:
             _alFormat = (fmt.BitsPerSample == 16) ? AL_FORMAT_STEREO16 : AL_FORMAT_STEREO8;
     }
 
-    virtual ~tTVPSoundBufferWASM()
+    ~tTVPSoundBufferWASM()
     {
         Stop();
         if (_alSource) {
             if (alcGetCurrentContext() != g_alContext) alcMakeContextCurrent(g_alContext);
             alDeleteSources(1, &_alSource);
         }
-        if (_bufferIds) {
+        if (!_bufIds.empty()) {
             if (alcGetCurrentContext() != g_alContext) alcMakeContextCurrent(g_alContext);
-            alDeleteBuffers(_bufferCount, _bufferIds);
+            alDeleteBuffers((ALsizei)_bufIds.size(), _bufIds.data());
         }
-        delete[] _bufferIds;
-        delete[] _unqueueBuf;
-        delete[] _bufferSize;
     }
 
-    virtual bool Init() override
+    bool Init() override
     {
         if (_format.BitsPerSample != 16 && _format.BitsPerSample != 8)
         {
-            TVPAddLog(ttstr(TJS_W("openal: unsupported bits: ")) + ttstr((int)_format.BitsPerSample));
+            TVPAddLog(ttstr(TJS_N("[openal] unsupported bits: ")) + ttstr((int)_format.BitsPerSample));
             delete this; return false;
         }
         if (!InitOpenAL()) { delete this; return false; }
 
-        // 确保 OpenAL 上下文在当前线程生效
-        if (alcGetCurrentContext() != g_alContext)
-            alcMakeContextCurrent(g_alContext);
-
+        if (alcGetCurrentContext() != g_alContext) alcMakeContextCurrent(g_alContext);
         alGenSources(1, &_alSource);
-        alGenBuffers(_bufferCount, _bufferIds);
+        alGenBuffers((ALsizei)_bufIds.size(), _bufIds.data());
         alSourcef(_alSource, AL_GAIN, 1.0f);
-
-        TVPAddLog(ttstr(TJS_W("openal: Init() freq=")) + ttstr((int)_format.SamplesPerSec)
-                  + ttstr(TJS_W(" ch=")) + ttstr((int)_format.Channels)
-                  + ttstr(TJS_W(" bits=")) + ttstr((int)_format.BitsPerSample));
+        TVPAddLog(ttstr(TJS_N("[openal] buf=")) + ttstr((int)_bufIds.size())
+                   + ttstr(TJS_N(" freq=")) + ttstr((int)_format.SamplesPerSec)
+                   + ttstr(TJS_N(" ch=")) + ttstr((int)_format.Channels));
         return true;
     }
 
-    virtual void Release() override { delete this; }
+    void Release() override { delete this; }
+    void Play() override  { if (_alSource) { alSourcePlay(_alSource); _playing = true; } }
+    void Pause() override { if (_alSource) alSourcePause(_alSource); _playing = false; }
 
-    virtual void Play() override
-    {
-        if (!_alSource) return;
-        ALenum state; alGetSourcei(_alSource, AL_SOURCE_STATE, &state);
-        if (state != AL_PLAYING) alSourcePlay(_alSource);
-        _playing = true;
-    }
-
-    virtual void Pause() override { if (_alSource) alSourcePause(_alSource); _playing = false; }
-
-    virtual void Stop() override
+    void Stop() override
     {
         _playing = false;
         if (_alSource) { alSourceStop(_alSource); alSourcei(_alSource, AL_BUFFER, 0); }
-        _bufferIdx = -1; _sendedSamples = 0;
+        _bufIdx = -1; _sentSamples = 0;
     }
 
-    virtual void Reset() override
+    void Reset() override
     {
         if (_alSource) { alSourceRewind(_alSource); alSourcei(_alSource, AL_BUFFER, 0); }
-        _bufferIdx = -1; _sendedSamples = 0;
+        _bufIdx = -1; _sentSamples = 0;
     }
 
-    virtual bool IsPlaying() override
+    bool IsPlaying() override
     {
         if (!_alSource) return false;
-        ALenum state; alGetSourcei(_alSource, AL_SOURCE_STATE, &state);
-        return state == AL_PLAYING;
+        ALenum s; alGetSourcei(_alSource, AL_SOURCE_STATE, &s);
+        return s == AL_PLAYING;
     }
 
-    virtual void SetVolume(float v) override { _volume = v; if (_alSource) alSourcef(_alSource, AL_GAIN, v); }
-    virtual float GetVolume() override { return _volume; }
+    void SetVolume(float v) override       { _volume = v; if (_alSource) alSourcef(_alSource, AL_GAIN, v); }
+    float GetVolume() override            { return _volume; }
+    void SetPan(float v) override         { _pan = v; if (_alSource) { float p[] = {v,0,0}; alSourcefv(_alSource, AL_POSITION, p); } }
+    float GetPan() override               { return _pan; }
 
-    virtual void SetPan(float v) override
+    // ── Core: Append decoded PCM data to the playback queue ──────────────
+    void AppendBuffer(const void* buf, unsigned int len) override
     {
-        _pan = v;
-        if (_alSource) { float pos[] = { v, 0.0f, 0.0f }; alSourcefv(_alSource, AL_POSITION, pos); }
-    }
-    virtual float GetPan() override { return _pan; }
-
-    virtual void AppendBuffer(const void* buf, unsigned int len) override
-    {
-        if (!buf || len <= 0 || !_alSource) return;
+        if (!buf || len <= 0 || !_alSource) { TVPAddLog(ttstr(TJS_N("[AL] Append skip buf=")) + ttstr((int)(intptr_t)buf) + ttstr(TJS_N(" len=")) + ttstr((int)len)); return; }
         tTJSCSH lk(_mtx);
+        if (alcGetCurrentContext() != g_alContext) alcMakeContextCurrent(g_alContext);
 
-        // 确保当前线程有 OpenAL 上下文
-        if (alcGetCurrentContext() != g_alContext)
-            alcMakeContextCurrent(g_alContext);
-
-        // 回收已处理完的缓冲区
+        // Recycle processed buffers
         ALint processed = 0;
         alGetSourcei(_alSource, AL_BUFFERS_PROCESSED, &processed);
-        if (processed > 0)
-        {
-            alSourceUnqueueBuffers(_alSource, processed, _unqueueBuf);
-            for (int i = 0; i < processed; ++i)
-                for (tjs_uint j = 0; j < _bufferCount; ++j)
-                    if (_bufferIds[j] == _unqueueBuf[i])
-                    { _sendedSamples += _bufferSize[j] / _frame_size; break; }
+        if (processed > 0) {
+            for (ALint i = 0; i < processed; ++i) {
+                ALuint b; alSourceUnqueueBuffers(_alSource, 1, &b);
+                for (size_t j = 0; j < _bufIds.size(); ++j)
+                    if (_bufIds[j] == b) { _sentSamples += _bufSizes[j] / _frameSize; break; }
+            }
         }
 
-        // 检查队列是否已满
+        // If queue is full, grow the buffer pool instead of dropping frames
         ALint queued = 0;
         alGetSourcei(_alSource, AL_BUFFERS_QUEUED, &queued);
-        if (queued >= (ALint)_bufferCount) return;
+        if (queued >= (ALint)_bufIds.size()) {
+            ALuint extra;
+            alGenBuffers(1, &extra);
+            _bufIds.push_back(extra);
+            _bufSizes.push_back(0);
+            TVPAddLog(ttstr(TJS_N("[AL] pool grew ")) + ttstr((int)_bufIds.size()));
+        }
 
-        ++_bufferIdx;
-        if (_bufferIdx >= (int)_bufferCount) _bufferIdx = 0;
-        ALuint bufid = _bufferIds[_bufferIdx];
-        alBufferData(bufid, _alFormat, buf, len, _format.SamplesPerSec);
-        alSourceQueueBuffers(_alSource, 1, &bufid);
-        _bufferSize[_bufferIdx] = len;
+        // Fill the next slot round-robin
+        ++_bufIdx;
+        if (_bufIdx >= (int)_bufIds.size()) _bufIdx = 0;
+        ALuint bid = _bufIds[_bufIdx];
+        alBufferData(bid, _alFormat, buf, (ALsizei)len, (ALsizei)_format.SamplesPerSec);
+        alSourceQueueBuffers(_alSource, 1, &bid);
+        _bufSizes[_bufIdx] = len;
 
-        // 确保 Source 处于播放状态（如果已停止则重启，避免间隙）
+        // Resume if needed
         if (_playing) {
-            ALenum state;
-            alGetSourcei(_alSource, AL_SOURCE_STATE, &state);
-            if (state != AL_PLAYING)
-                alSourcePlay(_alSource);
+            ALenum s; alGetSourcei(_alSource, AL_SOURCE_STATE, &s);
+            if (s != AL_PLAYING) alSourcePlay(_alSource);
         }
     }
 
-    virtual bool IsBufferValid() override
+    bool IsBufferValid() override
     {
         if (!_alSource) return false;
-        ALint processed = 0, queued = 0;
-        alGetSourcei(_alSource, AL_BUFFERS_PROCESSED, &processed);
-        alGetSourcei(_alSource, AL_BUFFERS_QUEUED, &queued);
-        if (processed > 0) return true;
-        return queued < (ALint)_bufferCount;
+        ALint p = 0, q = 0;
+        alGetSourcei(_alSource, AL_BUFFERS_PROCESSED, &p);
+        alGetSourcei(_alSource, AL_BUFFERS_QUEUED, &q);
+        return p > 0 || q < (ALint)_bufIds.size();
     }
 
-    virtual bool IsValidFormat(tTVPWaveFormat& fmt) override
+    bool IsValidFormat(tTVPWaveFormat& fmt) override
     {
         return _format.SamplesPerSec == fmt.SamplesPerSec &&
-               _format.BitsPerSample == fmt.BitsPerSample &&
-               _format.Channels == fmt.Channels;
+               _format.BitsPerSample  == fmt.BitsPerSample  &&
+               _format.Channels      == fmt.Channels;
     }
 
-    virtual tjs_uint GetCurrentPlaySamples() override
+    tjs_uint GetCurrentPlaySamples() override
     {
         if (!_alSource) return 0;
-        ALint offset = 0;
-        alGetSourcei(_alSource, AL_SAMPLE_OFFSET, &offset);
-        return _sendedSamples + offset;
+        ALint off = 0;
+        alGetSourcei(_alSource, AL_SAMPLE_OFFSET, &off);
+        return _sentSamples + off;
     }
 
-    virtual int GetRemainBuffers() override
+    int GetRemainBuffers() override
     {
         if (!_alSource) return 0;
-        ALint processed = 0, queued = 0;
-        alGetSourcei(_alSource, AL_BUFFERS_PROCESSED, &processed);
-        alGetSourcei(_alSource, AL_BUFFERS_QUEUED, &queued);
-        int remain = queued - processed;
-        if (remain < 0) remain = 0;
-        return remain;
+        ALint p = 0, q = 0;
+        alGetSourcei(_alSource, AL_BUFFERS_PROCESSED, &p);
+        alGetSourcei(_alSource, AL_BUFFERS_QUEUED, &q);
+        return q - p > 0 ? q - p : 0;
     }
 
-    virtual tjs_uint GetLatencySamples() override
+    tjs_uint GetLatencySamples() override
     {
         tTJSCSH lk(_mtx);
         if (!_alSource) return 0;
-        ALint offset = 0, queued = 0;
-        alGetSourcei(_alSource, AL_BYTE_OFFSET, &offset);
-        alGetSourcei(_alSource, AL_BUFFERS_QUEUED, &queued);
-        int remainBuffers = queued;
-        if (remainBuffers <= 0) return 0;
-        int total = -offset;
-        for (int i = 0; i < remainBuffers; ++i)
-        {
-            int idx = _bufferIdx + 1 - remainBuffers + i;
-            if (idx >= (int)_bufferCount) idx -= _bufferCount;
-            else if (idx < 0) idx += _bufferCount;
-            total += _bufferSize[idx];
+        ALint off = 0, qu = 0;
+        alGetSourcei(_alSource, AL_BYTE_OFFSET, &off);
+        alGetSourcei(_alSource, AL_BUFFERS_QUEUED, &qu);
+        int total = -off;
+        for (int i = 0; i < qu; ++i) {
+            int idx = _bufIdx + 1 - qu + i;
+            while (idx < 0) idx += (int)_bufIds.size();
+            while (idx >= (int)_bufIds.size()) idx -= (int)_bufIds.size();
+            total += _bufSizes[idx];
         }
-        return total / _frame_size;
+        return total / _frameSize;
     }
 
-    virtual float GetLatencySeconds() override { return (float)GetLatencySamples() / _format.SamplesPerSec; }
+    float GetLatencySeconds() override { return (float)GetLatencySamples() / _format.SamplesPerSec; }
 
-    virtual void SetPosition(float x, float y, float z) override
+    void SetPosition(float x, float y, float z) override
     {
         if (!_alSource) return;
-        float pos[] = { x, y, z };
-        alSourcefv(_alSource, AL_POSITION, pos);
+        float p[] = {x, y, z};
+        alSourcefv(_alSource, AL_POSITION, p);
     }
 };
 
-//---------------------------------------------------------------------------
-// 全局初始化
-//---------------------------------------------------------------------------
+// ── Global init / shutdown ──────────────────────────────────────────────
 static bool g_devInited = false;
 
 void TVPInitDirectSound(int freq)
 {
-    if (!g_devInited) { g_devInited = true; TVPAddLog(ttstr(TJS_W("openal: TVPInitDirectSound"))); InitOpenAL(); }
+    if (!g_devInited) { g_devInited = true; TVPAddLog(ttstr(TJS_N("[openal] TVPInitDirectSound"))); InitOpenAL(); }
 }
 
 void TVPUninitDirectSound()
 {
-    if (alcGetCurrentContext() != g_alContext)
-        alcMakeContextCurrent(g_alContext);
+    if (alcGetCurrentContext() != g_alContext) alcMakeContextCurrent(g_alContext);
     if (g_alContext) { alcMakeContextCurrent(nullptr); alcDestroyContext(g_alContext); g_alContext = nullptr; }
-    if (g_alDevice) { alcCloseDevice(g_alDevice); g_alDevice = nullptr; }
+    if (g_alDevice)  { alcCloseDevice(g_alDevice); g_alDevice = nullptr; }
     g_alInited = false;
 }
 

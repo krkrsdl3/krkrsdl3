@@ -4,6 +4,7 @@
 #include "WaveSegmentQueue.h"
 #include "WaveIntf.h"
 #include "PlatformMutex.h"
+#include <atomic>
 
 //---------------------------------------------------------------------------
 // tTVPSoundStatus
@@ -146,7 +147,6 @@ public:
 // tTJSNI_WaveSoundBuffer : Wave Native Instance
 //---------------------------------------------------------------------------
 class tTVPWaveLoopManager;
-class tTVPWaveSoundBufferDecodeThread;
 class tTJSNI_WaveSoundBuffer : public tTJSNI_BaseWaveSoundBuffer
 {
     typedef tTJSNI_BaseWaveSoundBuffer inherited;
@@ -201,9 +201,12 @@ private:
 public:
     tTJSCriticalSection& GetBufferCS() { return BufferCS; }
 
+public:
+    std::atomic_bool DecodeActive{false};
+    std::atomic_bool DecodeInProgress{false};
+
 private:
     tTVPWaveDecoder* Decoder;
-    tTVPWaveSoundBufferDecodeThread* Thread;
 
 public:
     bool ThreadCallbackEnabled;

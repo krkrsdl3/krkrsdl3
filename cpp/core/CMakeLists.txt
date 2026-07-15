@@ -83,7 +83,6 @@ set(KRKRSDL_CORE_SRC
     ${KRKRSDL_CORE_PATH}/utils/Random.cpp
     ${KRKRSDL_CORE_PATH}/utils/RealFFT.cpp
 	${KRKRSDL_CORE_PATH}/utils/ResampleImage.cpp
-    ${KRKRSDL_CORE_PATH}/utils/TickCount.cpp
     ${KRKRSDL_CORE_PATH}/utils/TVPSettings.cpp
     ${KRKRSDL_CORE_PATH}/utils/TVPTimer.cpp
     ${KRKRSDL_CORE_PATH}/utils/VelocityTracker.cpp

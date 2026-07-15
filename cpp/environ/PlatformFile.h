@@ -5,36 +5,14 @@
 #include "UtilStreams.h"
 
 //---------------------------------------------------------------------------
-// tTVPLocalFileStream
-//---------------------------------------------------------------------------
-class tTVPLocalFileStream : public tTJSBinaryStream
-{
-private:
-    void* Handle;
-    tTVPMemoryStream* MemBuffer = nullptr;
-    ttstr FileName;
-
-public:
-    tTVPLocalFileStream(const ttstr& origname, const ttstr& localname, tjs_uint32 flag);
-    ~tTVPLocalFileStream();
-
-    tjs_uint64 Seek(tjs_int64 offset, tjs_int whence);
-
-    tjs_uint Read(void* buffer, tjs_uint read_size);
-    tjs_uint Write(const void* buffer, tjs_uint write_size);
-    bool Flush();
-
-    void SetEndOfStorage();
-
-    tjs_uint64 GetSize();
-    const std::string GetFileName() { return FileName.AsStdString(); }
-
-    void* GetHandle() const { return Handle; }
-};
-//---------------------------------------------------------------------------
 // tTVPFileMedia
 //---------------------------------------------------------------------------
 iTVPStorageMedia* TVPCreateFileMedia();
+// creates a platform-specific local file stream
+tTJSBinaryStream* TVPCreateLocalFileStream(const ttstr& origname,
+                                           const ttstr& localname,
+                                           tjs_uint32 flag);
+//
 //
 std::string TVPGetDefaultFileDir();
 std::vector<std::string> TVPGetAppStoragePath();

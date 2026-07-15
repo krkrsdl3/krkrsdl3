@@ -401,7 +401,7 @@ public:
             if (!r)
             {
                 ttstr mes;
-                TVPAddLog(ttstr(TJS_N("moveFile : ")) + fromFile + ", " + toFile + TJS_N("Failed"));
+                TVPAddLog(ttstr(TJS_N("moveFile : ")) + fromFile + ", " + toFile + TJS_N(" Failed"));
             }
             else
             {

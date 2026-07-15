@@ -7,6 +7,7 @@
 * Windows/View Operation
 */
 void TVPSetWindowTitle(const char* title);
+std::string TVPGetWindowTitle();
 void TVPSetWindowFullscreen(bool isFullscreen);
 void TVPGetWindowSize(int* w, int* h);
 void TVPSetWindowSize(int w, int h);

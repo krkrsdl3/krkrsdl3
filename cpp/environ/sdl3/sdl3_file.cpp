@@ -211,7 +211,38 @@ static SDL_EnumerationResult SDLCALL TVPFileinfoCb(void* userdata,
 }
 
 //---------------------------------------------------------------------------
-// tTVPLocalFileStream
+// tTVPLocalFileStream — defined internally, header only exposes factory
+//---------------------------------------------------------------------------
+class tTVPLocalFileStream : public tTJSBinaryStream
+{
+private:
+    void* Handle;
+    tTVPMemoryStream* MemBuffer = nullptr;
+    ttstr FileName;
+
+public:
+    tTVPLocalFileStream(const ttstr& origname, const ttstr& localname, tjs_uint32 flag);
+    ~tTVPLocalFileStream();
+
+    tjs_uint64 Seek(tjs_int64 offset, tjs_int whence);
+    tjs_uint Read(void* buffer, tjs_uint read_size);
+    tjs_uint Write(const void* buffer, tjs_uint write_size);
+    bool Flush();
+    void SetEndOfStorage();
+    tjs_uint64 GetSize();
+    const std::string GetFileName() { return FileName.AsStdString(); }
+    void* GetHandle() const { return Handle; }
+};
+
+tTJSBinaryStream* TVPCreateLocalFileStream(const ttstr& origname,
+                                           const ttstr& localname,
+                                           tjs_uint32 flag)
+{
+    return new tTVPLocalFileStream(origname, localname, flag);
+}
+
+//---------------------------------------------------------------------------
+// tTVPLocalFileStream implementation
 //---------------------------------------------------------------------------
 tTVPLocalFileStream::tTVPLocalFileStream(const ttstr& origname,
                                          const ttstr& localname,
@@ -278,7 +309,7 @@ tTVPLocalFileStream::tTVPLocalFileStream(const ttstr& origname,
     }
 
     // push current tick as an environment noise
-    uint32_t tick = TVPGetRoughTickCount32();
+    uint64_t tick = TVPGetRoughTickCount();
     TVPPushEnvironNoise(&tick, sizeof(tick));
 }
 //---------------------------------------------------------------------------
@@ -303,7 +334,7 @@ tTVPLocalFileStream::~tTVPLocalFileStream()
 
     // push current tick as an environment noise
     // (timing information from file accesses may be good noises)
-    uint32_t tick = TVPGetRoughTickCount32();
+    uint64_t tick = TVPGetRoughTickCount();
     TVPPushEnvironNoise(&tick, sizeof(tick));
 }
 //---------------------------------------------------------------------------

@@ -19,6 +19,7 @@
 #include "WaveIntf.h"
 #include "GraphicsLoadThread.h"
 #include "Platform.h"
+#include "PlatformView.h"
 #include "TVPEvent.h"
 
 #include "TVPStorage.h"
@@ -30,12 +31,10 @@ tTVPApplication* Application = new tTVPApplication;
 static tTJSCriticalSection _NoMemCallBackCS;
 static void* _reservedMem = malloc(1024 * 1024 * 4); // 4M reserved mem
 static bool _project_startup = false;
-tTJS* TVPAppScriptEngine;
-static std::string _title, _msg, _retry, _cancel;
 
 ttstr TVPGetErrorDialogTitle()
 {
-    const ttstr& title = Application->GetTitle();
+    const ttstr& title = TVPGetWindowTitle();
     if (title.IsEmpty())
     {
         return TVPGetPackageVersionString() + " Error";
@@ -44,11 +43,6 @@ ttstr TVPGetErrorDialogTitle()
     {
         return ttstr(TVPGetPackageVersionString()) + " " + title;
     }
-}
-
-ttstr ExePath()
-{
-    return TVPNativeProjectDir;
 }
 
 void TVPOnError();
@@ -90,16 +84,9 @@ tTVPApplication::~tTVPApplication()
     delete image_load_thread_;
 }
 
-extern void TVPLoadPluigins(void);
 bool tTVPApplication::StartApplication()
 {
     TVPTerminateCode = 0;
-    _retry = "retry";
-    _cancel = "cancel";
-    _msg = "内存不足";
-    _title = "发生异常";
-
-    CheckConsole();
 
     // try starting the program!
     try
@@ -113,18 +100,14 @@ bool tTVPApplication::StartApplication()
 
         // TVPInitializeBaseSystems
         TVPInitializeBaseSystems();
-
-        Initialize();
         
         image_load_thread_ = new tTVPAsyncImageLoader();
 
         TVPLoadPluigins(); // load plugin module *.tpm
         TVPSystemInit();
 
-        SetTitle(TVPKirikiri.operator const tjs_char*());
+        TVPSetWindowTitle(TVPKirikiri.operator const tjs_char*());
         TVPSystemControl = new tTVPSystemControl();
-        // Check digitizer
-        CheckDigitizer();
 
         // start image load thread
         image_load_thread_->Resume();
@@ -138,56 +121,6 @@ bool tTVPApplication::StartApplication()
     }
 
     return true;
-}
-/**
- * コンソールからの起動か確認し、コンソールからの起動の場合は、標準出力を割り当てる
- */
-void tTVPApplication::CheckConsole()
-{
-#ifdef TVP_LOG_TO_COMMANDLINE_CONSOLE
-    if (has_map_report_process_)
-        return; // 書き出し用子プロセスして起動されていた時はコンソール接続しない
-    HANDLE hin = ::GetStdHandle(STD_INPUT_HANDLE);
-    HANDLE hout = ::GetStdHandle(STD_OUTPUT_HANDLE);
-    HANDLE herr = ::GetStdHandle(STD_ERROR_HANDLE);
-
-    DWORD curProcId = ::GetCurrentProcessId();
-    DWORD processList[256];
-    DWORD count = ::GetConsoleProcessList(processList, 256);
-    bool thisProcHasConsole = false;
-    for (DWORD i = 0; i < count; i++)
-    {
-        if (processList[i] == curProcId)
-        {
-            thisProcHasConsole = true;
-            break;
-        }
-    }
-    bool attachedConsole = true;
-    if (thisProcHasConsole == false)
-    {
-        attachedConsole = ::AttachConsole(ATTACH_PARENT_PROCESS) != 0;
-    }
-
-    if ((hin == 0 || hout == 0 || herr == 0) && attachedConsole)
-    {
-        wchar_t console[256];
-        ::GetConsoleTitle(console, 256);
-        console_title_ = std::wstring(console);
-        // 元のハンドルを再割り当て
-        if (hin)
-            ::SetStdHandle(STD_INPUT_HANDLE, hin);
-        if (hout)
-            ::SetStdHandle(STD_OUTPUT_HANDLE, hout);
-        if (herr)
-            ::SetStdHandle(STD_ERROR_HANDLE, herr);
-    }
-    is_attach_console_ = attachedConsole;
-#endif
-}
-
-void tTVPApplication::CloseConsole()
-{
 }
 
 void tTVPApplication::ShowException(const ttstr& e)
@@ -229,19 +162,10 @@ void tTVPApplication::ProcessMessages()
     TVPTimer::ProgressAllTimer();
 }
 
-void tTVPApplication::SetTitle(const ttstr& caption)
-{
-    title_ = caption;
-}
-
 void tTVPApplication::Terminate()
 {
     tarminate_ = true;
     TVPTerminated = true;
-}
-
-void tTVPApplication::CheckDigitizer()
-{
 }
 
 void tTVPApplication::PostUserMessage(const std::function<void()>& func, void* host, int msg)
@@ -304,8 +228,6 @@ void tTVPApplication::OnExit()
     if (TVPSystemControl)
         delete TVPSystemControl;
     TVPSystemControl = NULL;
-
-    CloseConsole();
 }
 
 void tTVPApplication::OnLowMemory()

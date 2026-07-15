@@ -91,7 +91,7 @@ void tTVPSystemControl::EndContinuousEvent()
 void tTVPSystemControl::NotifyCloseClicked()
 {
     // close Button is clicked
-    LastCloseClickedTick = TVPGetRoughTickCount32();
+    LastCloseClickedTick = TVPGetRoughTickCount();
 }
 
 void tTVPSystemControl::NotifyEventDelivered()
@@ -105,7 +105,7 @@ bool tTVPSystemControl::ApplicationIdle()
 {
     DeliverEvents();
     bool cont = !ContinuousEventCalling;
-    MixedIdleTick += TVPGetRoughTickCount32();
+    MixedIdleTick += TVPGetRoughTickCount();
     return cont;
 }
 
@@ -128,7 +128,7 @@ void tTVPSystemControl::SystemWatchTimerTimer()
     }
 
     // call events
-    uint32_t tick = TVPGetRoughTickCount32();
+    uint64_t tick = TVPGetRoughTickCount();
     // push environ noise
     TVPPushEnvironNoise(&tick, sizeof(tick));
     TVPPushEnvironNoise(&LastCompactedTick, sizeof(LastCompactedTick));

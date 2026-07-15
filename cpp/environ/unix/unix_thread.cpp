@@ -18,6 +18,9 @@
 #include "TVPDebug.h"
 
 #include <pthread.h>
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 #include <algorithm>
 #include <thread>
 #include <mutex>
@@ -45,8 +48,7 @@ int EMSCRIPTEN_KEEPALIVE wasmGetThreadTotalCreated() { return _tvpThreadTotalCre
 // 在 pthread worker 中使用的非 ASYNCIFY 睡眠函数
 static void do_sleep_ms(uint32_t ms)
 {
-    struct timespec ts = { (time_t)(ms / 1000), (long)((ms % 1000) * 1000000) };
-    nanosleep(&ts, nullptr);
+    emscripten_sleep(ms);
 }
 
 //---------------------------------------------------------------------------
@@ -74,7 +76,7 @@ tTVPThread::tTVPThread()
 
     if (pthread_create(&THR_IMPL->thread, nullptr, (void* (*)(void*))StartProc, this) != 0)
     {
-        TVPAddLog(ttstr(TJS_W("WARNING: pthread_create failed")));
+        TVPAddLog(ttstr(TJS_N("WARNING: pthread_create failed")));
         THR_IMPL->thread_created = false;
     }
     else
@@ -232,7 +234,7 @@ static tjs_int GetProcesserNum(void)
     {
         processor_num = (tjs_int)std::thread::hardware_concurrency();
         tjs_char tmp[34];
-        TVPAddLog(ttstr(TJS_W("Detected CPU core(s): ")) + TJS_tTVInt_to_str(processor_num, tmp));
+        TVPAddLog(ttstr(TJS_N("Detected CPU core(s): ")) + TJS_tTVInt_to_str(processor_num, tmp));
     }
     return processor_num;
 }
@@ -284,7 +286,11 @@ uint64_t TVPGetCurrentThreadID()
 
 void TVPSleepFor(uint32_t ms)
 {
+#ifdef __EMSCRIPTEN__
+    emscripten_sleep(ms);
+#else
     do_sleep_ms(ms);
+#endif
 }
 
 //---------------------------------------------------------------------------

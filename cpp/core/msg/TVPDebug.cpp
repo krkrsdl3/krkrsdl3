@@ -411,11 +411,7 @@ void TVPAddLog(const ttstr& line, bool appendtoimportant)
         // OutputDebugStringW( L"\n" );
 #endif // ENABLE_DEBUGGER
 
-    // safe guard
-    buf.Replace("%", "___\x01___");
-    buf.Replace("___\x01___", "%%");
-    // 
-    TVPConsoleLog(buf.c_str());
+    TVPConsoleLog("%s", buf.c_str());
 
     if (TVPLoggingToFile)
         TVPLogStreamHolder.Log(buf);
@@ -614,7 +610,7 @@ class tTVPTJS2DumpOutputGateway : public iTJSConsoleOutput
 //---------------------------------------------------------------------------
 void TVPTJS2StartDump()
 {
-    ttstr filename = ExePath() + ttstr("/") + TJS_N(".dump.txt");
+    ttstr filename = TVPNativeProjectDir + ttstr("/") + TJS_N(".dump.txt");
     TVPDumpOutFileName = filename;
     TVPDumpOutFile = TVPCreateBinaryStreamForWrite(filename.c_str(), TJS_N("wb+"));
 }
@@ -625,7 +621,7 @@ void TVPTJS2EndDump()
     {
         delete TVPDumpOutFile;
         TVPDumpOutFile = NULL;
-        TVPAddLog(ttstr(TJS_W("Dumped to ")) + TVPDumpOutFileName);
+        TVPAddLog(ttstr(TJS_N("Dumped to ")) + TVPDumpOutFileName);
     }
 }
 //---------------------------------------------------------------------------

@@ -12,8 +12,6 @@
 #include <SDL3/SDL_video.h>
 #include <SDL3/SDL_keyboard.h>
 
-extern SDL_Window* tvp_window;
-
 bool TVP_stat(const char* name, tTVP_stat& s)
 {
     if (!name)
@@ -92,7 +90,7 @@ void TVPConsoleLog(const tjs_char* format, ...)
 {
     va_list args;
     va_start(args, format);
-    SDL_Log(format, args);
+    SDL_LogMessageV(SDL_LOG_CATEGORY_APPLICATION, SDL_LOG_PRIORITY_INFO, format, args);
     va_end(args);
 }
 
@@ -135,17 +133,7 @@ void TVPOpenPatchLibUrl()
     SDL_OpenURL(url.c_str());
 }
 
-tjs_uint32 TVPGetRoughTickCount32()
+tjs_uint64 TVPGetRoughTickCount()
 {
     return SDL_GetTicks();
-}
-
-void TVPShowIME(int x, int y, int w, int h)
-{
-    SDL_StartTextInput(tvp_window);
-}
-
-void TVPHideIME()
-{
-    SDL_StopTextInput(tvp_window);
 }
