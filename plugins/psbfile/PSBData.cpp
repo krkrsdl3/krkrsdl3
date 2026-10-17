@@ -63,26 +63,46 @@ bool PSBHeader::parsePSBHeader(TJS::tTJSBinaryStream* stream)
 
 bool parsePSBArray(std::vector<tjs_uint32>* target, tjs_int8 n, TJS::tTJSBinaryStream* stream)
 {
-    if (n < 0 || n > 8)
+    if (n < 1 || n > 8)
     {
         TVPConsoleLog("bad length type size");
         return false;
     }
-    tjs_uint32 count = 0;
-    stream->ReadBuffer(&count, n);
+    // ArrayN1..N8 encode the count in up to eight little-endian bytes.
+    tjs_uint8 countBytes[8] = {};
+    stream->ReadBuffer(countBytes, n);
+    tjs_uint64 count = 0;
+    for (int i = 0; i < n; ++i)
+        count |= static_cast<tjs_uint64>(countBytes[i]) << (i * 8);
     if (count > INT32_MAX)
     {
         TVPConsoleLog("Long array is not supported yet");
         return false;
     }
-    tjs_uint32 entryLength = stream->ReadI8LE() - static_cast<tjs_uint32>(PSBObjType::NumberN8);
-    target->reserve(count);
-    for (int i = 0; i < count; i++)
+    const tjs_uint32 entryLength =
+        stream->ReadI8LE() - static_cast<tjs_uint32>(PSBObjType::NumberN8);
+    if (entryLength < 1 || entryLength > 8)
+    {
+        TVPConsoleLog("bad array entry size");
+        return false;
+    }
+    const tjs_uint64 position = stream->GetPosition();
+    const tjs_uint64 size = stream->GetSize();
+    if (position > size || count > (size - position) / entryLength)
+    {
+        TVPConsoleLog("array runs past the end of the PSB");
+        return false;
+    }
+    target->reserve(target->size() + static_cast<size_t>(count));
+    for (tjs_uint64 i = 0; i < count; ++i)
     {
         tjs_uint32 result = 0;
-        for (tjs_uint8 j = 0; j < entryLength; ++j)
+        for (tjs_uint32 j = 0; j < entryLength; ++j)
         {
-            result |= stream->ReadI8LE() << (j * 8);
+            const tjs_uint32 byte = stream->ReadI8LE();
+            // Consume wide entries fully, but never shift past the 32-bit result.
+            if (j < 4)
+                result |= byte << (j * 8);
         }
         target->push_back(result);
     }
