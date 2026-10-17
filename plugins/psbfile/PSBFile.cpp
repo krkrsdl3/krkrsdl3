@@ -135,7 +135,7 @@ bool tTJSNI_PsbFile::loadFromStream(tTJSBinaryStream* _filePtr, const ttstr& fil
             filePtr);
         // Load Names
         namesCache.reserve(nameIndexes.size());
-        for (int i = 0; i < namesCache.size(); i++)
+        for (size_t i = 0; i < nameIndexes.size(); i++)
         {
             filePtr->SetPosition(_header.offsetNames + nameIndexes[i]);
             std::string str;
@@ -235,12 +235,12 @@ tjs_uint32 tTJSNI_PsbFile::readListInfo(std::vector<tjs_uint32>* target)
 void tTJSNI_PsbFile::refreshListInfo(std::vector<tjs_uint32>* target1,
                                      std::vector<tjs_uint32>* target2)
 {
-    target2->reserve(target1->size());
+    target2->resize(target1->size());
     tjs_uint32 basePose = filePtr->GetPosition();
     for (tjs_uint32 i = 0; i < target1->size(); i++)
     {
         filePtr->SetPosition(basePose + target1->at(i));
-        target2->at(i) = filePtr->ReadI8LE();
+        target2->at(i) = filePtr->ReadI32LE();
         target1->at(i) += 4;
     }
 }
@@ -277,7 +277,7 @@ tTJSVariant tTJSNI_PsbFile::readAllObjs(const ttstr& key, tjs_uint32 _objOffset)
         {
             tjs_int32 val32 = 0;
             filePtr->ReadBuffer(&val32, 3);
-            val32 |= ((val32 & 0x800000) == 0 ? 0 : 0xFFFF0000);
+            val32 |= ((val32 & 0x800000) == 0 ? 0 : (tjs_int32)0xFF000000);
             return tTJSVariant(val32);
         }
         case PSB::PSBObjType::NumberN4:
@@ -290,21 +290,21 @@ tTJSVariant tTJSNI_PsbFile::readAllObjs(const ttstr& key, tjs_uint32 _objOffset)
         {
             tjs_int64 val64 = 0;
             filePtr->ReadBuffer(&val64, 5);
-            val64 |= ((val64 & 0x8000000000) == 0 ? 0 : 0xFFFFFFFF00000000);
+            val64 |= ((val64 & 0x8000000000) == 0 ? 0 : (tjs_int64)0xFFFFFF0000000000);
             return tTJSVariant(val64);
         }
         case PSB::PSBObjType::NumberN6:
         {
             tjs_int64 val64 = 0;
             filePtr->ReadBuffer(&val64, 6);
-            val64 |= ((val64 & 0x800000000000) == 0 ? 0 : 0xFFFFFF0000000000);
+            val64 |= ((val64 & 0x800000000000) == 0 ? 0 : (tjs_int64)0xFFFF000000000000);
             return tTJSVariant(val64);
         }
         case PSB::PSBObjType::NumberN7:
         {
             tjs_int64 val64 = 0;
             filePtr->ReadBuffer(&val64, 7);
-            val64 |= ((val64 & 0x80000000000000) == 0 ? 0 : 0xFFFF000000000000);
+            val64 |= ((val64 & 0x80000000000000) == 0 ? 0 : (tjs_int64)0xFF00000000000000);
             return tTJSVariant(val64);
         }
         case PSB::PSBObjType::NumberN8:
