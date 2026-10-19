@@ -1811,7 +1811,7 @@ bool emotefile::load(const ttstr& filePath)
             filePtr);
         // Load Names
         namesCache.reserve(nameIndexes.size());
-        for (int i = 0; i < namesCache.size(); i++)
+        for (size_t i = 0; i < nameIndexes.size(); i++)
         {
             filePtr->SetPosition(_header.offsetNames + nameIndexes[i]);
             std::string str;
@@ -1923,7 +1923,7 @@ tTJSVariant emotefile::readAllObjs(const ttstr& key, tjs_uint32 _objOffset)
         {
             tjs_int32 val32 = 0;
             filePtr->ReadBuffer(&val32, 3);
-            val32 |= ((val32 & 0x800000) == 0 ? 0 : 0xFFFF0000);
+            val32 |= ((val32 & 0x800000) == 0 ? 0 : (tjs_int32)0xFF000000);
             return tTJSVariant(val32);
         }
         case PSB::PSBObjType::NumberN4:
@@ -1936,21 +1936,21 @@ tTJSVariant emotefile::readAllObjs(const ttstr& key, tjs_uint32 _objOffset)
         {
             tjs_int64 val64 = 0;
             filePtr->ReadBuffer(&val64, 5);
-            val64 |= ((val64 & 0x8000000000) == 0 ? 0 : 0xFFFFFFFF00000000);
+            val64 |= ((val64 & 0x8000000000) == 0 ? 0 : (tjs_int64)0xFFFFFF0000000000);
             return tTJSVariant(val64);
         }
         case PSB::PSBObjType::NumberN6:
         {
             tjs_int64 val64 = 0;
             filePtr->ReadBuffer(&val64, 6);
-            val64 |= ((val64 & 0x800000000000) == 0 ? 0 : 0xFFFFFF0000000000);
+            val64 |= ((val64 & 0x800000000000) == 0 ? 0 : (tjs_int64)0xFFFF000000000000);
             return tTJSVariant(val64);
         }
         case PSB::PSBObjType::NumberN7:
         {
             tjs_int64 val64 = 0;
             filePtr->ReadBuffer(&val64, 7);
-            val64 |= ((val64 & 0x80000000000000) == 0 ? 0 : 0xFFFF000000000000);
+            val64 |= ((val64 & 0x80000000000000) == 0 ? 0 : (tjs_int64)0xFF00000000000000);
             return tTJSVariant(val64);
         }
         case PSB::PSBObjType::NumberN8:
@@ -2096,12 +2096,12 @@ uint32_t emotefile::readListInfo(std::vector<uint32_t>* target)
 }
 void emotefile::refreshListInfo(std::vector<uint32_t>* target1, std::vector<uint32_t>* target2)
 {
-    target2->reserve(target1->size());
+    target2->resize(target1->size());
     uint32_t basePose = filePtr->GetPosition();
     for (uint32_t i = 0; i < target1->size(); i++)
     {
         filePtr->SetPosition(basePose + target1->at(i));
-        target2->at(i) = filePtr->ReadI8LE();
+        target2->at(i) = filePtr->ReadI32LE();
         target1->at(i) += 4;
     }
 }
@@ -2169,7 +2169,7 @@ bool emotefile::parseNumber(int64_t& output, uint32_t _objOffset)
         {
             int32_t val32 = 0;
             filePtr->ReadBuffer(&val32, 3);
-            val32 |= ((val32 & 0x800000) == 0 ? 0 : 0xFFFF0000);
+            val32 |= ((val32 & 0x800000) == 0 ? 0 : (tjs_int32)0xFF000000);
             output = static_cast<int64_t>(val32);
             return true;
         }
@@ -2184,7 +2184,7 @@ bool emotefile::parseNumber(int64_t& output, uint32_t _objOffset)
         {
             int64_t val64 = 0;
             filePtr->ReadBuffer(&val64, 5);
-            val64 |= ((val64 & 0x8000000000) == 0 ? 0 : 0xFFFFFFFF00000000);
+            val64 |= ((val64 & 0x8000000000) == 0 ? 0 : (tjs_int64)0xFFFFFF0000000000);
             output = static_cast<int64_t>(val64);
             return true;
         }
@@ -2192,7 +2192,7 @@ bool emotefile::parseNumber(int64_t& output, uint32_t _objOffset)
         {
             int64_t val64 = 0;
             filePtr->ReadBuffer(&val64, 6);
-            val64 |= ((val64 & 0x800000000000) == 0 ? 0 : 0xFFFFFF0000000000);
+            val64 |= ((val64 & 0x800000000000) == 0 ? 0 : (tjs_int64)0xFFFF000000000000);
             output = static_cast<int64_t>(val64);
             return true;
         }
@@ -2200,7 +2200,7 @@ bool emotefile::parseNumber(int64_t& output, uint32_t _objOffset)
         {
             int64_t val64 = 0;
             filePtr->ReadBuffer(&val64, 7);
-            val64 |= ((val64 & 0x80000000000000) == 0 ? 0 : 0xFFFF000000000000);
+            val64 |= ((val64 & 0x80000000000000) == 0 ? 0 : (tjs_int64)0xFF00000000000000);
             output = static_cast<int64_t>(val64);
             return true;
         }
@@ -2249,7 +2249,7 @@ bool emotefile::parseReal(double& output, uint32_t _objOffset)
         {
             int32_t val32 = 0;
             filePtr->ReadBuffer(&val32, 3);
-            val32 |= ((val32 & 0x800000) == 0 ? 0 : 0xFFFF0000);
+            val32 |= ((val32 & 0x800000) == 0 ? 0 : (tjs_int32)0xFF000000);
             output = static_cast<int64_t>(val32);
             return true;
         }
@@ -2264,7 +2264,7 @@ bool emotefile::parseReal(double& output, uint32_t _objOffset)
         {
             int64_t val64 = 0;
             filePtr->ReadBuffer(&val64, 5);
-            val64 |= ((val64 & 0x8000000000) == 0 ? 0 : 0xFFFFFFFF00000000);
+            val64 |= ((val64 & 0x8000000000) == 0 ? 0 : (tjs_int64)0xFFFFFF0000000000);
             output = static_cast<int64_t>(val64);
             return true;
         }
@@ -2272,7 +2272,7 @@ bool emotefile::parseReal(double& output, uint32_t _objOffset)
         {
             int64_t val64 = 0;
             filePtr->ReadBuffer(&val64, 6);
-            val64 |= ((val64 & 0x800000000000) == 0 ? 0 : 0xFFFFFF0000000000);
+            val64 |= ((val64 & 0x800000000000) == 0 ? 0 : (tjs_int64)0xFFFF000000000000);
             output = static_cast<int64_t>(val64);
             return true;
         }
@@ -2280,7 +2280,7 @@ bool emotefile::parseReal(double& output, uint32_t _objOffset)
         {
             int64_t val64 = 0;
             filePtr->ReadBuffer(&val64, 7);
-            val64 |= ((val64 & 0x80000000000000) == 0 ? 0 : 0xFFFF000000000000);
+            val64 |= ((val64 & 0x80000000000000) == 0 ? 0 : (tjs_int64)0xFF00000000000000);
             output = static_cast<int64_t>(val64);
             return true;
         }
