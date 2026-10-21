@@ -19,6 +19,14 @@
 
 #include <SDL3/SDL_init.h>
 #include <SDL3/SDL_timer.h>
+#include <cstring>
+#if defined(__APPLE__)
+#include <pthread/qos.h>
+#include <dispatch/dispatch.h>
+#include <sys/event.h>
+#include <unistd.h>
+#include <cerrno>
+#endif
 
 //---------------------------------------------------------------------------
 // tTVPThread : a wrapper class for thread
@@ -26,7 +34,7 @@
 #define THR_IMPL ((TVPThreadImpl*)_impl)
 struct TVPThreadImpl
 {
-    SDL_Thread* thread;
+    const char* name;    int kq = -1;    SDL_Thread* thread;
     SDL_Mutex* mutex;
     SDL_Condition* cond;
 };
@@ -36,6 +44,16 @@ tTVPThread::tTVPThread(const char* name)
     Suspended = true;
 
     _impl = new TVPThreadImpl;
+    THR_IMPL->name = name;
+#if defined(__APPLE__)
+    THR_IMPL->kq = kqueue();
+    if (THR_IMPL->kq >= 0)
+    {
+        struct kevent ev;
+        EV_SET(&ev, 2, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, nullptr);
+        if (kevent(THR_IMPL->kq, &ev, 1, nullptr, 0, nullptr) < 0) { close(THR_IMPL->kq); THR_IMPL->kq = -1; }
+    }
+#endif
     THR_IMPL->mutex = SDL_CreateMutex();
     THR_IMPL->cond = SDL_CreateCondition();
     THR_IMPL->thread = SDL_CreateThread(StartProc, name, this);
@@ -51,6 +69,9 @@ tTVPThread::~tTVPThread()
         Terminate();
     SDL_DestroyCondition(THR_IMPL->cond);
     SDL_DestroyMutex(THR_IMPL->mutex);
+#if defined(__APPLE__)
+    if (THR_IMPL->kq >= 0) close(THR_IMPL->kq);
+#endif
     delete THR_IMPL;
     _impl = NULL;
 }
@@ -70,6 +91,20 @@ void tTVPThread::Sleep(unsigned int milliseconds)
 {
     if (IsCurrentThread())
     {
+#if defined(__APPLE__)
+        // pthread_cond_timedwait 在 macOS 上实际会晚 90~110ms 才返回：系统会合并
+        // 定时器，且默认线程 QoS 较低。这导致每 10ms 一次的轮询变成每 100ms 一次，
+        // 视频播放循环直接慢了十倍。kqueue 的 NOTE_CRITICAL 计时器精度足够，
+        // 配合 EVFILT_USER 还能保留 Resume() 主动唤醒的能力。
+        if (THR_IMPL->kq >= 0)
+        {
+            struct kevent change, event;
+            EV_SET(&change, 1, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
+                   NOTE_NSECONDS | NOTE_CRITICAL, (int64_t)milliseconds * 1000000, nullptr);
+            while (kevent(THR_IMPL->kq, &change, 1, &event, 1, nullptr) < 0 && errno == EINTR) {}
+            return;
+        }
+#endif
         SDL_LockMutex(THR_IMPL->mutex);
         SDL_WaitConditionTimeout(THR_IMPL->cond, THR_IMPL->mutex, (int)milliseconds);
         SDL_UnlockMutex(THR_IMPL->mutex);
@@ -91,6 +126,18 @@ int tTVPThread::StartProc(void* arg)
     TVPThreadImpl* impl = (TVPThreadImpl*)_this->_impl;
     if (!impl)
         return 0;
+#if defined(__APPLE__)
+    // decoder polls, the 60 ms sound feeder) to 100-160 ms. Real-time media
+    // threads run user-interactive; the rest user-initiated, below the main thread.
+    {
+        static const char* const realtime[] = {"TVPVideoPlayer", "TVPVideoPlayerVideo",
+            "TVPVideoPlayerAudio", "TVPWaveSoundBufferThread", "TVPTimerThread"};
+        qos_class_t qos = QOS_CLASS_USER_INITIATED;
+        for (const char* n : realtime)
+            if (impl->name && !std::strcmp(impl->name, n)) qos = QOS_CLASS_USER_INTERACTIVE;
+        pthread_set_qos_class_self_np(qos, 0);
+    }
+#endif
 
     // 等待恢复
     if (_this->Suspended)
@@ -127,6 +174,14 @@ void tTVPThread::Resume()
 {
     Suspended = false;
     SDL_SignalCondition(THR_IMPL->cond);
+#if defined(__APPLE__)
+    if (THR_IMPL->kq >= 0)    {
+        struct kevent ev;
+        // 唤醒正在 kqueue 上等待的 Sleep()。
+        EV_SET(&ev, 2, EVFILT_USER, 0, NOTE_TRIGGER, 0, nullptr);
+        kevent(THR_IMPL->kq, &ev, 1, nullptr, 0, nullptr);
+    }
+#endif
 }
 //---------------------------------------------------------------------------
 
@@ -203,9 +258,15 @@ void TVPExecThreadTask(int numThreads, TVP_THREAD_TASK_FUNC func)
         return;
     }
 
+#if defined(__APPLE__)
+    // loop and every full-screen layer blend ran on one core (21 ms compose frames).
+    // Slices write disjoint rows; GCD runs them on the caller plus pooled workers.
+    dispatch_apply((size_t)numThreads, DISPATCH_APPLY_AUTO, ^(size_t i) { func((int)i); });
+#else
 #pragma omp parallel for schedule(static)
     for (int i = 0; i < numThreads; ++i)
         func(i);
+#endif
 }
 //---------------------------------------------------------------------------
 
