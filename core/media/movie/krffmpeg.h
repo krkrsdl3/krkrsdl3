@@ -111,6 +111,7 @@ public:
     virtual int AddVideoPicture(KRMovie::DVDVideoPicture& pic, int index) override;
     virtual int WaitForBuffer(volatile std::atomic_bool& bStop, int timeout = 0) override;
     virtual void Flush() override;
+    virtual void WakeOutput() override;
 
     bool IsPlaying() const { return m_pPlayer->IsPlaying(); }
     void FrameMove();

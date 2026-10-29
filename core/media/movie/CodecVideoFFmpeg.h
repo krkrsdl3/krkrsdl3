@@ -19,6 +19,8 @@ public:
     virtual bool Open(CDVDStreamInfo& hints) override;
     virtual bool AddData(const DemuxPacket& packet) override;
     virtual void Reset() override;
+    virtual void Drain() override;
+    virtual bool IsEOF() const override { return m_eof; }
     virtual bool GetPicture(DVDVideoPicture* pDvdVideoPicture) override;
     virtual void SetDropState(bool bDrop) override;
     virtual unsigned GetConvergeCount() override;
@@ -35,6 +37,7 @@ protected:
     int m_iLastKeyframe;
     double m_dts;
     bool m_started;
+    bool m_eof;
     double m_decoderPts;
     int m_droppedFrames;
 

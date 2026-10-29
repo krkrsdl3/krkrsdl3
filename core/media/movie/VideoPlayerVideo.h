@@ -127,6 +127,8 @@ protected:
     bool m_paused;
     IDVDStreamPlayer::ESyncState m_syncState;
     std::atomic_bool m_bAbortOutput;
+    // 解码器已被 GENERAL_EOF 排空，等待超时时不必再尝试取帧。
+    bool m_drainComplete;
 
     CDVDMessageQueue m_messageQueue;
     CDVDMessageQueue& m_messageParent;

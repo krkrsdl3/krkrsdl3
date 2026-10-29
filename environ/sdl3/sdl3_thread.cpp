@@ -19,13 +19,13 @@
 
 #include <SDL3/SDL_init.h>
 #include <SDL3/SDL_timer.h>
-#include <cstring>
 #if defined(__APPLE__)
 #include <pthread/qos.h>
 #include <dispatch/dispatch.h>
 #include <sys/event.h>
 #include <unistd.h>
 #include <cerrno>
+#include <cstring>
 #endif
 
 //---------------------------------------------------------------------------
@@ -34,24 +34,45 @@
 #define THR_IMPL ((TVPThreadImpl*)_impl)
 struct TVPThreadImpl
 {
-    const char* name;    int kq = -1;    SDL_Thread* thread;
+#if defined(__APPLE__)
+    const char* name;
+    int kq = -1;
+#endif
+    SDL_Thread* thread;
     SDL_Mutex* mutex;
     SDL_Condition* cond;
 };
+
+#if defined(__APPLE__)
+static void TVPWakeThread(TVPThreadImpl* impl)
+{
+    if (impl->kq < 0)
+        return;
+
+    struct kevent ev;
+    EV_SET(&ev, 2, EVFILT_USER, 0, NOTE_TRIGGER, 0, nullptr);
+    kevent(impl->kq, &ev, 1, nullptr, 0, nullptr);
+}
+#endif
+
 tTVPThread::tTVPThread(const char* name)
 {
     Terminated = false;
     Suspended = true;
 
     _impl = new TVPThreadImpl;
-    THR_IMPL->name = name;
 #if defined(__APPLE__)
+    THR_IMPL->name = name;
     THR_IMPL->kq = kqueue();
     if (THR_IMPL->kq >= 0)
     {
         struct kevent ev;
         EV_SET(&ev, 2, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, nullptr);
-        if (kevent(THR_IMPL->kq, &ev, 1, nullptr, 0, nullptr) < 0) { close(THR_IMPL->kq); THR_IMPL->kq = -1; }
+        if (kevent(THR_IMPL->kq, &ev, 1, nullptr, 0, nullptr) < 0)
+        {
+            close(THR_IMPL->kq);
+            THR_IMPL->kq = -1;
+        }
     }
 #endif
     THR_IMPL->mutex = SDL_CreateMutex();
@@ -84,6 +105,10 @@ void tTVPThread::StopThread()
 {
     Terminated = true;
     SDL_BroadcastCondition(THR_IMPL->cond);
+#if defined(__APPLE__)
+    // 让可能正在 kqueue 计时器上等待的线程尽快返回。
+    TVPWakeThread(THR_IMPL);
+#endif
     SDL_WaitThread(THR_IMPL->thread, nullptr);
 }
 //---------------------------------------------------------------------------
@@ -101,8 +126,13 @@ void tTVPThread::Sleep(unsigned int milliseconds)
             struct kevent change, event;
             EV_SET(&change, 1, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
                    NOTE_NSECONDS | NOTE_CRITICAL, (int64_t)milliseconds * 1000000, nullptr);
-            while (kevent(THR_IMPL->kq, &change, 1, &event, 1, nullptr) < 0 && errno == EINTR) {}
-            return;
+            int ret;
+            do
+            {
+                ret = kevent(THR_IMPL->kq, &change, 1, &event, 1, nullptr);
+            } while (ret < 0 && errno == EINTR);
+            if (ret >= 0)
+                return;
         }
 #endif
         SDL_LockMutex(THR_IMPL->mutex);
@@ -127,14 +157,18 @@ int tTVPThread::StartProc(void* arg)
     if (!impl)
         return 0;
 #if defined(__APPLE__)
-    // decoder polls, the 60 ms sound feeder) to 100-160 ms. Real-time media
-    // threads run user-interactive; the rest user-initiated, below the main thread.
+    // 实时媒体线程使用 user-interactive，其余使用 user-initiated；
+    // 两者都低于主线程，避免线程被系统降频后轮询周期被拉长。
     {
         static const char* const realtime[] = {"TVPVideoPlayer", "TVPVideoPlayerVideo",
-            "TVPVideoPlayerAudio", "TVPWaveSoundBufferThread", "TVPTimerThread"};
+                                               "TVPVideoPlayerAudio", "TVPWaveSoundBufferThread",
+                                               "TVPTimerThread"};
         qos_class_t qos = QOS_CLASS_USER_INITIATED;
         for (const char* n : realtime)
-            if (impl->name && !std::strcmp(impl->name, n)) qos = QOS_CLASS_USER_INTERACTIVE;
+        {
+            if (impl->name && !std::strcmp(impl->name, n))
+                qos = QOS_CLASS_USER_INTERACTIVE;
+        }
         pthread_set_qos_class_self_np(qos, 0);
     }
 #endif
@@ -175,12 +209,8 @@ void tTVPThread::Resume()
     Suspended = false;
     SDL_SignalCondition(THR_IMPL->cond);
 #if defined(__APPLE__)
-    if (THR_IMPL->kq >= 0)    {
-        struct kevent ev;
-        // 唤醒正在 kqueue 上等待的 Sleep()。
-        EV_SET(&ev, 2, EVFILT_USER, 0, NOTE_TRIGGER, 0, nullptr);
-        kevent(THR_IMPL->kq, &ev, 1, nullptr, 0, nullptr);
-    }
+    // 唤醒正在 kqueue 上等待的 Sleep()。
+    TVPWakeThread(THR_IMPL);
 #endif
 }
 //---------------------------------------------------------------------------
@@ -259,9 +289,12 @@ void TVPExecThreadTask(int numThreads, TVP_THREAD_TASK_FUNC func)
     }
 
 #if defined(__APPLE__)
-    // loop and every full-screen layer blend ran on one core (21 ms compose frames).
-    // Slices write disjoint rows; GCD runs them on the caller plus pooled workers.
-    dispatch_apply((size_t)numThreads, DISPATCH_APPLY_AUTO, ^(size_t i) { func((int)i); });
+    // 各分片写入互不重叠的行，用 GCD 在调用线程和线程池上并行执行。
+    // 使用函数指针版本，避免依赖 Clang 的 blocks 扩展。
+    dispatch_apply_f(
+        (size_t)numThreads, DISPATCH_APPLY_AUTO, (void*)&func,
+        [](void* context, size_t i)
+        { (*static_cast<const std::function<void(int)>*>(context))((int)i); });
 #else
 #pragma omp parallel for schedule(static)
     for (int i = 0; i < numThreads; ++i)

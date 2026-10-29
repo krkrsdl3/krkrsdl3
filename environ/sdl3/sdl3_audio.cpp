@@ -1,7 +1,3 @@
-#include <cstdio>
-#include <SDL3/SDL_timer.h>
-#include <mutex>
-#include <atomic>
 #include "tjsCommHead.h"
 #include "PlatformAudio.h"
 #include "PlatformMutex.h"
@@ -11,6 +7,7 @@
 #include <unordered_set>
 #include <algorithm>
 #include <vector>
+#include <mutex>
 
 #include <SDL3/SDL_audio.h>
 #include <SDL3/SDL_log.h>
@@ -22,7 +19,6 @@ static SDL_AudioDeviceID g_shared_device = 0;
 // 复用的音频流对象池。频繁创建/销毁 SDL_AudioStream 同样会打断其它正在播放的流。
 static std::vector<SDL_AudioStream*> g_idle_streams;
 static constexpr size_t TVP_AUDIO_STREAM_POOL = 8;
-
 
 static std::mutex g_audio_dev_mtx;
 static int g_active_streams = 0;
@@ -44,13 +40,9 @@ public:
 
     SDL_AudioDeviceID sdl_audio_device = 0;
     SDL_AudioStream* _stream = NULL;
-bool device_is_shared = false;
     SDL_AudioSpec spec;
     tjs_int BitsPerSample = 0;
     int _frame_size = 0;
-    std::atomic<Uint64> _starvedSinceNS{0};
-    std::atomic<int> _starvedBytes{0};
-    bool _fedSincePlay = false;
 
     void UpdateQueueData()
     {
@@ -138,25 +130,25 @@ bool device_is_shared = false;
                 g_idle_streams.pop_back();
             }
         }
-        if (!_stream)
+        if (!_stream && sdl_audio_device)
         {
             _stream = SDL_CreateAudioStream(&spec, nullptr);
-            if (_stream && sdl_audio_device)
+            if (_stream && !SDL_BindAudioStream(sdl_audio_device, _stream))
             {
-                if (!SDL_BindAudioStream(sdl_audio_device, _stream))
-                { SDL_DestroyAudioStream(_stream);
-    _stream = nullptr; }
+                SDL_DestroyAudioStream(_stream);
+                _stream = nullptr;
             }
         }
         if (!_stream || !sdl_audio_device || !SDL_SetAudioStreamFormat(_stream, &spec, nullptr))
         {
-            if (_stream) SDL_DestroyAudioStream(_stream);
-            _stream = nullptr;
+            if (_stream)
+            {
+                SDL_DestroyAudioStream(_stream);
+                _stream = nullptr;
+            }
             delete this;
             return false;
         }
-        device_is_shared = true;
-        // the very short SDL_ResumeAudioDevice call. No callback when disabled.
         return true;
     }
 
@@ -169,15 +161,15 @@ bool device_is_shared = false;
             SDL_SetAudioStreamGetCallback(_stream, nullptr, nullptr);
             SDL_ClearAudioStream(_stream);
             SDL_SetAudioStreamGain(_stream, 1.0f);
+
             std::lock_guard<std::mutex> lock(g_audio_dev_mtx);
-            // 放回对象池，下次播放直接复用；池满才真正销毁。
-            if (g_idle_streams.size() < TVP_AUDIO_STREAM_POOL)
+            // 放回对象池，下次播放直接复用；池满或设备已关闭才真正销毁。
+            if (g_shared_device && g_idle_streams.size() < TVP_AUDIO_STREAM_POOL)
                 g_idle_streams.push_back(_stream);
             else
                 SDL_DestroyAudioStream(_stream);
         }
-        if (sdl_audio_device && !device_is_shared)
-            SDL_CloseAudioDevice(sdl_audio_device);
+        // 共享设备由 TVPUninitDirectSound 统一关闭。
         delete[] _bufferSizeCache;
     }
 
@@ -186,19 +178,13 @@ bool device_is_shared = false;
     {
         if (_playing)
             return;
-        perfDemand.Begin();
-        _fedSincePlay = false;
-    _starvedSinceNS = 0;
-    _starvedBytes = 0;        // buffers now share one playback device. Track how many are active so the
-        // device is only paused when nothing needs it, and resumed as soon as any
-        // stream plays again. (Silencing via stream gain desynced the player state
-        // that @wvoice waits on, so the engine thought a line had finished after
-        // 26 ms while the audio actually started later.)
+        // 所有缓冲区共用播放设备，用引用计数决定何时真正暂停/恢复设备。
+        // 通过增益静音会让 @wvoice 依赖的播放状态错乱，因此只在没有活动流时暂停设备。
         {
             std::lock_guard<std::mutex> lk(g_audio_dev_mtx);
             ++g_active_streams;
-            if (g_active_streams == 1 && sdl_audio_device)
-                SDL_ResumeAudioDevice(sdl_audio_device);
+            if (g_active_streams == 1 && g_shared_device)
+                SDL_ResumeAudioDevice(g_shared_device);
         }
         _playing = true;
     }
@@ -208,9 +194,10 @@ bool device_is_shared = false;
             return;
         {
             std::lock_guard<std::mutex> lk(g_audio_dev_mtx);
-            if (g_active_streams > 0) --g_active_streams;
-            if (g_active_streams == 0 && sdl_audio_device)
-                SDL_PauseAudioDevice(sdl_audio_device);
+            if (g_active_streams > 0)
+                --g_active_streams;
+            if (g_active_streams == 0 && g_shared_device)
+                SDL_PauseAudioDevice(g_shared_device);
         }
         _playing = false;
     }
@@ -224,29 +211,29 @@ bool device_is_shared = false;
     }
     virtual void Reset() override
     {
-        SDL_ClearAudioStream(_stream);
+        if (_stream)
+            SDL_ClearAudioStream(_stream);
         queued = 0;
         processed = 0;
-        _fedSincePlay = false;
-    _starvedSinceNS = 0;
-    _starvedBytes = 0;
     }
     virtual bool IsPlaying() override { return _playing; }
     virtual void SetVolume(float v) override
     {
-        SDL_SetAudioStreamGain(_stream, v);
+        if (_stream)
+            SDL_SetAudioStreamGain(_stream, v);
         _volume = v;
     }
     virtual float GetVolume() override
     {
-        _volume = SDL_GetAudioStreamGain(_stream);
+        if (_stream)
+            _volume = SDL_GetAudioStreamGain(_stream);
         return _volume;
     }
     virtual void SetPan(float v) override { _pan = v; }
     virtual float GetPan() override { return _pan; }
     virtual void AppendBuffer(const void* _inbuf, unsigned int inlen /*, int tag = 0*/) override
     {
-        if (inlen <= 0)
+        if (inlen <= 0 || !_stream)
             return;
 
         tTJSCSH lk(_buffer_mtx);
@@ -258,18 +245,6 @@ bool device_is_shared = false;
         if (_bufferIdx >= _bufferLimitCount)
             _bufferIdx = 0;
 
-        {
-            static thread_local Uint64 last_put = 0;
-            Uint64 now = SDL_GetTicksNS();
-            if (last_put && (now - last_put) > 100000000ULL)
-            {
-                fflush(stderr);
-            }
-            last_put = now;
-            const Uint64 since = _starvedSinceNS.exchange(0);
-            const int missing = _starvedBytes.exchange(0);
-        }
-        _fedSincePlay = true;
         SDL_PutAudioStreamData(_stream, _inbuf, inlen);
         _bufferSizeCache[_bufferIdx] = inlen;
         totalBufferSize += inlen;
@@ -293,7 +268,7 @@ bool device_is_shared = false;
     }
     virtual tjs_uint GetCurrentPlaySamples() override
     {
-        return SDL_GetAudioStreamQueued(_stream) / _frame_size;
+        return _stream ? SDL_GetAudioStreamQueued(_stream) / _frame_size : 0;
     }
     virtual int GetRemainBuffers() override
     {
@@ -313,23 +288,28 @@ bool device_is_shared = false;
 void TVPInitDirectSound(int freq)
 {
     std::lock_guard<std::mutex> lock(g_audio_dev_mtx);
-    if (g_shared_device) return;
+    if (g_shared_device)
+        return;
+
+    g_shared_device = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, nullptr);
+    if (!g_shared_device)
     {
-        g_shared_device = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, nullptr);
+        SDL_Log("Couldn't open default audio device: %s", SDL_GetError());
+        return;
     }
-    if (!g_shared_device) return;
+    // 设备在有流播放时才恢复，避免空转。
     SDL_PauseAudioDevice(g_shared_device);
+
     SDL_AudioSpec source{SDL_AUDIO_S16LE, 2, freq};
     for (size_t i = 0; i < TVP_AUDIO_STREAM_POOL; ++i)
     {
-        SDL_AudioStream* stream;
+        SDL_AudioStream* stream = SDL_CreateAudioStream(&source, nullptr);
+        if (!stream)
+            break;
+        if (!SDL_BindAudioStream(g_shared_device, stream))
         {
-            stream = SDL_CreateAudioStream(&source, nullptr);
-        }
-        if (!stream) break;
-        {
-            if (!SDL_BindAudioStream(g_shared_device, stream))
-            { SDL_DestroyAudioStream(stream); break; }
+            SDL_DestroyAudioStream(stream);
+            break;
         }
         g_idle_streams.push_back(stream);
     }
@@ -338,9 +318,11 @@ void TVPInitDirectSound(int freq)
 void TVPUninitDirectSound()
 {
     std::lock_guard<std::mutex> lock(g_audio_dev_mtx);
-    for (auto* stream : g_idle_streams) SDL_DestroyAudioStream(stream);
+    for (auto* stream : g_idle_streams)
+        SDL_DestroyAudioStream(stream);
     g_idle_streams.clear();
-    if (g_shared_device) SDL_CloseAudioDevice(g_shared_device);
+    if (g_shared_device)
+        SDL_CloseAudioDevice(g_shared_device);
     g_shared_device = 0;
     g_active_streams = 0;
 }

@@ -106,6 +106,7 @@ CDVDVideoCodecFFmpeg::CDVDVideoCodecFFmpeg() : CDVDVideoCodec()
     m_iLastKeyframe = 0;
     m_dts = DVD_NOPTS_VALUE;
     m_started = false;
+    m_eof = false;
     m_decoderPts = DVD_NOPTS_VALUE;
     m_droppedFrames = 0;
 }
@@ -265,12 +266,23 @@ bool CDVDVideoCodecFFmpeg::AddData(const DemuxPacket& packet)
 void CDVDVideoCodecFFmpeg::Reset()
 {
     m_started = false;
+    m_eof = false;
     m_decoderPts = DVD_NOPTS_VALUE;
     m_droppedFrames = 0;
     m_iLastKeyframe = m_pCodecContext->has_b_frames;
     avcodec_flush_buffers(m_pCodecContext);
 
     m_dropCtrl.Reset(false);
+}
+
+void CDVDVideoCodecFFmpeg::Drain()
+{
+    if (!m_pCodecContext)
+        return;
+
+    // 发送空包通知解码器输入结束，随后 GetPicture() 会取出剩余帧。
+    if (avcodec_send_packet(m_pCodecContext, nullptr) == AVERROR_EOF)
+        m_eof = true;
 }
 
 bool CDVDVideoCodecFFmpeg::GetPicture(DVDVideoPicture* pDvdVideoPicture)
@@ -280,6 +292,9 @@ bool CDVDVideoCodecFFmpeg::GetPicture(DVDVideoPicture* pDvdVideoPicture)
 
     if (m_iLastKeyframe < m_pCodecContext->has_b_frames + 2)
         m_iLastKeyframe = m_pCodecContext->has_b_frames + 2;
+
+    if (ret == AVERROR_EOF)
+        m_eof = true;
 
     if (ret == AVERROR_EOF || ret == AVERROR(EAGAIN) || ret != 0)
     {

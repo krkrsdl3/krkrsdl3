@@ -201,6 +201,13 @@ void TVPMoviePlayer::Flush()
     }
     m_curpts = 0.0;
     m_usedPicture = 0;
+    m_condPicture.notify_all();
+}
+
+void TVPMoviePlayer::WakeOutput()
+{
+    tTJSUniqueLock lk(m_mtxPicture);
+    m_condPicture.notify_all();
 }
 
 void TVPMoviePlayer::FrameMove()

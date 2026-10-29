@@ -446,7 +446,8 @@ void CVideoPlayerAudio::Flush(bool sync)
     m_messageQueue.Flush();
     // 很短的小片段在 prepare() 倒带之前就读到文件末尾了，那条 GENERAL_EOF
     // 已经排在队列里。如果它穿过 flush 被处理，播放会立刻判为结束。
-    m_messageQueue.Flush(CDVDMsg::GENERAL_EOF);    m_messageQueue.Put(new CDVDMsgBool(CDVDMsg::GENERAL_FLUSH, sync), 1);
+    m_messageQueue.Flush(CDVDMsg::GENERAL_EOF);
+    m_messageQueue.Put(new CDVDMsgBool(CDVDMsg::GENERAL_FLUSH, sync), 1);
 
     AbortAddPackets();
 }

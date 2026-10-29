@@ -80,6 +80,7 @@ CVideoPlayerVideo::CVideoPlayerVideo(CDVDClock* pClock,
     m_bFpsInvalid = false;
     // 由 Flush() 在播放线程置位，由解码线程消费。
     m_bAbortOutput = false;
+    m_drainComplete = false;
 }
 
 CVideoPlayerVideo::~CVideoPlayerVideo()
@@ -278,11 +279,18 @@ void CVideoPlayerVideo::Execute()
         else if (pMsg->IsType(CDVDMsg::GENERAL_EOF))
         {
             // demux 报 EOF 时解码器内部可能还有没取出的帧，先排空再确认结束。
-            while (!GetTerminated() && ProcessDecoderOutput(frametime, pts)) {}
-            m_pVideoCodec->Drain();
-            while (!GetTerminated() && ProcessDecoderOutput(frametime, pts)) {}
+            if (m_pVideoCodec)
+            {
+                while (!GetTerminated() && ProcessDecoderOutput(frametime, pts))
+                {
+                }
+                m_pVideoCodec->Drain();
+                while (!GetTerminated() && ProcessDecoderOutput(frametime, pts))
+                {
+                }
+                m_drainComplete = m_pVideoCodec->IsEOF();
+            }
             m_picture.iFlags &= ~DVP_FLAG_ALLOCATED;
-            m_drainComplete = m_pVideoCodec->IsEOF();
         }
         else if (pMsg->IsType(CDVDMsg::GENERAL_RESYNC))
         {
@@ -521,19 +529,18 @@ void CVideoPlayerVideo::SetSpeed(int speed)
 
 void CVideoPlayerVideo::Flush(bool sync)
 {
-    m_firstVideoPts = -1.0;
     /* flush using message as this get's called from VideoPlayer thread */
     /* and any demux packet that has been taken out of queue need to */
     /* be disposed of before we flush */
-    // decoder thread cannot consume the flush (and clear the flag) ahead of this store.
+    // 先置中止标记再清空队列，避免解码线程在收到 GENERAL_FLUSH 之前继续输出旧帧。
     m_bAbortOutput = true;
     m_messageQueue.Flush();
-    // completely within ~20 ms, so its GENERAL_EOF is already queued when prepare() rewinds.
-    // That EOF survived the flush, was consumed right after it, and drained the freshly reset
-    // codec: no packet of the rewound clip could be decoded, and play() was reported complete
-    // instantly (first frame, then the end image). The player re-sends EOF for the new position.
+    // 很短的小片段在 prepare() 倒带之前就读到文件末尾了，那条 GENERAL_EOF
+    // 可能已经排在队列里。如果它穿过 flush 被处理，会把刚重置的解码器判为结束，
+    // 导致整段动画只显示第一帧。播放器会在新位置重新发送 EOF。
     m_messageQueue.Flush(CDVDMsg::GENERAL_EOF);
     m_messageQueue.Put(new CDVDMsgBool(CDVDMsg::GENERAL_FLUSH, sync), 1);
+    // 解码线程可能正阻塞在渲染器的缓冲区等待中，需要主动唤醒它处理 flush。
     if (m_pRenderer)
         m_pRenderer->WakeOutput();
 }
@@ -546,22 +553,13 @@ std::string CVideoPlayerVideo::GetStereoMode()
 
 int CVideoPlayerVideo::OutputPicture(const DVDVideoPicture* src, double pts)
 {
-    // by Flush() when a seek/rewind arrived while this thread was about to output a picture;
-    // the thread then sat in WaitForBuffer on a full presentation queue for up to 500 ms
-    // before it got to the flush. Meanwhile the seek had already moved the clock, so the
-    // stale queued frames were held for ~0.45 s (prepare -> rewind -> play on every clip).
-    // The flag is now cleared when the flush/reset message itself is processed.
-    auto rejected = [&](const char* reason, int result) {
-        return result;
-    };
-
     /* picture buffer is not allowed to be modified in this call */
     DVDVideoPicture picture(*src);
     DVDVideoPicture* pPicture = &picture;
 
     if (!Configure(picture, 0.0 /*config_framerate*/, 0, m_hints.orientation, 0))
     {
-        return rejected("configure_timeout", EOS_ABORT);
+        return EOS_ABORT;
     }
 
     int result = 0;
@@ -590,11 +588,11 @@ int CVideoPlayerVideo::OutputPicture(const DVDVideoPicture* src, double pts)
                 m_rewindStalled = true;
                 Sleep(50);
             }
-            return rejected("reverse_queue", result | EOS_DROPPED);
+            return result | EOS_DROPPED;
         }
         else if (pts < iPlayingClock)
         {
-            return rejected("reverse_late", result | EOS_DROPPED);
+            return result | EOS_DROPPED;
         }
     }
     else if (m_speed > DVD_PLAYSPEED_NORMAL)
@@ -612,29 +610,17 @@ int CVideoPlayerVideo::OutputPicture(const DVDVideoPicture* src, double pts)
         if (diff < mindiff)
         {
             m_droppingStats.AddOutputDropGain(pts, 1);
-            return rejected("fast_forward_late", result | EOS_DROPPED);
+            return result | EOS_DROPPED;
         }
     }
 
     if ((pPicture->iFlags & DVP_FLAG_DROPPED))
     {
         m_droppingStats.AddOutputDropGain(pts, 1);
-        return rejected("decoder_flag", result | EOS_DROPPED);
+        return result | EOS_DROPPED;
     }
 
-    // first frame waits for the whole start_time offset (435 ms on this title's
-    // clips), so a 450 ms clip shows one frame at the very end.
-    // whenever the PTS jumps, because the same CVideoPlayerVideo instance is reused for
-    // consecutive clips without a Flush. Observed: after one clip ended at PTS 601.9 ms,
-    // the next clip's PTS started at 8435.2 ms; keeping the old origin made every frame
-    // of the new clip look ~8 s late, so it never displayed.
-    // A backwards jump or a forward jump larger than 5 s means a new clip.
-    if (m_firstVideoPts < 0 || pts < m_firstVideoPts - DVD_SEC_TO_TIME(0.5) ||
-        pts > m_firstVideoPts + DVD_SEC_TO_TIME(5.0))
-        m_firstVideoPts = pts;
-    const double rebasedPts = (m_firstVideoPts >= 0) ? (pts - m_firstVideoPts) : pts;
-
-    int timeToDisplay = DVD_TIME_TO_MSEC(rebasedPts - iPlayingClock);
+    int timeToDisplay = DVD_TIME_TO_MSEC(pts - iPlayingClock);
     // make sure waiting time is not negative
     int maxWaitTime = std::min(std::max(timeToDisplay + 500, 50), 500);
     // don't wait when going ff
@@ -644,7 +630,7 @@ int CVideoPlayerVideo::OutputPicture(const DVDVideoPicture* src, double pts)
     if (buffer < 0)
     {
         m_droppingStats.AddOutputDropGain(pts, 1);
-        return rejected(m_bAbortOutput ? "output_aborted" : "queue_full_timeout", EOS_DROPPED);
+        return EOS_DROPPED;
     }
 
     int index = AddVideoPicture(*pPicture);
@@ -660,7 +646,7 @@ int CVideoPlayerVideo::OutputPicture(const DVDVideoPicture* src, double pts)
     if (index < 0)
     {
         m_droppingStats.AddOutputDropGain(pts, 1);
-        return rejected(m_bAbortOutput ? "output_aborted" : "enqueue_timeout", EOS_DROPPED);
+        return EOS_DROPPED;
     }
 
     FlipPage(m_bAbortOutput, pts, (m_syncState == ESyncState::SYNC_STARTING));
@@ -1035,9 +1021,7 @@ void CVideoPlayerVideo::FlipPage(volatile std::atomic_bool& bStop, double pts, b
     int source = m_free.front();
 
     SPresent& m = m_Queue[source];
-    // compared against, otherwise TakeDuePicture() sees the absolute PTS (435 ms) while the
-    // clock has been rebased to 0 and holds every frame back by the start_time offset.
-    m.pts = (m_firstVideoPts >= 0 && pts != DVD_NOPTS_VALUE) ? (pts - m_firstVideoPts) : pts;
+    m.pts = pts;
 
     m_queued.push_back(m_free.front());
     m_free.pop_front();

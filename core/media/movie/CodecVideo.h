@@ -74,6 +74,16 @@ public:
     virtual void Reset() = 0;
 
     /**
+     * Signal end of stream so the decoder can output frames still buffered internally.
+     */
+    virtual void Drain() = 0;
+
+    /**
+     * Returns true once the decoder has been drained and produced all remaining frames.
+     */
+    virtual bool IsEOF() const = 0;
+
+    /**
      * returns true if successfull
      * the data is valid until the next Decode call
      */
