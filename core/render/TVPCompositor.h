@@ -95,7 +95,9 @@ public:
     virtual void* CreateTexture(int width, int height) = 0;
     virtual void UpdateTexture(void* texture, const uint8_t* pixels, int width, int height, int pitch) = 0;
     virtual void DestroyTexture(void* texture) = 0;
-    // 读取一般贴图像素（SW=CPU 缓冲零拷贝；GPU 后端返回 nullptr，GPU 走别名路径）
+    // 读取贴图像素（SW=CPU 缓冲零拷贝；GPU 后端回读后返回同一格式）。
+    // 约定：RGBA 字节序、自上而下行序，返回值在下次上传/回读前有效；nullptr 表示不支持。
+    // 测试宿主截屏即经此取帧（见 tests/autotest.md）。
     virtual uint8_t* LockTexture(void* texture, int& pitch) { return nullptr; }
 
     // 蒙版：绑定蒙版目标（alpha >= 128 为有效像素）；nullptr 关闭蒙版

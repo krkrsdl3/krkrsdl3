@@ -23,6 +23,7 @@
 #include "Random.h"
 
 #include "Platform.h"
+#include "PlatformAutoTest.h"
 #include "PlatformThread.h"
 #include "PlatformView.h"
 
@@ -625,6 +626,11 @@ void TVPWindow::PresentTexture(void* texture, tjs_int w, tjs_int h)
     krkrsdl3::iTVPRenderBackend* backend = krkrsdl3::TVPGetRenderBackend();
     if (!backend)
         return;
+
+    // 测试宿主截屏（tests/autotest.md）：只认首窗口送显的合成内容帧，
+    // 各后端都由 LockTexture 统一取像素。
+    if (krkrsdl3::TVPAutoTestActive() && TVPIsFirstWindow(this))
+        krkrsdl3::TVPAutoTestCaptureTexture(texture, w, h);
 
     if (!backend->IsHardware())
     {

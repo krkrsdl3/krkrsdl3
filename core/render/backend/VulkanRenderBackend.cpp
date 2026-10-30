@@ -142,6 +142,7 @@ public:
     void* CreateTexture(int width, int height) override;
     void UpdateTexture(void* texture, const uint8_t* pixels, int width, int height, int pitch) override;
     void DestroyTexture(void* texture) override;
+    uint8_t* LockTexture(void* texture, int& pitch) override;
     void SetMask(void* maskTarget) override;
     void SetBlendMode(int mode, const float* uniformColor) override;
     void DrawMesh(const float* vertices,
@@ -214,6 +215,7 @@ private:
     void FlushMeshCommands(); // 提交并等待未录制的 mesh 命令（销毁被引用资源前必须先调用）
     bool EnsureStaging(size_t bytes);
     bool EnsureVertexBuffers(size_t vertexBytes, size_t indexBytes);
+    uint8_t* LockTargetInternal(Target* target, int& pitch);
 
     // Layer 合成（惰性初始化）
     bool EnsureLayerPipelines();
@@ -2529,7 +2531,12 @@ void VulkanRenderBackend::LayerDrawRect(void* handle,
 uint8_t* VulkanRenderBackend::LockTarget(void* handle, int& pitch)
 {
     Target* target = FindTarget(handle);
-    if (!target || !EnsureMeshResources())
+    return target ? LockTargetInternal(target, pitch) : nullptr;
+}
+
+uint8_t* VulkanRenderBackend::LockTargetInternal(Target* target, int& pitch)
+{
+    if (!EnsureMeshResources())
         return nullptr;
 
     EndPass();
@@ -2593,6 +2600,22 @@ uint8_t* VulkanRenderBackend::LockTarget(void* handle, int& pitch)
 void VulkanRenderBackend::UnlockTarget(void* handle)
 {
     (void)handle;
+}
+
+uint8_t* VulkanRenderBackend::LockTexture(void* handle, int& pitch)
+{
+    // 离屏目标的颜色贴图（DrawDevice 合成结果）：走目标那条 image→staging 回读
+    for (Target* target : targets_)
+    {
+        if (target->texture == handle)
+            return LockTargetInternal(target, pitch);
+    }
+    // 一般贴图是 host-visible 线性图像，CPU 侧直接可读
+    Texture* tex = FindTexture(handle);
+    if (!tex || !tex->mapped)
+        return nullptr;
+    pitch = tex->pitch;
+    return tex->mapped;
 }
 
 void* VulkanRenderBackend::GetTargetTexture(void* handle)

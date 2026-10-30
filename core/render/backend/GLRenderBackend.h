@@ -51,6 +51,7 @@ public:
     void* CreateTexture(int width, int height) override;
     void UpdateTexture(void* texture, const uint8_t* pixels, int width, int height, int pitch) override;
     void DestroyTexture(void* texture) override;
+    uint8_t* LockTexture(void* texture, int& pitch) override;
     void SetMask(void* maskTarget) override;
     void SetBlendMode(int mode, const float* uniformColor) override;
     void DrawMesh(const float* vertices,
@@ -79,8 +80,10 @@ private:
     {
         unsigned int id = 0;
         int width = 0, height = 0;
+        std::vector<uint8_t> readback; // LockTexture 回读一般贴图用
     };
     Texture* FindTexture(void* handle) const;
+    unsigned int readbackFbo_ = 0; // LockTexture 回读一般贴图用的临时 FBO
 
     // 窗口合成资源
     bool EnsureResources(); // 惰性创建 shader program / VAO / VBO / EBO

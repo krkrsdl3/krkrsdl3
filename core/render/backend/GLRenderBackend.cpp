@@ -719,6 +719,38 @@ void GLRenderBackend::UnlockTarget(void* handle)
     (void)handle;
 }
 
+uint8_t* GLRenderBackend::LockTexture(void* handle, int& pitch)
+{
+    // 离屏目标的颜色贴图（DrawDevice 合成结果）：直接复用目标回读
+    for (Target* target : targets_)
+    {
+        if (target->texture == handle)
+            return LockTarget(target, pitch);
+    }
+
+    // 一般贴图（如软渲染设备上传的 scratch 贴图）：挂到临时 FBO 读回
+    Texture* texture = FindTexture(handle);
+    if (!texture)
+        return nullptr;
+    if (!readbackFbo_)
+        glGenFramebuffers(1, &readbackFbo_);
+    glBindFramebuffer(GL_FRAMEBUFFER, readbackFbo_);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture->id, 0);
+    const bool complete = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    if (complete)
+    {
+        texture->readback.resize((size_t)texture->width * texture->height * 4);
+        glReadPixels(0, 0, texture->width, texture->height, GL_RGBA, GL_UNSIGNED_BYTE,
+                     texture->readback.data());
+    }
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, currentTarget_ ? currentTarget_->fbo : 0);
+    if (!complete)
+        return nullptr;
+    pitch = texture->width * 4;
+    return texture->readback.data();
+}
+
 void* GLRenderBackend::GetTargetTexture(void* handle)
 {
     Target* target = FindTarget(handle);
