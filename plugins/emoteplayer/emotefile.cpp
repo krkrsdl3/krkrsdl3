@@ -1360,6 +1360,18 @@ emotemetadata::emotemetadata(emotefile* filePtr, uint32_t startOffset) : _filePt
             filePtr->parseNumber(tmpNum, it->second);
             tmp->blinkIntervalMin = static_cast<float>(tmpNum);
         }
+        it = _base.find("enabled");
+        if (it != _base.end())
+        {
+            filePtr->parseNumber(tmpNum, it->second);
+            tmp->enabled = tmpNum != 0;
+        }
+        it = _base.find("blinkEnabled");
+        if (it != _base.end())
+        {
+            filePtr->parseNumber(tmpNum, it->second);
+            tmp->blinkEnabled = tmpNum != 0;
+        }
         tmp->uid =
             std::uniform_int_distribution<int32_t>(tmp->blinkIntervalMin, tmp->blinkIntervalMax);
         _eyeControl.push_back(tmp);

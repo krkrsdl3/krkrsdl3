@@ -159,6 +159,8 @@ struct eyeControl
     int32_t blinkFrameCount = 0;
     int32_t blinkIntervalMax = 0;
     int32_t blinkIntervalMin = 0;
+    bool enabled = true;
+    bool blinkEnabled = true;
     std::string label;
 
     std::uniform_int_distribution<int32_t> uid;

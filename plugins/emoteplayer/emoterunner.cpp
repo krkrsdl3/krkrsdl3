@@ -1006,6 +1006,17 @@ std::string controlKey(const std::string& name)
     return name.substr(0, name.find('\0'));
 }
 
+bool eyeCanBlink(double current, double closedValue)
+{
+    return current <= closedValue;
+}
+
+double eyeBlinkValue(double current, double closedValue, double ratio)
+{
+    if (!eyeCanBlink(current, closedValue)) return current;
+    return current + (closedValue - current) * ratio;
+}
+
 bool timelineValue(const emoteTimeVar& variable, double tick, double initial, bool instant, double& value)
 {
     const emoteTimeVarFrame* current = nullptr;
@@ -1047,6 +1058,7 @@ void emoteengine::resetControls()
     controlVariables = baseVariables;
     for (const auto* eye : metadata._eyeControl)
     {
+        if (!eye->enabled || !eye->blinkEnabled) continue;
         eyes.push_back(*eye);
         auto& copy = eyes.back();
         copy.hasStart = copy.isBlinking = false;
@@ -1074,9 +1086,12 @@ void emoteengine::updateEyeControl(float tick, bool isMain)
             eye.lastTick = tick;
         }
         if (eye.currWaitInterval < 0) eye.currWaitInterval = eye.uid(random);
+        const auto active = controlVariables.find(key);
+        const double current = active == controlVariables.end() ? eye.beginFrame : active->second;
         if (!eye.isBlinking)
         {
             if (tick - eye.lastTick < eye.currWaitInterval) continue;
+            if (!eyeCanBlink(current, eye.endFrame)) continue;
             eye.isBlinking = true;
             eye.lastTick = tick;
         }
@@ -1087,9 +1102,8 @@ void emoteengine::updateEyeControl(float tick, bool isMain)
             continue;
         }
         const double ratio = 1 - std::abs(2 * elapsed / eye.blinkFrameCount - 1);
-        // Compose with this frame's expression, so a closed-eye pose stays closed.
         auto& value = controlVariables[key];
-        value += (eye.endFrame - value) * ratio;
+        value = eyeBlinkValue(value, eye.endFrame, ratio);
     }
 }
 
