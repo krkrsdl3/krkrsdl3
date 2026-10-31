@@ -297,6 +297,7 @@ struct TextLine
     size_t end = 0;
     tjs_real pos = 0; // y (horizontal) / right edge x (vertical), relative to box
     tjs_real advance = 0;
+    int indent = 0; // frozen at line creation; later autoIndent changes only affect new lines
     bool open = true;
 };
 
@@ -1329,6 +1330,7 @@ void TextRenderBase::EnsureOpenLine()
     line.start = m_chars.size();
     line.end = line.start;
     line.pos = m_cursor;
+    line.indent = m_indent;
     line.open = true;
     m_lines.push_back(line);
     m_openLine = m_lines.size() - 1;
@@ -1407,13 +1409,13 @@ void TextRenderBase::LayoutLine(size_t lineIndex)
 
     if (!m_vertical)
     {
-        tjs_real x = static_cast<tjs_real>(m_boxLeft) + m_indent;
+        tjs_real x = static_cast<tjs_real>(m_boxLeft) + line.indent;
         if (m_state.align == 0)
             x = static_cast<tjs_real>(m_boxLeft) + (m_boxWidth - total) / 2.0;
         else if (m_state.align == 1)
             x = static_cast<tjs_real>(m_boxLeft) + m_boxWidth - total;
         else
-            x = static_cast<tjs_real>(m_boxLeft) + m_indent;
+            x = static_cast<tjs_real>(m_boxLeft) + line.indent;
 
         tjs_real y = static_cast<tjs_real>(m_boxTop) + line.pos;
         for (size_t i = line.start; i < line.end; ++i)
@@ -1426,7 +1428,7 @@ void TextRenderBase::LayoutLine(size_t lineIndex)
     }
     else
     {
-        tjs_real y = static_cast<tjs_real>(m_boxTop) + m_indent;
+        tjs_real y = static_cast<tjs_real>(m_boxTop) + line.indent;
         if (m_state.valign == 0)
             y = static_cast<tjs_real>(m_boxTop) + (m_boxHeight - total) / 2.0;
         else if (m_state.valign == 1)
@@ -1470,6 +1472,7 @@ void TextRenderBase::FinishLine()
         blank.start = blank.end = m_chars.size();
         blank.pos = m_cursor;
         blank.advance = DefaultLineAdvance();
+        blank.indent = m_indent;
         blank.open = false;
         m_lines.push_back(blank);
         advance = blank.advance;
@@ -1503,6 +1506,7 @@ void TextRenderBase::SplitLine(size_t breakIndex)
     next.start = breakIndex;
     next.end = oldEnd;
     next.pos = m_cursor;
+    next.indent = m_indent;
     next.open = true;
     m_lines.push_back(next);
     m_openLine = m_lines.size() - 1;
