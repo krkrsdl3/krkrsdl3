@@ -1,12 +1,26 @@
 #include "tjsCommHead.h"
 
 #include "Platform.h"
+#include "PlatformAutoTest.h"
+#include "TVPDebug.h"
 
 #include <SDL3/SDL_log.h>
 #include <SDL3/SDL_timer.h>
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_messagebox.h>
 #include <SDL3/SDL_dialog.h>
+
+//---------------------------------------------------------------------------
+static bool TVPAutoTestDismissDialog(const ttstr& text, const ttstr& caption, int& result)
+{
+    if (!krkrsdl3::TVPAutoTestActive() || !krkrsdl3::TVPAutoTestOffscreen())
+        return false;
+
+    TVPAddLog(ttstr(TJS_N("[AutoTest] dialog skipped: ")) + caption + TJS_N(" | ") + text);
+    result = 0;
+    return true;
+}
+//---------------------------------------------------------------------------
 
 int TVPShowSimpleMessageBox(const ttstr& text, const ttstr& caption)
 {
@@ -32,6 +46,10 @@ int TVPShowSimpleMessageBox(const ttstr& text,
                             const ttstr& caption,
                             const std::vector<ttstr>& vecButtons)
 {
+    int autoResult = 0;
+    if (TVPAutoTestDismissDialog(text, caption, autoResult))
+        return autoResult;
+
     std::vector<std::string> sdlButtonTexts;
     std::vector<SDL_MessageBoxButtonData> sdlButtons;
     sdlButtons.resize(vecButtons.size());

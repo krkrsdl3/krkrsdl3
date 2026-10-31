@@ -190,17 +190,28 @@ public:
 
 bool Layer_FetchImageSize(ttstr imageName, int& w, int& h)
 {
+    if (!TVPTempBitmapHolder)
+        return false;
+
     iTVPBaseBitmap* dest = new tTVPBaseTexture(*TVPTempBitmapHolder->Get());
-    if (dest)
+    if (!dest)
+        return false;
+
+    bool loaded = false;
+    try
     {
         ttstr provincename;
         iTJSDispatch2* metainfo = NULL;
         TVPLoadGraphic(dest, imageName, TVP_clNone, 0, 0, glmNormal, &provincename, &metainfo);
         w = dest->GetTexture()->GetWidth(), h = dest->GetTexture()->GetHeight();
-        delete dest;
-        return true;
+        loaded = true;
     }
-    return false;
+    catch (...)
+    {
+        loaded = false;
+    }
+    delete dest;
+    return loaded;
 }
 
 //---------------------------------------------------------------------------
