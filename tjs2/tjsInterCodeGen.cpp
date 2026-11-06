@@ -16,7 +16,7 @@
 #include "tjsScriptBlock.h"
 #include "tjsGlobalStringMap.h"
 
-#include "tjs.tab.hpp"
+#include "tjsParserTokens.h"
 #include "tjsError.h"
 #include "tjsUtils.h"
 #include "tjsDebug.h"
@@ -39,27 +39,9 @@ namespace TJS // following is in the namespace
 {
 //---------------------------------------------------------------------------
 
-int __yyerror(char*, void*);
-
 #ifdef TJS_DEBUG_PROFILE_TIME
 tjs_uint time_yylex = 0;
 #endif
-
-//---------------------------------------------------------------------------
-int yylex(YYSTYPE* yylex, void* pm)
-{
-    // yylex ( is called from bison parser, returns lexical analyzer's return value )
-#ifdef TJS_DEBUG_PROFILE_TIME
-    tTJSTimeProfiler prof(time_yylex);
-#endif
-
-    tjs_int n;
-    tjs_int t;
-    t = ((tTJSScriptBlock*)pm)->GetLexicalAnalyzer()->GetNext(n);
-    yylex->num = n;
-    return t;
-}
-//---------------------------------------------------------------------------
 int _yyerror(const tjs_char* msg, void* pm, tjs_int pos)
 {
     // handles errors that happen in the compilation
@@ -97,22 +79,16 @@ int _yyerror(const tjs_char* msg, void* pm, tjs_int pos)
 
     sb->CompileErrorCount++;
 
-    tjs_char buf[43];
-    TJS_snprintf(buf, sizeof(buf) / sizeof(tjs_char), TJS_N(" at line %d"),
-                 1 + sb->SrcPosToLine(errpos));
+    tjs_char buf[64];
+    tjs_int line = sb->SrcPosToLine(errpos);
+    tjs_int line_start = sb->LineToSrcPos(line);
+    TJS_snprintf(buf, sizeof(buf) / sizeof(tjs_char), TJS_N(" at line %d, column %d"), line + 1,
+                 errpos - line_start + 1);
     str += buf;
 
     sb->GetTJS()->OutputToConsole(str.c_str());
 
     return 0;
-}
-
-//---------------------------------------------------------------------------
-int __yyerror(const char* msg, void* pm)
-{
-    // yyerror ( for bison )
-    ttstr str(msg);
-    return _yyerror(str.c_str(), pm);
 }
 //---------------------------------------------------------------------------
 
@@ -464,10 +440,12 @@ void tTJSInterCodeContext::Finalize(void)
         DataArea = NULL;
     }
 
-    Block->Remove(this);
-
-    if (ContextType != ctTopLevel && Block)
-        Block->Release();
+    if (!Block->IsDestroying())
+    {
+        Block->Remove(this);
+        if (ContextType != ctTopLevel)
+            Block->Release();
+    }
 
     Namespace.Clear();
 
@@ -3081,6 +3059,14 @@ void tTJSInterCodeContext::ExitIfCode()
         return;
     }
 
+    if (NestVector.back().Patch1 < 0 || NestVector.back().Patch1 + 1 >= CodeAreaSize)
+    {
+        // The condition never generated its jump (an earlier error aborted
+        // the construct); drop the nest entry instead of patching garbage.
+        NestVector.pop_back();
+        return;
+    }
+
     CodeArea[NestVector.back().Patch1 + 1] = CodeAreaSize - NestVector.back().Patch1;
     PrevIfExitPatch = NestVector.back().Patch1;
     NestVector.pop_back();
@@ -3111,6 +3097,12 @@ void tTJSInterCodeContext::ExitElseCode()
     if (NestVector.back().Type != ntElse)
     {
         _yyerror(TJSSyntaxError, Block);
+        return;
+    }
+
+    if (NestVector.back().Patch2 < 0 || NestVector.back().Patch2 + 1 >= CodeAreaSize)
+    {
+        NestVector.pop_back();
         return;
     }
 

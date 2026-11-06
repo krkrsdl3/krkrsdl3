@@ -12,11 +12,28 @@
 #define tjsDateParserH
 
 #include "tjsTypes.h"
-#include "tjsdate.tab.hpp"
+
+#include <vector>
 
 namespace TJS
 {
-
+//---------------------------------------------------------------------------
+// Tokens of the date/time language (values kept from the old bison grammar).
+//---------------------------------------------------------------------------
+enum tTJSDateToken
+{
+    DP_AM = 258,
+    DP_PM = 259,
+    DP_NUMBER = 260,
+    DP_MONTH = 261,
+    DP_WDAY = 262,
+    DP_TZ = 263
+};
+//---------------------------------------------------------------------------
+struct tTJSDateLexValue
+{
+    tjs_int32 val;
+};
 //---------------------------------------------------------------------------
 // tTJSDateParser : A date/time parser class
 //---------------------------------------------------------------------------
@@ -54,8 +71,14 @@ class tTJSDateParser
 
     tjs_int64 Time; // time from 1970-01-01 00:00:00.00 GMT
 
-    friend int dplex(YYSTYPE* yylex, void* pm);
-    friend int dpparse(void* YYPARSE_PARAM);
+    struct tToken
+    {
+        int Id;
+        tjs_int32 Value;
+        bool Fetched;
+        tToken() : Id(0), Value(0), Fetched(false) {}
+    };
+    tToken Lookahead[3];
 
 public:
     tTJSDateParser(const tjs_char* in);
@@ -64,7 +87,16 @@ public:
     tjs_int64 GetTime();
 
 private:
-    int Lex(YYSTYPE* yylex);
+    int Lex(tTJSDateLexValue* value);
+
+    tjs_int32 PeekValue(size_t depth);
+    int Peek(size_t depth = 0);
+    void Next();
+
+    bool Parse();
+    bool ParseTime();
+    bool ParseTimeZone();
+    bool IsTimeStart();
 
     void SkipToRightParenthesis();
 

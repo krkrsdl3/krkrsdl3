@@ -13,6 +13,8 @@
 #include "tjsScriptBlock.h"
 #include "tjsError.h"
 #include "tjs.h"
+#include "tjsUtils.h"
+#include "tjsInterCodeGen.h"
 
 #define TJS_MAX_TRACE_TEXT_LEN 1500
 
@@ -296,6 +298,415 @@ void TJSThrowFrom_tjs_error(tjs_error hr, const tjs_char* name)
                 TJS_snprintf(buf, 256, TJSUnknownFailure, hr);
                 TJS_eTJSError(buf);
             }
+    }
+}
+//---------------------------------------------------------------------------
+
+//---------------------------------------------------------------------------
+// pending error state
+//---------------------------------------------------------------------------
+tTJSPendingErrorState::tTJSPendingErrorState() : Kind(tpekNone), Block(NULL), Position(0)
+{
+}
+//---------------------------------------------------------------------------
+tTJSPendingErrorState::~tTJSPendingErrorState()
+{
+    Clear();
+}
+//---------------------------------------------------------------------------
+void tTJSPendingErrorState::Clear()
+{
+    Kind = tpekNone;
+    Message.Clear();
+    Trace.Clear();
+    Value.Clear();
+    if (Block)
+    {
+        Block->Release();
+        Block = NULL;
+    }
+    Position = 0;
+    Unknown = std::exception_ptr();
+}
+//---------------------------------------------------------------------------
+thread_local tTJSPendingErrorState* TJS_PENDING_ERROR = NULL;
+//---------------------------------------------------------------------------
+tTJSPendingErrorState* TJSGetPendingError()
+{
+    // intentionally never freed: thread local destruction order may outlive
+    // the engine's object/string heaps
+    if (!TJS_PENDING_ERROR)
+        TJS_PENDING_ERROR = new tTJSPendingErrorState();
+    return TJS_PENDING_ERROR;
+}
+//---------------------------------------------------------------------------
+void TJSSetPendingError(const ttstr& msg)
+{
+    tTJSPendingErrorState* e = TJSGetPendingError();
+    if (e->Kind != tpekNone)
+        return;
+    e->Clear();
+    e->Kind = tpekPlain;
+    e->Message = msg;
+}
+//---------------------------------------------------------------------------
+void TJSSetPendingError(const tjs_char* msg)
+{
+    TJSSetPendingError(ttstr(msg));
+}
+//---------------------------------------------------------------------------
+void TJSSetPendingFrom_tjs_error(tjs_error hr, const tjs_char* name)
+{
+    switch (hr)
+    {
+        case TJS_E_MEMBERNOTFOUND:
+        {
+            if (name)
+            {
+                ttstr str(TJSMemberNotFound);
+                str.Replace(TJS_N("%1"), name);
+                TJSSetPendingError(str);
+            }
+            else
+            {
+                TJSSetPendingError(TJSMemberNotFoundNoNameGiven);
+            }
+            return;
+        }
+        case TJS_E_NOTIMPL:
+            TJSSetPendingError(TJSNotImplemented);
+            return;
+        case TJS_E_INVALIDPARAM:
+            TJSSetPendingError(TJSInvalidParam);
+            return;
+        case TJS_E_BADPARAMCOUNT:
+            TJSSetPendingError(TJSBadParamCount);
+            return;
+        case TJS_E_INVALIDTYPE:
+            TJSSetPendingError(TJSInvalidType);
+            return;
+        case TJS_E_ACCESSDENYED:
+            TJSSetPendingError(TJSAccessDenyed);
+            return;
+        case TJS_E_INVALIDOBJECT:
+            TJSSetPendingError(TJSInvalidObject);
+            return;
+        case TJS_E_NATIVECLASSCRASH:
+            TJSSetPendingError(TJSNativeClassCrash);
+            return;
+        default:
+            if (TJS_FAILED(hr))
+            {
+                tjs_char buf[256];
+                TJS_snprintf(buf, 256, TJSUnknownFailure, hr);
+                TJSSetPendingError(buf);
+            }
+            return;
+    }
+}
+//---------------------------------------------------------------------------
+void TJSSetPendingVariantConvertError(const tTJSVariant& from, tTJSVariantType to)
+{
+    ttstr msg;
+    if (to == tvtObject)
+    {
+        msg = TJSVariantConvertErrorToObject;
+        msg.Replace(TJS_N("%1"), TJSVariantToReadableString(from));
+    }
+    else
+    {
+        msg = TJSVariantConvertError;
+        msg.Replace(TJS_N("%1"), TJSVariantToReadableString(from));
+        msg.Replace(TJS_N("%2"), TJSVariantTypeToTypeString(to));
+    }
+    TJSSetPendingError(msg);
+}
+//---------------------------------------------------------------------------
+void TJSSetPendingVariantConvertError(const tTJSVariant& from,
+                                      tTJSVariantType to1,
+                                      tTJSVariantType to2)
+{
+    ttstr msg(TJSVariantConvertError);
+    msg.Replace(TJS_N("%1"), TJSVariantToReadableString(from));
+    msg.Replace(TJS_N("%2"), TJSVariantTypeToTypeString(to1) + ttstr(TJS_N("/")) +
+                                 TJSVariantTypeToTypeString(to2));
+    TJSSetPendingError(msg);
+}
+//---------------------------------------------------------------------------
+void TJSSetPendingSilent()
+{
+    tTJSPendingErrorState* e = TJSGetPendingError();
+    if (e->Kind != tpekNone)
+        return;
+    e->Clear();
+    e->Kind = tpekSilent;
+}
+//---------------------------------------------------------------------------
+void TJSSetPendingScriptError(const ttstr& msg, tTJSScriptBlock* block, tjs_int srcpos)
+{
+    tTJSPendingErrorState* e = TJSGetPendingError();
+    if (e->Kind != tpekNone)
+        return;
+    e->Clear();
+    e->Kind = tpekScriptError;
+    e->Message = msg;
+    e->Block = block;
+    if (block)
+        block->AddRef();
+    e->Position = srcpos;
+}
+//---------------------------------------------------------------------------
+void TJSSetPendingScriptException(const ttstr& msg,
+                                  tTJSScriptBlock* block,
+                                  tjs_int srcpos,
+                                  tTJSVariant& val)
+{
+    tTJSPendingErrorState* e = TJSGetPendingError();
+    if (e->Kind != tpekNone)
+        return;
+    e->Clear();
+    e->Kind = tpekScriptException;
+    e->Message = msg;
+    e->Block = block;
+    if (block)
+        block->AddRef();
+    e->Position = srcpos;
+    e->Value = val;
+}
+//---------------------------------------------------------------------------
+void TJSAdoptScriptError(eTJSScriptError& e)
+{
+    tTJSPendingErrorState* p = TJSGetPendingError();
+    if (p->Kind != tpekNone)
+        return;
+    p->Clear();
+    p->Kind = tpekScriptError;
+    p->Message = e.GetMessage();
+    p->Trace = e.GetTrace();
+    p->Block = e.GetBlockNoAddRef();
+    if (p->Block)
+        p->Block->AddRef();
+    p->Position = e.GetPosition();
+}
+//---------------------------------------------------------------------------
+void TJSAdoptScriptException(eTJSScriptException& e)
+{
+    tTJSPendingErrorState* p = TJSGetPendingError();
+    if (p->Kind != tpekNone)
+        return;
+    p->Clear();
+    p->Kind = tpekScriptException;
+    p->Message = e.GetMessage();
+    p->Trace = e.GetTrace();
+    p->Block = e.GetBlockNoAddRef();
+    if (p->Block)
+        p->Block->AddRef();
+    p->Position = e.GetPosition();
+    p->Value = e.GetValue();
+}
+//---------------------------------------------------------------------------
+void TJSAdoptPlainError(const ttstr& msg)
+{
+    tTJSPendingErrorState* p = TJSGetPendingError();
+    if (p->Kind != tpekNone)
+        return;
+    p->Clear();
+    p->Kind = tpekPlain;
+    p->Message = msg;
+}
+//---------------------------------------------------------------------------
+void TJSAdoptCurrentException()
+{
+    // must be called from inside a catch handler
+    try
+    {
+        throw;
+    }
+    catch (eTJSSilent&)
+    {
+        TJSSetPendingSilent();
+    }
+    catch (eTJSScriptException& e)
+    {
+        TJSAdoptScriptException(e);
+    }
+    catch (eTJSScriptError& e)
+    {
+        TJSAdoptScriptError(e);
+    }
+    catch (eTJS& e)
+    {
+        TJSAdoptPlainError(e.GetMessage());
+    }
+    catch (std::exception& e)
+    {
+        TJSAdoptPlainError(ttstr(e.what()));
+    }
+    catch (const char* text)
+    {
+        TJSAdoptPlainError(ttstr(text));
+    }
+    catch (...)
+    {
+        tTJSPendingErrorState* p = TJSGetPendingError();
+        if (p->Kind == tpekNone)
+        {
+            p->Clear();
+            p->Kind = tpekUnknown;
+            p->Unknown = std::current_exception();
+        }
+    }
+}
+//---------------------------------------------------------------------------
+bool TJSPendingAddTrace(tTJSScriptBlock* block, tjs_int srcpos)
+{
+    tTJSPendingErrorState* e = TJSGetPendingError();
+    if (e->Kind == tpekNone)
+        return false;
+    tjs_int len = e->Trace.GetLen();
+    if (len >= TJS_MAX_TRACE_TEXT_LEN)
+        return false;
+    if (len != 0)
+        e->Trace += TJS_N("\n<-- ");
+    e->Trace += block->GetLineDescriptionString(srcpos);
+    return true;
+}
+//---------------------------------------------------------------------------
+bool TJSPendingAddTrace(tTJSInterCodeContext* context, tjs_int codepos)
+{
+    tTJSPendingErrorState* e = TJSGetPendingError();
+    if (e->Kind == tpekNone)
+        return false;
+    tjs_int len = e->Trace.GetLen();
+    if (len >= TJS_MAX_TRACE_TEXT_LEN)
+        return false;
+    if (len != 0)
+        e->Trace += TJS_N(" <-- ");
+    e->Trace += context->GetPositionDescriptionString(codepos);
+    return true;
+}
+//---------------------------------------------------------------------------
+bool TJSPendingAddTrace(const ttstr& data)
+{
+    tTJSPendingErrorState* e = TJSGetPendingError();
+    if (e->Kind == tpekNone)
+        return false;
+    tjs_int len = e->Trace.GetLen();
+    if (len >= TJS_MAX_TRACE_TEXT_LEN)
+        return false;
+    if (len != 0)
+        e->Trace += TJS_N(" <-- ");
+    e->Trace += data;
+    return true;
+}
+//---------------------------------------------------------------------------
+void TJSPromotePendingToScriptError(tTJSInterCodeContext* context, tjs_int codepos)
+{
+    tTJSPendingErrorState* e = TJSGetPendingError();
+    if (e->Kind != tpekPlain)
+        return;
+
+    if (TJSEnableDebugMode)
+    {
+        tTJS* tjs = context->GetBlock()->GetTJS();
+        tjs->OutputExceptionToConsole(
+            (e->Message + TJS_N(" at ") + context->GetPositionDescriptionString(codepos)).c_str());
+    }
+
+    e->Kind = tpekScriptError;
+    e->Block = context->GetBlock();
+    e->Block->AddRef();
+    e->Position = context->CodePosToSrcPos(codepos);
+}
+//---------------------------------------------------------------------------
+bool TJSBuildPendingExceptionObject(tTJS* tjs, tTJSVariant* result)
+{
+    tTJSPendingErrorState* e = TJSGetPendingError();
+    if (e->Kind == tpekNone || e->Kind == tpekSilent || e->Kind == tpekUnknown)
+        return false;
+    if (!result)
+        return true;
+
+    if (e->Kind == tpekScriptException)
+    {
+        *result = e->Value;
+        return true;
+    }
+
+    ttstr msg = e->Message;
+    ttstr trace = e->Trace;
+
+    // the Exception constructor can execute script code; do not let an
+    // in-flight pending error leak into (or be overwritten by) that call
+    e->Clear();
+
+    try
+    {
+        tTJSVariant msgv(msg);
+        tTJSVariant tracev(trace);
+        TJSGetExceptionObject(tjs, result, msgv, &tracev);
+        return true;
+    }
+    catch (...)
+    {
+        TJSAdoptCurrentException();
+        return false;
+    }
+}
+//---------------------------------------------------------------------------
+void TJSThrowPendingError()
+{
+    tTJSPendingErrorState* e = TJSGetPendingError();
+    if (e->Kind == tpekNone)
+        return;
+
+    switch (e->Kind)
+    {
+        case tpekSilent:
+        {
+            e->Clear();
+            throw eTJSSilent();
+        }
+        case tpekScriptException:
+        {
+            if (!e->Block)
+            {
+                ttstr msg = e->Message;
+                e->Clear();
+                throw eTJSError(msg);
+            }
+            eTJSScriptException ex(e->Message, e->Block, e->Position, e->Value);
+            if (!e->Trace.IsEmpty())
+                ex.AddTrace(e->Trace);
+            e->Clear();
+            throw ex;
+        }
+        case tpekScriptError:
+        {
+            if (!e->Block)
+            {
+                ttstr msg = e->Message;
+                e->Clear();
+                throw eTJSError(msg);
+            }
+            eTJSScriptError ex(e->Message, e->Block, e->Position);
+            if (!e->Trace.IsEmpty())
+                ex.AddTrace(e->Trace);
+            e->Clear();
+            throw ex;
+        }
+        case tpekUnknown:
+        {
+            std::exception_ptr unknown = e->Unknown;
+            e->Clear();
+            std::rethrow_exception(unknown);
+        }
+        default:
+        {
+            ttstr msg = e->Message;
+            e->Clear();
+            throw eTJSError(msg);
+        }
     }
 }
 //---------------------------------------------------------------------------

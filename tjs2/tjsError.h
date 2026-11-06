@@ -276,6 +276,118 @@ void TJSThrowFrom_tjs_error(tjs_error hr, const tjs_char* name = NULL);
             TJSThrowFrom_tjs_error(____er); \
     }
 //---------------------------------------------------------------------------
+// pending error state
+//
+// The VM does not use C++ exceptions to report script errors.  A failing
+// instruction leaves an error in this per-thread channel and returns; the
+// interpreter turns it into either a script try/catch transfer or an error
+// exit from the current VM frame.  C++ exceptions are only translated at the
+// boundary to legacy native code (TJSBridgeCall/TJSBridgeOp) and when leaving
+// a VM entry point back to the host.
+//---------------------------------------------------------------------------
+enum tTJSPendingErrorKind
+{
+    tpekNone,
+    tpekPlain,
+    tpekScriptError,
+    tpekScriptException,
+    tpekSilent,
+    tpekUnknown
+};
+
+struct tTJSPendingErrorState
+{
+    tTJSPendingErrorKind Kind;
+    ttstr Message;
+    ttstr Trace;
+    tTJSVariant Value;
+    tTJSScriptBlock* Block;
+    tjs_int Position;
+    std::exception_ptr Unknown;
+
+    tTJSPendingErrorState();
+    ~tTJSPendingErrorState();
+    void Clear();
+};
+
+extern thread_local tTJSPendingErrorState* TJS_PENDING_ERROR;
+extern tTJSPendingErrorState* TJSGetPendingError();
+
+// hot path: the interpreter checks this after every instruction, so keep the
+// common "no error" case inline and allocation-free
+inline bool TJSHasPendingError()
+{
+    return TJS_PENDING_ERROR && TJS_PENDING_ERROR->Kind != tpekNone;
+}
+inline tTJSPendingErrorKind TJSGetPendingErrorKind()
+{
+    return TJS_PENDING_ERROR ? TJS_PENDING_ERROR->Kind : tpekNone;
+}
+inline void TJSClearPendingError()
+{
+    if (TJS_PENDING_ERROR)
+        TJS_PENDING_ERROR->Clear();
+}
+
+extern void TJSSetPendingError(const ttstr& msg);
+extern void TJSSetPendingError(const tjs_char* msg);
+extern void TJSSetPendingFrom_tjs_error(tjs_error hr, const tjs_char* name = NULL);
+extern void TJSSetPendingVariantConvertError(const tTJSVariant& from, tTJSVariantType to);
+extern void TJSSetPendingVariantConvertError(const tTJSVariant& from,
+                                             tTJSVariantType to1,
+                                             tTJSVariantType to2);
+extern void TJSSetPendingSilent();
+
+extern void TJSSetPendingScriptError(const ttstr& msg, tTJSScriptBlock* block, tjs_int srcpos);
+extern void TJSSetPendingScriptException(const ttstr& msg,
+                                         tTJSScriptBlock* block,
+                                         tjs_int srcpos,
+                                         tTJSVariant& val);
+
+extern void TJSAdoptScriptError(eTJSScriptError& e);
+extern void TJSAdoptScriptException(eTJSScriptException& e);
+extern void TJSAdoptPlainError(const ttstr& msg);
+extern void TJSAdoptCurrentException();
+
+extern bool TJSPendingAddTrace(tTJSScriptBlock* block, tjs_int srcpos);
+extern bool TJSPendingAddTrace(tTJSInterCodeContext* context, tjs_int codepos);
+extern bool TJSPendingAddTrace(const ttstr& data);
+extern void TJSPromotePendingToScriptError(tTJSInterCodeContext* context, tjs_int codepos);
+extern bool TJSBuildPendingExceptionObject(tTJS* tjs, tTJSVariant* result);
+extern void TJSThrowPendingError();
+
+// Calls into legacy native code that may still use C++ exceptions.  The
+// exception is converted to a pending error; an already pending error is
+// never overwritten (first failure wins, like the original unwinding).
+template <typename F>
+inline tjs_error TJSBridgeCall(F&& f)
+{
+    try
+    {
+        return f();
+    }
+    catch (...)
+    {
+        TJSAdoptCurrentException();
+        return TJS_E_FAIL;
+    }
+}
+
+template <typename F>
+inline bool TJSBridgeOp(F&& f)
+{
+    try
+    {
+        f();
+        return true;
+    }
+    catch (...)
+    {
+        TJSAdoptCurrentException();
+        return false;
+    }
+}
+//---------------------------------------------------------------------------
 } // namespace TJS
 //---------------------------------------------------------------------------
 #endif // #ifndef TJS_DECL_MESSAGE_BODY

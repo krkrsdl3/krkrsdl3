@@ -83,6 +83,7 @@ tTJSScriptBlock::tTJSScriptBlock(tTJS* owner, const tjs_char* name, tjs_int line
 //---------------------------------------------------------------------------
 tTJSScriptBlock::~tTJSScriptBlock()
 {
+    Destroying = true;
     if (TopLevelContext)
         TopLevelContext->Release(), TopLevelContext = NULL;
     while (ContextStack.size())

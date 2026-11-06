@@ -264,10 +264,11 @@ tjs_int TJS_stricmp(const tjs_char* s1, const tjs_char* s2)
 
 void TJS_strcpy_maxlen(tjs_char* d, const tjs_char* s, size_t len)
 {
-    tjs_char ch;
-    len++;
-    while ((ch = *s) != 0 && --len)
-        *(d++) = ch, s++;
+    while (len > 0 && *s)
+    {
+        *(d++) = *s++;
+        len--;
+    }
     *d = 0;
 }
 
@@ -784,7 +785,7 @@ tjs_int64 TVPUtf8ToWideCharString(const char* in, tjs_uint length, tjs_wchar* ou
     // convert input utf-8 string to output wide string
     int count = 0;
     const char* end = in + length;
-    while (*in && in < end)
+    while (in < end && *in)
     {
         if (in + 6 > end)
         {

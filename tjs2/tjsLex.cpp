@@ -12,7 +12,7 @@
 
 #include <math.h>
 #include "tjsInterCodeGen.h"
-#include "tjs.tab.hpp"
+#include "tjsParserTokens.h"
 #include "tjsLex.h"
 #include "tjsVariant.h"
 #include "tjsError.h"
@@ -45,6 +45,8 @@ static void _TJSNext(const tjs_char** ptr)
 
 bool inline TJSNext(const tjs_char** ptr)
 {
+    if (!*(*ptr))
+        return false; // never step past the terminator
     (*ptr)++;
     if (*(*ptr) == TJS_SKIP_CODE)
         _TJSNext(ptr);
@@ -57,8 +59,22 @@ bool inline TJSNext(const tjs_char** ptr)
 //---------------------------------------------------------------------------
 bool TJSSkipSpace(const tjs_char** ptr)
 {
-    while (*(*ptr) && (*(*ptr) == TJS_SKIP_CODE || TJS_iswspace((*ptr))))
-        (*ptr)++;
+    while (*(*ptr))
+    {
+        tjs_char ch = *(*ptr);
+        if (ch == TJS_SKIP_CODE || ch == TJS_N(' ') || ch == TJS_N('\t') || ch == TJS_N('\n') ||
+            ch == TJS_N('\r') || ch == TJS_N('\v') || ch == TJS_N('\f'))
+        {
+            (*ptr)++;
+            continue;
+        }
+        if (TJS_iswspace((*ptr)))
+        {
+            (*ptr)++;
+            continue;
+        }
+        break;
+    }
     return *(*ptr) != 0;
 }
 //---------------------------------------------------------------------------
@@ -981,106 +997,150 @@ static bool TJSParseRegExp(tTJSVariant& pat, const tjs_char** ptr)
 //---------------------------------------------------------------------------
 
 //---------------------------------------------------------------------------
-// hash table for reserved words
+// reserved words
 //---------------------------------------------------------------------------
-static tTJSCustomObject* TJSReservedWordHash = NULL;
-static bool TJSReservedWordHashInit = false;
-static tjs_int TJSReservedWordHashRefCount;
+// The keyword table is sorted by spelling and looked up with a binary search.
+// It replaces the old custom-object hash: no TJS object, no variant and no
+// string allocation is needed to recognise a keyword.
 //---------------------------------------------------------------------------
+struct tTJSKeyword
+{
+    const char* Word;
+    unsigned char Length;
+    int Token;
+};
+
+static const tTJSKeyword TJSKeywordTable[] = {
+    { "Infinity", 8, T_INFINITY },
+    { "NaN", 3, T_NAN },
+    { "break", 5, T_BREAK },
+    { "case", 4, T_CASE },
+    { "catch", 5, T_CATCH },
+    { "class", 5, T_CLASS },
+    { "const", 5, T_CONST },
+    { "continue", 8, T_CONTINUE },
+    { "debugger", 8, T_DEBUGGER },
+    { "default", 7, T_DEFAULT },
+    { "delete", 6, T_DELETE },
+    { "do", 2, T_DO },
+    { "else", 4, T_ELSE },
+    { "enum", 4, T_ENUM },
+    { "export", 6, T_EXPORT },
+    { "extends", 7, T_EXTENDS },
+    { "false", 5, T_FALSE },
+    { "finally", 7, T_FINALLY },
+    { "for", 3, T_FOR },
+    { "function", 8, T_FUNCTION },
+    { "getter", 6, T_GETTER },
+    { "global", 6, T_GLOBAL },
+    { "goto", 4, T_GOTO },
+    { "if", 2, T_IF },
+    { "import", 6, T_IMPORT },
+    { "in", 2, T_IN },
+    { "incontextof", 11, T_INCONTEXTOF },
+    { "instanceof", 10, T_INSTANCEOF },
+    { "int", 3, T_INT },
+    { "invalidate", 10, T_INVALIDATE },
+    { "isvalid", 7, T_ISVALID },
+    { "new", 3, T_NEW },
+    { "null", 4, T_NULL },
+    { "octet", 5, T_OCTET },
+    { "private", 7, T_PRIVATE },
+    { "property", 8, T_PROPERTY },
+    { "protected", 9, T_PROTECTED },
+    { "public", 6, T_PUBLIC },
+    { "real", 4, T_REAL },
+    { "return", 6, T_RETURN },
+    { "setter", 6, T_SETTER },
+    { "static", 6, T_STATIC },
+    { "string", 6, T_STRING },
+    { "super", 5, T_SUPER },
+    { "switch", 6, T_SWITCH },
+    { "synchronized", 12, T_SYNCHRONIZED },
+    { "this", 4, T_THIS },
+    { "throw", 5, T_THROW },
+    { "true", 4, T_TRUE },
+    { "try", 3, T_TRY },
+    { "typeof", 6, T_TYPEOF },
+    { "var", 3, T_VAR },
+    { "void", 4, T_VOID },
+    { "while", 5, T_WHILE },
+    { "with", 4, T_WITH },
+};
+//---------------------------------------------------------------------------
+static int TJSFindKeyword(const tjs_char* str, tjs_int length)
+{
+    // Keywords never contain TJS_SKIP_CODE in practice, but the old scanner
+    // removed it from identifiers, so a word split by a CR/LF still matched.
+    char buf[32];
+    tjs_int n = 0;
+    tjs_uint32 hash = 2166136261u;
+    for (tjs_int i = 0; i < length; i++)
+    {
+        tjs_char ch = str[i];
+        if (ch == TJS_SKIP_CODE)
+            continue;
+        if (n >= (tjs_int)sizeof(buf) - 1)
+            return -1;
+        buf[n++] = (char)ch;
+        hash = (hash ^ (tjs_uint8)ch) * 16777619u;
+    }
+    buf[n] = 0;
+
+    struct tSlot
+    {
+        const char* Word;
+        unsigned char Length;
+        int Token;
+    };
+    struct tMap
+    {
+        tSlot Slots[128];
+        tMap()
+        {
+            for (int i = 0; i < 128; i++)
+                Slots[i].Word = NULL;
+            const int count = (int)(sizeof(TJSKeywordTable) / sizeof(TJSKeywordTable[0]));
+            for (int k = 0; k < count; k++)
+            {
+                const tTJSKeyword& kw = TJSKeywordTable[k];
+                tjs_uint32 h = 2166136261u;
+                for (int i = 0; i < kw.Length; i++)
+                    h = (h ^ (tjs_uint8)kw.Word[i]) * 16777619u;
+                int slot = (int)(h & 127);
+                while (Slots[slot].Word)
+                    slot = (slot + 1) & 127;
+                Slots[slot].Word = kw.Word;
+                Slots[slot].Length = kw.Length;
+                Slots[slot].Token = kw.Token;
+            }
+        }
+    };
+    static const tMap map;
+
+    int slot = (int)(hash & 127);
+    while (true)
+    {
+        const tSlot& s = map.Slots[slot];
+        if (!s.Word)
+            return -1;
+        if (s.Length == n && TJS_strncmp(s.Word, buf, n) == 0)
+            return s.Token;
+        slot = (slot + 1) & 127;
+    }
+}
+//---------------------------------------------------------------------------
+static tjs_int TJSReservedWordRefCount = 0;
 void TJSReservedWordsHashAddRef()
 {
-    if (TJSReservedWordHashRefCount == 0)
-    {
-        TJSReservedWordHashInit = false;
-        TJSReservedWordHash = new tTJSCustomObject();
-    }
-    TJSReservedWordHashRefCount++;
+    TJSReservedWordRefCount++;
 }
 //---------------------------------------------------------------------------
 void TJSReservedWordsHashRelease()
 {
-    TJSReservedWordHashRefCount--;
-
-    if (TJSReservedWordHashRefCount == 0)
-    {
-        TJSReservedWordHash->Release();
-        TJSReservedWordHash = NULL;
-    }
+    TJSReservedWordRefCount--;
 }
 //---------------------------------------------------------------------------
-static void TJSRegisterReservedWordsHash(const tjs_char* word, tjs_int num)
-{
-    tTJSVariant val(num);
-    TJSReservedWordHash->PropSet(TJS_MEMBERENSURE, word, NULL, &val, TJSReservedWordHash);
-}
-//---------------------------------------------------------------------------
-#define TJS_REG_RES_WORD(word, value) TJSRegisterReservedWordsHash(TJS_N(word), value);
-static void TJSInitReservedWordsHashTable()
-{
-    if (TJSReservedWordHashInit)
-        return;
-    TJSReservedWordHashInit = true;
-
-    TJS_REG_RES_WORD("break", T_BREAK);
-    TJS_REG_RES_WORD("continue", T_CONTINUE);
-    TJS_REG_RES_WORD("const", T_CONST);
-    TJS_REG_RES_WORD("catch", T_CATCH);
-    TJS_REG_RES_WORD("class", T_CLASS);
-    TJS_REG_RES_WORD("case", T_CASE);
-    TJS_REG_RES_WORD("debugger", T_DEBUGGER);
-    TJS_REG_RES_WORD("default", T_DEFAULT);
-    TJS_REG_RES_WORD("delete", T_DELETE);
-    TJS_REG_RES_WORD("do", T_DO);
-    TJS_REG_RES_WORD("extends", T_EXTENDS);
-    TJS_REG_RES_WORD("export", T_EXPORT);
-    TJS_REG_RES_WORD("enum", T_ENUM);
-    TJS_REG_RES_WORD("else", T_ELSE);
-    TJS_REG_RES_WORD("function", T_FUNCTION);
-    TJS_REG_RES_WORD("finally", T_FINALLY);
-    TJS_REG_RES_WORD("false", T_FALSE);
-    TJS_REG_RES_WORD("for", T_FOR);
-    TJS_REG_RES_WORD("global", T_GLOBAL);
-    TJS_REG_RES_WORD("getter", T_GETTER);
-    TJS_REG_RES_WORD("goto", T_GOTO);
-    TJS_REG_RES_WORD("incontextof", T_INCONTEXTOF);
-    TJS_REG_RES_WORD("invalidate", T_INVALIDATE);
-    TJS_REG_RES_WORD("instanceof", T_INSTANCEOF);
-    TJS_REG_RES_WORD("isvalid", T_ISVALID);
-    TJS_REG_RES_WORD("import", T_IMPORT);
-    TJS_REG_RES_WORD("int", T_INT);
-    TJS_REG_RES_WORD("in", T_IN);
-    TJS_REG_RES_WORD("if", T_IF);
-    TJS_REG_RES_WORD("null", T_NULL);
-    TJS_REG_RES_WORD("new", T_NEW);
-    TJS_REG_RES_WORD("octet", T_OCTET);
-    TJS_REG_RES_WORD("protected", T_PROTECTED);
-    TJS_REG_RES_WORD("property", T_PROPERTY);
-    TJS_REG_RES_WORD("private", T_PRIVATE);
-    TJS_REG_RES_WORD("public", T_PUBLIC);
-    TJS_REG_RES_WORD("return", T_RETURN);
-    TJS_REG_RES_WORD("real", T_REAL);
-    TJS_REG_RES_WORD("synchronized", T_SYNCHRONIZED);
-    TJS_REG_RES_WORD("switch", T_SWITCH);
-    TJS_REG_RES_WORD("static", T_STATIC);
-    TJS_REG_RES_WORD("setter", T_SETTER);
-    TJS_REG_RES_WORD("string", T_STRING);
-    TJS_REG_RES_WORD("super", T_SUPER);
-    TJS_REG_RES_WORD("typeof", T_TYPEOF);
-    TJS_REG_RES_WORD("throw", T_THROW);
-    TJS_REG_RES_WORD("this", T_THIS);
-    TJS_REG_RES_WORD("true", T_TRUE);
-    TJS_REG_RES_WORD("try", T_TRY);
-    TJS_REG_RES_WORD("void", T_VOID);
-    TJS_REG_RES_WORD("var", T_VAR);
-    TJS_REG_RES_WORD("while", T_WHILE);
-#ifndef TJS_NaN_and_Infinity_ARE_NOT_RESERVED_WORD
-    TJS_REG_RES_WORD("NaN", T_NAN);
-    TJS_REG_RES_WORD("Infinity", T_INFINITY);
-#endif
-#ifndef TJS_NITH_IS_NOT_RESERVED_WORD
-    TJS_REG_RES_WORD("with", T_WITH);
-#endif
-}
 //---------------------------------------------------------------------------
 
 //---------------------------------------------------------------------------
@@ -1094,8 +1154,6 @@ tTJSLexicalAnalyzer::tTJSLexicalAnalyzer(tTJSScriptBlock* block,
     // resneeded is valid only if exprmode is true
 
     TJS_F_TRACE("tTJSLexicalAnalyzer::tTJSLexicalAnalyzer");
-
-    TJSInitReservedWordsHashTable();
 
     Block = block;
     ExprMode = exprmode;
@@ -1152,6 +1210,8 @@ tTJSSkipCommentResult tTJSLexicalAnalyzer::SkipUntil_endif()
     IfLevel++;
     while (true)
     {
+        if (!*Current)
+            TJS_eTJSCompileError(TJSPPError, Block, (tjs_int)(Current - Script));
         if (*Current == TJS_N('/'))
         {
             switch (TJSSkipComment(&Current))
@@ -1631,18 +1691,37 @@ re_match:
     tjs_int nch = 0;
     while (true)
     {
-        if (TJS_iswdigit(ptr) || *ptr == TJS_N('_') || *ptr == TJS_SKIP_CODE)
+        unsigned char c = (unsigned char)*ptr;
+        if (!c)
+            break;
+        if (c < 0x80)
         {
-            ptr++, nch++;
-            continue;
+            if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                c == '_' || c == (unsigned char)TJS_SKIP_CODE)
+            {
+                ptr++, nch++;
+                continue;
+            }
+            break;
         }
-        int alphaLen = TJS_iswalpha(ptr);
-        if (alphaLen > 0)
-        {
-            ptr += alphaLen, nch += alphaLen;
-            continue;
-        }
-        break;
+        // Non-ASCII: this engine treats any UTF-8 lead byte as a letter.  Keep
+        // the same rule as TJS_iswalpha without calling it for ASCII.  Do not
+        // step over the terminator when the sequence is truncated.
+        int len = 0;
+        if ((c & 0xE0) == 0xC0)
+            len = 2;
+        else if ((c & 0xF0) == 0xE0)
+            len = 3;
+        else if ((c & 0xF8) == 0xF0)
+            len = 4;
+        if (!len)
+            break;
+        int available = 0;
+        while (available < len && ptr[available])
+            available++;
+        if (available < len)
+            break;
+        ptr += len, nch += len;
     }
 
     if (nch == 0)
@@ -1652,40 +1731,36 @@ re_match:
         TJS_eTJSError(str);
     }
 
-    ttstr str(Current, nch);
-    Current += nch;
-
-    tjs_char *s, *d;
-    s = d = str.Independ();
-    while (*s)
-    {
-        // eliminate TJS_SKIP_CODE
-        if (*s == TJS_SKIP_CODE)
-        {
-            s++;
-            continue;
-        }
-        *d = *s;
-        d++, s++;
-    }
-    *d = 0;
-    str.FixLen();
-
-    tjs_int retnum;
-
-    if (BareWord)
-        retnum = -1;
-    else
-        retnum = TJSReservedWordHash->GetValueInteger(str.c_str(), str.GetHint());
-
+    tjs_int retnum = BareWord ? -1 : TJSFindKeyword(Current, nch);
     BareWord = false;
 
     if (retnum == -1)
     {
         // not a reserved word
+        ttstr str(Current, nch);
+        Current += nch;
+
+        tjs_char *s, *d;
+        s = d = str.Independ();
+        while (*s)
+        {
+            // eliminate TJS_SKIP_CODE
+            if (*s == TJS_SKIP_CODE)
+            {
+                s++;
+                continue;
+            }
+            *d = *s;
+            d++, s++;
+        }
+        *d = 0;
+        str.FixLen();
+
         n = PutValue(str);
         return T_SYMBOL;
     }
+
+    Current += nch;
 
     switch (retnum)
     {
@@ -1780,8 +1855,7 @@ void tTJSLexicalAnalyzer::PreProcess(void)
 //---------------------------------------------------------------------------
 tjs_int tTJSLexicalAnalyzer::PutValue(const tTJSVariant& val)
 {
-    tTJSVariant* v = new tTJSVariant(val);
-    Values.push_back(v);
+    Values.push_back(val);
     return (tjs_int)(Values.size() - 1);
 }
 //---------------------------------------------------------------------------
@@ -1789,11 +1863,6 @@ void tTJSLexicalAnalyzer::Free(void)
 {
     if (Script)
         delete[] Script;
-    std::vector<tTJSVariant*>::iterator i;
-    for (i = Values.begin(); i != Values.end(); i++)
-    {
-        delete *i;
-    }
     Values.clear();
 }
 /*

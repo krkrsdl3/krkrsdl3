@@ -114,21 +114,22 @@ private:
 
     void PreProcess(void);
 
-    std::vector<tTJSVariant*> Values;
+    std::deque<tTJSVariant> Values;
 
     tjs_int PutValue(const tTJSVariant& val);
 
     tjs_int IfLevel; // @if nesting level
 
 public:
-    const tTJSVariant& GetValue(tjs_int idx) const { return *Values[idx]; }
-    const tjs_char* GetString(tjs_int idx) const { return Values[idx]->GetString(); }
+    const tTJSVariant& GetValue(tjs_int idx) const { return Values[idx]; }
+    const tjs_char* GetString(tjs_int idx) const { return Values[idx].GetString(); }
 
     void Free(void);
 
     //	void NextBraceIsBlockBrace();
 
     tjs_int GetCurrentPosition();
+    tjs_int GetTokenStartPosition() const { return PrevPos; }
 
     tjs_int GetNext(tjs_int& value);
 

@@ -314,6 +314,19 @@ private:
         tjs_int Patch1;
         tjs_int Patch2;
         tTJSExprNode* PostLoopExpr;
+
+        tNestData()
+          : Type(ntBlock),
+            VariableCount(0),
+            RefRegister(0),
+            StartIP(0),
+            LoopStartIP(0),
+            Patch1(-1),
+            Patch2(-1),
+            PostLoopExpr(NULL)
+        {
+            VariableCreated = false;
+        }
     };
 
     struct tFixData
@@ -662,6 +675,7 @@ private:
                            tjs_int start_ip);
     tjs_int ExecuteCode(
         tTJSVariant* ra, tjs_int startip, tTJSVariant** args, tjs_int numargs, tTJSVariant* result);
+    void HandlePendingVMError(tTJSVariant* ra, tjs_int codepos);
     tjs_int ExecuteCodeInTryBlock(tTJSVariant* ra,
                                   tjs_int startip,
                                   tTJSVariant** args,

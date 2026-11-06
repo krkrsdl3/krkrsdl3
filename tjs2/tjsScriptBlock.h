@@ -65,11 +65,13 @@ private:
     tjs_int FirstErrorPos;
 
     bool UsingPreProcessor;
+    bool Destroying = false;
 
 public:
     tjs_int CompileErrorCount;
 
     tTJS* GetTJS() { return Owner; }
+    bool IsDestroying() const { return Destroying; }
 
     void AddRef();
     void Release();
