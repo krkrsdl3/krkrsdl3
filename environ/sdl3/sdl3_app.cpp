@@ -277,6 +277,14 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[])
 
 #if defined(_KRKRSDL3_ANDROID) || defined(_KRKRSDL3_EMSCRIPTEN) || defined(_KRKRSDL3_IOS)
 // 触屏事件机制（Android / WASM / iOS 移动端）
+//
+// 移动端没有鼠标指针，只有一个"手指"，所以这里做一层 触屏 -> 鼠标 的映射：
+//   1. 手指按下         -> 先把指针移到按下点（等价于桌面端把鼠标挪过来，hover 立即生效）
+//   2. 按住不放并移动   -> 持续发送 MouseMove，触发 onMouseMove / Layer.onMouseMove 等 hover 逻辑
+//   3. 按下后原地抬起   -> MouseDown + MouseUp，作为一次点击
+//   4. 拖动后抬起       -> 不发送 MouseUp（否则引擎会额外合成一次 Click，拖动看 hover 时误翻页）
+//   5. 双指按住并上下移 -> 模拟滚轮（每 SCROLL_STEP_PIXELS 像素一格），不再触发右键
+//   6. 按住不动再移动   -> 先按下左键再拖动，模拟桌面端的"拖拽"（滑块、拖放等）
 enum TouchState
 {
     STATE_IDLE,
@@ -290,27 +298,70 @@ struct Finger
     float x, y;           // 归一化坐标
     float startX, startY; // 按下时的位置
     Uint64 downTime;
+    Uint64 lastMoveTime; // 上一次发送 MouseMove 的时间（用于节流）
     bool active;
     bool moved;
+    bool dragMoved;     // 拖拽过程中是否真的拉出过 TAP_SLOP 的距离（决定松手要不要算点击）
+    bool dragCancelled; // 长按判定期内就动了：本次手势判定为 hover，不再可能变成拖拽
 
-    Finger() : id(0), x(0), y(0), startX(0), startY(0), downTime(0), active(false), moved(false) {}
+    Finger()
+        : id(0), x(0), y(0), startX(0), startY(0), downTime(0), lastMoveTime(0), active(false),
+          moved(false), dragMoved(false), dragCancelled(false)
+    {
+    }
 };
 static TouchState _state;
 static std::map<SDL_FingerID, Finger> fingers;
 static float rightClickX, rightClickY;
 static Uint64 rightClickStartTime;
 static const Uint32 RIGHT_CLICK_CONFIRM_DELAY = 150;
-void sendMouseEvent(int button, int eventType, float pX, float pY);
+// 判定"点击"允许的抖动（像素）：超出即认为用户在拖动看 hover
+static const float TAP_SLOP_PIXELS = 12.0f;
+// 长按之后，手指移动多少像素才开始真正"按住拖拽"
+static const float DRAG_START_PIXELS = 6.0f;
+// 长按判定期内（前 LONG_PRESS_MS）手指漂移超过这个距离，就认定本次是 hover 而不是拖拽
+static const float DRAG_CANCEL_PIXELS = 4.0f;
+// MouseMove 最小发送间隔（毫秒），避免手指高速滑动时把输入队列刷爆
+static const Uint64 MOVE_SEND_INTERVAL_MS = 8;
+// 双指拖动多少像素算一格滚轮
+static const float SCROLL_STEP_PIXELS = 40.0f;
+// 按住多少毫秒之后再移动，才算"按住左键拖拽"（否则算 hover 移动）
+static const Uint64 LONG_PRESS_MS = 350;
+// 左键是否处于按下状态（长按拖拽期间为 true）
+static bool mouseButtonHeld = false;
+// 双指滚轮状态：锚点（两指平均 Y）、累计位移、本次手势是否已经滚动过
+static float twoFingerAnchorY = 0.0f;
+static float scrollAccumPx = 0.0f;
+static bool twoFingerScrolled = false;
+void sendMouseEvent(int button, int eventType, float pX, float pY, bool generateClick = true);
 void sendMouseMotion(float pX, float pY);
+void sendMouseScroll(int dx, int dy, float pX, float pY);
+// 结束"按住左键"状态（generateClick=false 用于拖拽收尾，避免拖完又触发一次点击）
+void releaseHeldButton(bool generateClick)
+{
+    if (!mouseButtonHeld)
+        return;
+    mouseButtonHeld = false;
+    if (fingers.empty())
+        return;
+    Finger& f = fingers.begin()->second;
+    sendMouseEvent(SDL_BUTTON_LEFT, SDL_EVENT_MOUSE_BUTTON_UP, f.x, f.y, generateClick);
+}
 void handleFingerDown(const SDL_TouchFingerEvent& e)
 {
+    // 上一根手指还按着左键没松开就又按下新手指：先松开左键，避免按键卡住
+    releaseHeldButton(false);
+
     Finger f;
     f.id = e.fingerID;
     f.x = f.startX = e.x;
     f.y = f.startY = e.y;
     f.downTime = SDL_GetTicks();
+    f.lastMoveTime = f.downTime;
     f.active = true;
     f.moved = false;
+    f.dragMoved = false;
+    f.dragCancelled = false;
 
     fingers[e.fingerID] = f;
 
@@ -318,11 +369,28 @@ void handleFingerDown(const SDL_TouchFingerEvent& e)
     {
         // 单击->左键
         _state = STATE_SINGLE_FINGER;
+        // 按下即把指针移到这里：安卓没有真正的 hover，
+        // 这一步让"按住不放"等价于桌面端"把鼠标停在某处"，hover 立刻可见
+        sendMouseMotion(f.x, f.y);
     }
     else if (fingers.size() == 2)
     {
-        // 双击->右键
+        // 双指轻点->右键；双指按住上下拖动->滚轮
         _state = STATE_MULTI_FINGER;
+        // 以两指平均位置作为滚轮锚点，同时把指针挪到两指中间，
+        // 这样滚轮和右键都落在手指所在的位置，而不是上一次单指点击的残留位置
+        float sumX = 0.0f, sumY = 0.0f;
+        for (auto& kv : fingers)
+        {
+            sumX += kv.second.x;
+            sumY += kv.second.y;
+        }
+        sumX /= (float)fingers.size();
+        sumY /= (float)fingers.size();
+        twoFingerAnchorY = sumY;
+        scrollAccumPx = 0.0f;
+        twoFingerScrolled = false;
+        sendMouseMotion(sumX, sumY);
     }
     else
     {
@@ -335,6 +403,8 @@ void handleFingerDown(const SDL_TouchFingerEvent& e)
         TVPInvokeMenu(pixelX, pixelY);
         fingers.clear();
         _state = STATE_IDLE;
+        scrollAccumPx = 0.0f;
+        twoFingerScrolled = false;
     }
 }
 void handleFingerUp(const SDL_TouchFingerEvent& e)
@@ -350,20 +420,87 @@ void handleFingerUp(const SDL_TouchFingerEvent& e)
     {
         if (_state == STATE_SINGLE_FINGER)
         {
-            if (!f.moved)
+            if (mouseButtonHeld)
+            {
+                // 长按拖拽收尾：补一次 Move 再发 MouseUp。
+                // 拖过 TAP_SLOP 就不再合成 Click，否则"拖完滑块"会顺手变成一次点击/翻页
+                f.x = e.x;
+                f.y = e.y;
+                sendMouseMotion(f.x, f.y);
+
+                int windowWidth, windowHeight;
+                SDL_GetWindowSize(tvp_window, &windowWidth, &windowHeight);
+                float dx = (e.x - f.startX) * windowWidth;
+                float dy = (e.y - f.startY) * windowHeight;
+                bool isClick = !f.dragMoved &&
+                               dx * dx + dy * dy <= TAP_SLOP_PIXELS * TAP_SLOP_PIXELS;
+
+                mouseButtonHeld = false;
+                sendMouseEvent(SDL_BUTTON_LEFT, SDL_EVENT_MOUSE_BUTTON_UP, f.x, f.y, isClick);
+            }
+            else if (!f.moved)
+            {
+                // 轻点：先把指针落到抬起点，再补一次按下 / 抬起，等价于桌面端的一次点击
+                f.x = e.x;
+                f.y = e.y;
+                sendMouseMotion(f.x, f.y);
                 sendMouseEvent(SDL_BUTTON_LEFT, SDL_EVENT_MOUSE_BUTTON_DOWN, f.x, f.y);
-            sendMouseEvent(SDL_BUTTON_LEFT, SDL_EVENT_MOUSE_BUTTON_UP, f.x, f.y);
+                sendMouseEvent(SDL_BUTTON_LEFT, SDL_EVENT_MOUSE_BUTTON_UP, f.x, f.y);
+            }
+            else
+            {
+                // 拖动结束：只把指针停在最后的位置。
+                // 这里绝不能发 MouseUp —— 引擎的 MouseUp 会顺带合成一次 Click，
+                // 拖动只是为了看 hover，误触发就会变成"翻页"。
+                f.x = e.x;
+                f.y = e.y;
+                sendMouseMotion(f.x, f.y);
+            }
         }
         else if (_state == STATE_MULTI_FINGER)
         {
-            if (!f.moved)
+            // 滚动过就不再当成右键，否则"双指滑一下"会顺手弹出右键菜单
+            if (!f.moved && !twoFingerScrolled)
                 sendMouseEvent(SDL_BUTTON_RIGHT, SDL_EVENT_MOUSE_BUTTON_DOWN, f.x, f.y);
-            sendMouseEvent(SDL_BUTTON_RIGHT, SDL_EVENT_MOUSE_BUTTON_UP, f.x, f.y);
+            if (!twoFingerScrolled)
+                sendMouseEvent(SDL_BUTTON_RIGHT, SDL_EVENT_MOUSE_BUTTON_UP, f.x, f.y);
         }
         _state = STATE_IDLE;
+        scrollAccumPx = 0.0f;
+        twoFingerScrolled = false;
     }
 
     fingers.erase(it);
+}
+// 手势被系统/窗口打断（来电、切后台、系统返回手势等）
+// 必须把手指从表里摘掉，否则残留的 finger 会让下一次触摸被当成"双指"
+void handleFingerCancel(const SDL_TouchFingerEvent& e)
+{
+    auto it = fingers.find(e.fingerID);
+    if (it == fingers.end())
+        return;
+
+    // 拖拽过程中被系统打断：先把左键松开
+    releaseHeldButton(false);
+
+    fingers.erase(it);
+
+    if (fingers.empty())
+    {
+        _state = STATE_IDLE;
+        scrollAccumPx = 0.0f;
+        twoFingerScrolled = false;
+    }
+    else if (fingers.size() == 1)
+    {
+        // 还剩一根手指：继续按单指处理，但标记为已移动，抬起时不要误判成点击
+        _state = STATE_SINGLE_FINGER;
+        fingers.begin()->second.moved = true;
+    }
+    else
+    {
+        _state = STATE_MULTI_FINGER;
+    }
 }
 void handleFingerMotion(const SDL_TouchFingerEvent& e)
 {
@@ -373,26 +510,112 @@ void handleFingerMotion(const SDL_TouchFingerEvent& e)
 
     Finger& f = it->second;
 
-    // 检查是否移动
-    float dx = e.x - f.startX;
-    float dy = e.y - f.startY;
-    float moveDist = dx * dx + dy * dy;
-
-    if (moveDist > 0.0001f)
-    { // 移动阈值
-        f.moved = true;
+    if (_state == STATE_MULTI_FINGER && fingers.size() == 2)
+    {
+        // 双指按住并移动 -> 滚轮
         f.x = e.x;
         f.y = e.y;
 
-        if (_state == STATE_SINGLE_FINGER)
+        int windowWidth, windowHeight;
+        SDL_GetWindowSize(tvp_window, &windowWidth, &windowHeight);
+
+        float avgX = 0.0f, avgY = 0.0f;
+        for (auto& kv : fingers)
         {
-            // 单指移动，发送鼠标移动
-            sendMouseMotion(f.x, f.y);
+            avgX += kv.second.x;
+            avgY += kv.second.y;
         }
+        avgX /= (float)fingers.size();
+        avgY /= (float)fingers.size();
+
+        float deltaPx = (avgY - twoFingerAnchorY) * windowHeight;
+        twoFingerAnchorY = avgY;
+        scrollAccumPx += deltaPx;
+
+        // 一次 FINGER_MOTION 最多发一格，剩下的留在累加器里，避免快速滑动一次喷出十几格
+        if (scrollAccumPx >= SCROLL_STEP_PIXELS)
+        {
+            // 手指向下 = 内容跟着下来 = 相当于滚轮向上
+            sendMouseScroll(0, 1, avgX, avgY);
+            scrollAccumPx -= SCROLL_STEP_PIXELS;
+            twoFingerScrolled = true;
+        }
+        else if (scrollAccumPx <= -SCROLL_STEP_PIXELS)
+        {
+            sendMouseScroll(0, -1, avgX, avgY);
+            scrollAccumPx += SCROLL_STEP_PIXELS;
+            twoFingerScrolled = true;
+        }
+
+        if (scrollAccumPx > SCROLL_STEP_PIXELS)
+            scrollAccumPx = SCROLL_STEP_PIXELS;
+        else if (scrollAccumPx < -SCROLL_STEP_PIXELS)
+            scrollAccumPx = -SCROLL_STEP_PIXELS;
+        return;
     }
+
+    if (_state != STATE_SINGLE_FINGER)
+    {
+        // 多指 / 菜单状态不产生 Move，只记录位置
+        f.x = e.x;
+        f.y = e.y;
+        return;
+    }
+
+    int windowWidth, windowHeight;
+    SDL_GetWindowSize(tvp_window, &windowWidth, &windowHeight);
+    float moveDx = (e.x - f.startX) * windowWidth;
+    float moveDy = (e.y - f.startY) * windowHeight;
+    float moveDist2 = moveDx * moveDx + moveDy * moveDy;
+    Uint64 now = SDL_GetTicks();
+
+    // 长按判定期内就移动了 -> 本次手势是 hover，后面再怎么按住也不会变成拖拽
+    if (!mouseButtonHeld && !f.moved && !f.dragCancelled && now - f.downTime < LONG_PRESS_MS &&
+        moveDist2 > DRAG_CANCEL_PIXELS * DRAG_CANCEL_PIXELS)
+        f.dragCancelled = true;
+
+    // 拖拽期间记录是否真的拉开过距离（松手时用它决定要不要合成 Click）
+    if (mouseButtonHeld && moveDist2 > TAP_SLOP_PIXELS * TAP_SLOP_PIXELS)
+        f.dragMoved = true;
+
+    // 按住不放超过 LONG_PRESS_MS 再移动 -> 该次手势按"按住左键拖拽"处理
+    // （滑块、拖放之类需要 onMouseDown 之后才有 onMouseMove 的逻辑）
+    if (!mouseButtonHeld && !f.moved && !f.dragCancelled && now - f.downTime >= LONG_PRESS_MS)
+    {
+        if (moveDist2 < DRAG_START_PIXELS * DRAG_START_PIXELS)
+            return; // 还没真的动，继续等
+        mouseButtonHeld = true;
+        f.dragMoved = moveDist2 > TAP_SLOP_PIXELS * TAP_SLOP_PIXELS;
+        // 在按下的位置按下左键，再把指针移到当前位置
+        sendMouseEvent(SDL_BUTTON_LEFT, SDL_EVENT_MOUSE_BUTTON_DOWN, f.startX, f.startY);
+        f.moved = true;
+        f.x = e.x;
+        f.y = e.y;
+        f.lastMoveTime = now;
+        sendMouseMotion(f.x, f.y);
+        return;
+    }
+
+    if (!f.moved)
+    {
+        if (moveDist2 < TAP_SLOP_PIXELS * TAP_SLOP_PIXELS)
+            return; // 还在点击容差内：不产生 Move，轻轻一点不会让指针乱跳
+        f.moved = true;
+    }
+
+    f.x = e.x;
+    f.y = e.y;
+
+    // 节流：手指快速划动时一帧会产生多个 FINGER_MOTION，全发会挤满输入队列
+    if (now - f.lastMoveTime < MOVE_SEND_INTERVAL_MS)
+        return;
+    f.lastMoveTime = now;
+
+    // 按住不放时的移动 = 鼠标 Move（hover / 拖拽过程中的移动）
+    sendMouseMotion(f.x, f.y);
 }
 
-void sendMouseEvent(int button, int eventType, float pX, float pY)
+void sendMouseEvent(int button, int eventType, float pX, float pY, bool generateClick)
 {
     int windowWidth, windowHeight;
     SDL_GetWindowSize(tvp_window, &windowWidth, &windowHeight);
@@ -423,7 +646,7 @@ void sendMouseEvent(int button, int eventType, float pX, float pY)
         }
         else if (eventType == SDL_EVENT_MOUSE_BUTTON_UP)
         {
-            krkrsdl3::KRKR_Trig_MouseUp(tmp, pixelX,pixelY);
+            krkrsdl3::KRKR_Trig_MouseUp(tmp, pixelX, pixelY, generateClick);
         }
     }
 }
@@ -434,6 +657,15 @@ void sendMouseMotion(float pX, float pY)
     int pixelX = static_cast<int>(pX * windowWidth);
     int pixelY = static_cast<int>(pY * windowHeight);
     krkrsdl3::KRKR_Trig_MouseMove(pixelX,pixelY);
+}
+// dx / dy 为滚轮格数（与 SDL 的 wheel.x / wheel.y 同义），pX / pY 为光标位置（归一化）
+void sendMouseScroll(int dx, int dy, float pX, float pY)
+{
+    int windowWidth, windowHeight;
+    SDL_GetWindowSize(tvp_window, &windowWidth, &windowHeight);
+    int pixelX = static_cast<int>(pX * windowWidth);
+    int pixelY = static_cast<int>(pY * windowHeight);
+    krkrsdl3::KRKR_Trig_MouseScroll(dx, dy, pixelX, pixelY);
 }
 #endif
 
@@ -447,6 +679,18 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event)
             TVPWindow* tmpwind = TVPGetActiveWindow();
             if (tmpwind)
                 tmpwind->Close();
+            break;
+        }
+        // 切后台 / 失焦：清空触摸状态，避免残留手指把下一次触摸当成双指
+        case SDL_EVENT_WINDOW_FOCUS_LOST:
+        {
+#if defined(_KRKRSDL3_ANDROID) || defined(_KRKRSDL3_EMSCRIPTEN) || defined(_KRKRSDL3_IOS)
+            releaseHeldButton(false);
+            fingers.clear();
+            _state = STATE_IDLE;
+            scrollAccumPx = 0.0f;
+            twoFingerScrolled = false;
+#endif
             break;
         }
         // 键盘事件
@@ -547,6 +791,9 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event)
             break;
         case SDL_EVENT_FINGER_MOTION:
             handleFingerMotion(event->tfinger);
+            break;
+        case SDL_EVENT_FINGER_CANCELED:
+            handleFingerCancel(event->tfinger);
             break;
 #endif
         default:

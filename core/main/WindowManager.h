@@ -34,7 +34,7 @@ namespace krkrsdl3
 {
 TVPSprite* KRKR_Get_Current_Sprite();
 void KRKR_Trig_MouseDown(tTVPMouseButton mouseId, int x, int y);
-void KRKR_Trig_MouseUp(tTVPMouseButton mouseId, int x, int y);
+void KRKR_Trig_MouseUp(tTVPMouseButton mouseId, int x, int y, bool generateClick = true);
 void KRKR_Trig_MouseMove(int x, int y);
 void KRKR_Trig_MouseScroll(int dx, int dy, int x, int y);
 void KRKR_Trig_KeyDown(int vk);

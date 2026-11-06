@@ -29,6 +29,12 @@ bool TVPFreeUnusedLayerCache = false;
 // set true to free unused layer cache bitmap
 // (layer cache is not freed until system compact event if this is false)
 //---------------------------------------------------------------------------
+// 「取图期间不判转场死刑」计数。
+//
+// 取图不该改变转场状态机，但也不能影响正常的相位推进，所以只在
+// piledCopy 期间跳过「结束转场」这一步，其余（StartProcess/EndProcess）照旧。
+static tjs_int TVPTransAdvanceSuppressCount = 0;
+//---------------------------------------------------------------------------
 
 //---------------------------------------------------------------------------
 // temporary bitmap management
@@ -4660,6 +4666,8 @@ void tTJSNI_BaseLayer::PiledCopy(tjs_int dx,
         return; // out of the clipping rect
 
     src->IncCacheEnabledCount(); // enable cache
+    // 取图期间不允许「结束转场」（见 TVPTransAdvanceSuppressCount 注释）
+    ++TVPTransAdvanceSuppressCount;
     try
     {
         iTVPBaseBitmap* bmp = src->Complete(rect);
@@ -4669,9 +4677,11 @@ void tTJSNI_BaseLayer::PiledCopy(tjs_int dx,
     }
     catch (...)
     {
+        --TVPTransAdvanceSuppressCount;
         src->DecCacheEnabledCount();
         throw;
     }
+    --TVPTransAdvanceSuppressCount;
     src->DecCacheEnabledCount(); // disable cache
 
     tTVPRect ur = rect;
@@ -6187,7 +6197,7 @@ void tTJSNI_BaseLayer::AfterCompletion()
             // notify start of processing unit
             tjs_error er;
             er = DivisibleTransHandler->EndProcess();
-            if (er != TJS_S_TRUE)
+            if (er != TJS_S_TRUE && TVPTransAdvanceSuppressCount == 0)
                 StopTransitionByHandler();
         }
         else if (GiveUpdateTransHandler)

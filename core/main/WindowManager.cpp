@@ -244,7 +244,7 @@ void KRKR_Trig_MouseDown(tTVPMouseButton mouseId, int x, int y)
                                                     TVPGetCurrentShiftKeyState()));
 }
 //---------------------------------------------------------------------------
-void KRKR_Trig_MouseUp(tTVPMouseButton mouseId, int x, int y)
+void KRKR_Trig_MouseUp(tTVPMouseButton mouseId, int x, int y, bool generateClick)
 {
     TVPWindow* win = TVPGetActiveWindow();
     if (win == NULL)
@@ -257,7 +257,7 @@ void KRKR_Trig_MouseUp(tTVPMouseButton mouseId, int x, int y)
     int ly = (y - tmp->yPos) / tmp->scale;
 
     _mouseBtn = mouseId;
-    if (mouseId == mbLeft)
+    if (mouseId == mbLeft && generateClick)
     {
         TVPPostInputEvent(new tTVPOnClickInputEvent(win, lx, ly));
     }
