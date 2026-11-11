@@ -129,8 +129,8 @@ public:
     static bool IsTJS2ByteCode(const tjs_uint8* buff);
 
 private:
-    bool ReadDataArea(const tjs_uint8* buff, int offset, size_t size);
-    bool ReadObjects(tTJSScriptBlock* block, const tjs_uint8* buff, int offset, int size);
+    void ReadDataArea(const tjs_uint8* buff, int offset, size_t size);
+    void ReadObjects(tTJSScriptBlock* block, const tjs_uint8* buff, int offset, int size);
     void TranslateCodeAddress(tTJSScriptBlock* block, tjs_int32* code, const tjs_int32 size);
 };
 

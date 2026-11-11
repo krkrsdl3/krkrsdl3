@@ -78,7 +78,6 @@ class tTJSScriptBlock;
 class tTJSPPMap;
 class tTJSCustomObject;
 class tTJSScriptCache;
-class tTJSPendingErrorState;
 class tTJS
 {
     friend class tTJSScriptBlock;
@@ -97,14 +96,12 @@ private:
 
     tTJSScriptCache* Cache;
     class tTJSVariantArrayStack* VariantArrayStack = nullptr;
-    tTJSPendingErrorState* PendingErrorState = nullptr;
 
 public:
     iTJSDispatch2* GetGlobal();
     iTJSDispatch2* GetGlobalNoAddRef() const;
 
     tTJSVariantArrayStack* GetVariantArrayStack() { return VariantArrayStack; }
-    tTJSPendingErrorState* GetPendingErrorState() const { return PendingErrorState; }
 
 private:
     void AddScriptBlock(tTJSScriptBlock* block);

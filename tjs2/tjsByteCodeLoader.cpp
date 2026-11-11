@@ -33,247 +33,208 @@ tTJSScriptBlock* tTJSByteCodeLoader::ReadByteCode(tTJS* owner,
                                                   const tjs_uint8* buf,
                                                   size_t size)
 {
-    if (!buf || size < 20 || size > 0x7fffffffu)
-        return NULL;
-
     ReadBuffer = buf;
     ReadIndex = 0;
     ReadSize = (tjs_uint32)size;
 
-    // TJS2 / 100
-    if (read4byte(buf) != FILE_TAG_LE || read4byte(&buf[4]) != VER_TAG_LE)
+    const tjs_uint8* databuff = ReadBuffer;
+
+    // TJS2
+    int tag = read4byte(databuff);
+    if (tag != FILE_TAG_LE)
+        return NULL;
+    // 100'\0'
+    int ver = read4byte(&(databuff[4]));
+    if (ver != VER_TAG_LE)
         return NULL;
 
-    int filesize = read4byte(&buf[8]);
-    if (filesize < 0 || (size_t)filesize != size)
+    int filesize = read4byte(&(databuff[8]));
+    if (filesize != size)
         return NULL;
 
-    // DATA chunk: its size field includes the tag and the size word.
-    if (read4byte(&buf[12]) != DATA_TAG_LE)
+    //// DATA
+    tag = read4byte(&(databuff[12]));
+    if (tag != DATA_TAG_LE)
         return NULL;
-    int datasize = read4byte(&buf[16]);
-    if (datasize < 8 || (size_t)datasize > size - 12)
-        return NULL;
-    if (!ReadDataArea(buf, 20, (size_t)datasize - 8))
-        return NULL;
+    size = read4byte(&(databuff[16]));
+    ReadDataArea(databuff, 20, size);
 
-    // OBJS chunk starts right after the DATA chunk.
-    const size_t obj_start = 12 + (size_t)datasize;
-    if (obj_start + 8 > size)
+    int offset = (int)(12 + size); // これがデータエリア後の位置
+    // OBJS
+    tag = read4byte(&(databuff[offset]));
+    offset += 4;
+    if (tag != OBJ_TAG_LE)
         return NULL;
-    if (read4byte(&buf[obj_start]) != OBJ_TAG_LE)
-        return NULL;
-    int objsize = read4byte(&buf[obj_start + 4]);
-    if (objsize < 8 || (size_t)objsize > size - obj_start)
-        return NULL;
-
+    // int objsize = ibuff.get();
+    int objsize = read4byte(&(databuff[offset]));
+    offset += 4;
     tTJSScriptBlock* block = new tTJSScriptBlock(owner, name, 0);
-    if (!ReadObjects(block, buf, (int)obj_start + 8, objsize - 8))
-    {
-        block->Release();
-        return NULL;
-    }
+    ReadObjects(block, databuff, offset, objsize);
     return block;
 }
 
-bool tTJSByteCodeLoader::ReadDataArea(const tjs_uint8* buff, int offset, size_t size)
+void tTJSByteCodeLoader::ReadDataArea(const tjs_uint8* buff, int offset, size_t size)
 {
-    if (offset < 0 || (size_t)offset > ReadSize || size > ReadSize - (size_t)offset)
-        return false;
-    const int end = offset + (int)size;
-
-    auto remain = [&]() -> long long { return (long long)end - offset; };
-    auto read32 = [&](int& value) -> bool {
-        if (remain() < 4)
-            return false;
-        value = read4byte(&buff[offset]);
-        offset += 4;
-        return true;
-    };
-    auto skipAligned = [&](long long bytes) -> bool {
-        long long aligned = (bytes + 3) & ~3LL;
-        if (aligned < 0 || aligned > remain())
-            return false;
-        offset += (int)aligned;
-        return true;
-    };
-
-    int count;
-    if (!read32(count) || count < 0 || (long long)count > remain())
-        return false;
-    ByteArray.set((tjs_int8*)&buff[offset], count);
-    if (!skipAligned(count))
-        return false;
-
-    if (!read32(count) || count < 0 || (long long)count * 2 > remain())
-        return false;
-    ShortArray.clear();
-    ShortArray.reserve(count);
-    for (int i = 0; i < count; i++)
+    int count = read4byte(&(buff[offset]));
+    offset += 4;
+    if (count > 0)
     {
-        ShortArray.push_back(read2byte(&buff[offset]));
-        offset += 2;
+        ByteArray.set((tjs_int8*)&buff[offset], count);
+        int stride = (count + 3) >> 2;
+        offset += stride << 2;
     }
-    if (count & 1)
-    {
-        if (remain() < 2)
-            return false;
-        offset += 2;
-    }
-
-    if (!read32(count) || count < 0 || (long long)count * 4 > remain())
-        return false;
-    LongArray.clear();
-    LongArray.reserve(count);
-    for (int i = 0; i < count; i++)
-    {
-        LongArray.push_back(read4byte(&buff[offset]));
-        offset += 4;
-    }
-
-    if (!read32(count) || count < 0 || (long long)count * 8 > remain())
-        return false;
-    LongLongArray.clear();
-    LongLongArray.reserve(count);
-    for (int i = 0; i < count; i++)
-    {
-        LongLongArray.push_back(read8byte(&buff[offset]));
-        offset += 8;
-    }
-
-    if (!read32(count) || count < 0 || (long long)count * 8 > remain())
-        return false;
-    DoubleArray.clear();
-    DoubleArray.reserve(count);
-    for (int i = 0; i < count; i++)
-    {
-        tjs_uint64 tmp = read8byte(&buff[offset]);
-        DoubleArray.push_back(*(double*)&tmp);
-        offset += 8;
-    }
-
-    if (!read32(count) || count < 0 || (long long)count * 4 > remain())
-        return false;
-    StringArray.clear();
-    StringArray.reserve(count);
-    for (int i = 0; i < count; i++)
-    {
-        int len;
-        if (!read32(len) || len < 0 || (long long)len * 2 > remain())
-            return false;
-        std::vector<tjs_char> ch((size_t)len * 3 + 1);
-        size_t currLen = 0;
-        for (int j = 0; j < len; j++)
+    count = read4byte(&(buff[offset]));
+    offset += 4;
+    if (count > 0)
+    { // load short
+        ShortArray.clear();
+        ShortArray.reserve(count);
+        for (int i = 0; i < count; i++)
         {
-            if (remain() < 2)
-                return false;
-            tjs_uint16 tmpCh = read2byte(&buff[offset]);
-            offset += 2;
-            int chLen = (int)TVPWideCharToUtf8(tmpCh, NULL);
-            if (chLen <= 0 || currLen + (size_t)chLen + 1 > ch.size())
-                return false;
-            TVPWideCharToUtf8(tmpCh, ch.data() + currLen);
-            currLen += (size_t)chLen;
-        }
-        ch[currLen] = 0;
-        StringArray.push_back(TJSMapGlobalStringMap(&(ch[0])));
-        if (len & 1)
-        {
-            if (remain() < 2)
-                return false;
+            ShortArray.push_back(read2byte(&(buff[offset])));
             offset += 2;
         }
+        offset += (count & 1) << 1;
     }
-
-    if (!read32(count) || count < 0 || (long long)count * 4 > remain())
-        return false;
-    OctetArray.clear();
-    OctetArray.reserve(count);
-    for (int i = 0; i < count; i++)
+    count = read4byte(&(buff[offset]));
+    offset += 4;
+    if (count > 0)
     {
-        int len;
-        if (!read32(len) || len < 0 || (long long)len > remain())
-            return false;
-        OctetArray.push_back(new tTJSVariantOctet(&buff[offset], len));
-        offset += len;
-        if (!skipAligned(len))
-            return false;
+        LongArray.clear();
+        LongArray.reserve(count);
+        for (int i = 0; i < count; i++)
+        {
+            LongArray.push_back(read4byte(&(buff[offset])));
+            offset += 4;
+        }
     }
-
-    return true;
+    count = read4byte(&(buff[offset]));
+    offset += 4;
+    if (count > 0)
+    { // load long
+        LongLongArray.clear();
+        LongLongArray.reserve(count);
+        for (int i = 0; i < count; i++)
+        {
+            LongLongArray.push_back(read8byte(&(buff[offset])));
+            offset += 8;
+        }
+    }
+    count = read4byte(&(buff[offset]));
+    offset += 4;
+    if (count > 0)
+    { // load double
+        DoubleArray.clear();
+        DoubleArray.reserve(count);
+        for (int i = 0; i < count; i++)
+        {
+            tjs_uint64 tmp = read8byte(&(buff[offset]));
+            DoubleArray.push_back(*(double*)&tmp);
+            offset += 8;
+        }
+    }
+    count = read4byte(&(buff[offset]));
+    offset += 4;
+    if (count > 0)
+    {
+        StringArray.clear();
+        StringArray.reserve(count);
+        for (int i = 0; i < count; i++)
+        {
+            int len = read4byte(&(buff[offset]));
+            offset += 4;
+            std::vector<tjs_char> ch(len * 3 + 1);
+            size_t currLen = 0;
+            for (int j = 0; j < len; j++)
+            {
+                tjs_uint16 tmpCh = read2byte(&(buff[offset]));
+                int chLen = TVPWideCharToUtf8(tmpCh, NULL);
+                TVPWideCharToUtf8(tmpCh, ch.data() + currLen);
+                currLen += chLen;
+                offset += 2;
+            }
+            ch[currLen] = 0;
+            StringArray.push_back(TJSMapGlobalStringMap((const tjs_char*)&(ch[0])));
+            offset += (len & 1) << 1;
+        }
+    }
+    count = read4byte(&(buff[offset]));
+    offset += 4;
+    if (count > 0)
+    {
+        OctetArray.clear();
+        OctetArray.reserve(count);
+        for (int i = 0; i < count; i++)
+        {
+            int len = read4byte(&(buff[offset]));
+            offset += 4;
+            tTJSVariantOctet* octet =
+                new tTJSVariantOctet(&(buff[offset]), len); // データはコピーされる
+            OctetArray.push_back(octet);
+            offset += ((len + 3) >> 2) << 2;
+        }
+    }
 }
 
-bool tTJSByteCodeLoader::ReadObjects(tTJSScriptBlock* block,
+void tTJSByteCodeLoader::ReadObjects(tTJSScriptBlock* block,
                                      const tjs_uint8* buff,
                                      int offset,
                                      int size)
 {
-    if (offset < 0 || size < 0 || (size_t)offset > ReadSize ||
-        (size_t)size > ReadSize - (size_t)offset)
-        return false;
-    const int end = offset + size;
+    int toplevel = read4byte(&(buff[offset]));
+    offset += 4;
+    int objcount = read4byte(&(buff[offset]));
+    offset += 4;
 
-    auto remain = [&]() -> long long { return (long long)end - offset; };
-    auto read32 = [&](int& value) -> bool {
-        if (remain() < 4)
-            return false;
-        value = read4byte(&buff[offset]);
-        offset += 4;
-        return true;
-    };
-
-    int toplevel;
-    int objcount;
-    if (!read32(toplevel) || !read32(objcount))
-        return false;
-    if (toplevel < -1 || objcount < 0 || toplevel >= objcount)
-        return false;
-    if ((long long)objcount * 64 > remain())
-        return false;
-
+    // tTJSInterCodeContext** objs = new tTJSInterCodeContext*[objcount];
     std::vector<tTJSInterCodeContext*> objs(objcount);
     std::vector<VariantRepalace> work;
-    std::vector<int> parent(objcount, -1);
-    std::vector<int> propSetter(objcount, -1);
-    std::vector<int> propGetter(objcount, -1);
-    std::vector<int> superClassGetter(objcount, -1);
+    std::vector<int> parent(objcount);
+    std::vector<int> propSetter(objcount);
+    std::vector<int> propGetter(objcount);
+    std::vector<int> superClassGetter(objcount);
     std::vector<std::vector<int>> properties(objcount);
-
     for (int o = 0; o < objcount; o++)
     {
+        int tag = read4byte(&(buff[offset]));
+        offset += 4;
+        if (tag != FILE_TAG_LE)
+        {
+            // throw new TJSException(Error.ByteCodeBroken);
+            TJS_eTJSScriptError(TJSByteCodeBroken, block, 0);
+        }
+        // int objsize = read4byte( &(buff[offset]) );
+        offset += 4;
+        parent[o] = read4byte(&(buff[offset]));
+        offset += 4;
+        int name = read4byte(&(buff[offset]));
+        offset += 4;
+        int contextType = read4byte(&(buff[offset]));
+        offset += 4;
+        int maxVariableCount = read4byte(&(buff[offset]));
+        offset += 4;
+        int variableReserveCount = read4byte(&(buff[offset]));
+        offset += 4;
+        int maxFrameCount = read4byte(&(buff[offset]));
+        offset += 4;
+        int funcDeclArgCount = read4byte(&(buff[offset]));
+        offset += 4;
+        int funcDeclUnnamedArgArrayBase = read4byte(&(buff[offset]));
+        offset += 4;
+        int funcDeclCollapseBase = read4byte(&(buff[offset]));
+        offset += 4;
+        propSetter[o] = read4byte(&(buff[offset]));
+        offset += 4;
+        propGetter[o] = read4byte(&(buff[offset]));
+        offset += 4;
+        superClassGetter[o] = read4byte(&(buff[offset]));
+        offset += 4;
+
+        int count = read4byte(&(buff[offset]));
+        offset += 4;
+
+        // デバッグ用のソース位置を読み込む
         tTJSInterCodeContext::tSourcePos* srcPos = NULL;
-        tjs_int32* code = NULL;
-        tTJSVariant* vdata = NULL;
-        auto cleanup = [&]() {
-            delete[] srcPos;
-            if (code)
-                TJS_free(code);
-            delete[] vdata;
-        };
-
-        int tag;
-        int objsize;
-        if (!read32(tag) || !read32(objsize))
-            return false;
-        if (tag != FILE_TAG_LE || objsize < 0)
-            return false;
-        if ((long long)objsize > remain())
-            return false;
-
-        int name32, contextType, maxVariableCount, variableReserveCount, maxFrameCount;
-        int funcDeclArgCount, funcDeclUnnamedArgArrayBase, funcDeclCollapseBase;
-        if (!read32(parent[o]) || !read32(name32) || !read32(contextType) ||
-            !read32(maxVariableCount) || !read32(variableReserveCount) || !read32(maxFrameCount) ||
-            !read32(funcDeclArgCount) || !read32(funcDeclUnnamedArgArrayBase) ||
-            !read32(funcDeclCollapseBase) || !read32(propSetter[o]) || !read32(propGetter[o]) ||
-            !read32(superClassGetter[o]))
-            return false;
-        if (name32 < 0 || (size_t)name32 >= StringArray.size())
-            return false;
-
-        int count;
-        if (!read32(count) || count < 0 || (long long)count * 8 > remain())
-            return false;
         tjs_int srcPosArraySize = 0;
         if (count > 0)
         {
@@ -281,86 +242,50 @@ bool tTJSByteCodeLoader::ReadObjects(tTJSScriptBlock* block,
             srcPosArraySize = count;
             for (int i = 0; i < count; i++)
             {
-                int value;
-                if (!read32(value))
-                {
-                    cleanup();
-                    return false;
-                }
-                srcPos[i].CodePos = value;
+                srcPos[i].CodePos = read4byte(&(buff[offset]));
+                offset += 4;
             }
             for (int i = 0; i < count; i++)
             {
-                int value;
-                if (!read32(value))
-                {
-                    cleanup();
-                    return false;
-                }
-                srcPos[i].SourcePos = value;
+                srcPos[i].SourcePos = read4byte(&(buff[offset]));
+                offset += 4;
             }
+        }
+        else
+        {
+            offset += count << 3;
         }
 
-        if (!read32(count) || count < 0 || (long long)count * 2 > remain())
-        {
-            cleanup();
-            return false;
-        }
+        count = read4byte(&(buff[offset]));
         const tjs_int codeSize = count;
-        code = (tjs_int32*)TJS_malloc(((size_t)count + 16) * sizeof(tjs_int32));
-        if (!code)
-        {
-            cleanup();
-            return false;
-        }
+        offset += 4;
+        tjs_int32* code = (tjs_int32*)TJS_malloc(count * sizeof(tjs_int32));
         for (int i = 0; i < count; i++)
         {
-            if (remain() < 2)
-            {
-                cleanup();
-                return false;
-            }
-            code[i] = (tjs_int16)read2byte(&buff[offset]);
-            offset += 2;
-        }
-        for (int i = count; i < count + 16; i++)
-            code[i] = 0;
-        if (count & 1)
-        {
-            if (remain() < 2)
-            {
-                cleanup();
-                return false;
-            }
+            tjs_int16 c = (tjs_int16)read2byte(&(buff[offset]));
+            code[i] = c;
             offset += 2;
         }
         TranslateCodeAddress(block, code, codeSize);
+        offset += (count & 1) << 1;
 
-        if (!read32(count) || count < 0 || (long long)count * 4 > remain())
-        {
-            cleanup();
-            return false;
-        }
+        count = read4byte(&(buff[offset]));
+        offset += 4;
         int vcount = count << 1;
-        std::vector<short> data((size_t)vcount);
+        std::vector<short> data(vcount);
         for (int i = 0; i < vcount; i++)
         {
-            if (remain() < 2)
-            {
-                cleanup();
-                return false;
-            }
-            data[(size_t)i] = (short)read2byte(&buff[offset]);
+            data[i] = read2byte(&(buff[offset]));
             offset += 2;
         }
 
-        vdata = new tTJSVariant[count];
+        tTJSVariant* vdata = new tTJSVariant[count];
         const tjs_int datacount = count;
         for (int i = 0; i < datacount; i++)
         {
             int pos = i << 1;
-            int type = data[(size_t)pos];
-            int index = data[(size_t)pos + 1];
+            int type = data[pos];
+            int index = data[pos + 1];
             switch (type)
             {
                 case TYPE_VOID:
@@ -370,51 +295,31 @@ bool tTJSByteCodeLoader::ReadObjects(tTJSScriptBlock* block,
                     vdata[i] = (iTJSDispatch2*)NULL;
                     break;
                 case TYPE_INTER_OBJECT:
+                    work.push_back(VariantRepalace(&(vdata[i]), index));
+                    break;
                 case TYPE_INTER_GENERATOR:
-                    vdata[i].Clear();
                     work.push_back(VariantRepalace(&(vdata[i]), index));
                     break;
                 case TYPE_STRING:
-                    if (index >= 0 && (size_t)index < StringArray.size())
-                        vdata[i] = StringArray[(size_t)index].c_str();
-                    else
-                        vdata[i].Clear();
+                    vdata[i] = StringArray[index].c_str(); // tTJSString
                     break;
                 case TYPE_OCTET:
-                    if (index >= 0 && (size_t)index < OctetArray.size())
-                        vdata[i] = OctetArray[(size_t)index];
-                    else
-                        vdata[i].Clear();
+                    vdata[i] = OctetArray[index]; // tTJSVariantOctet
                     break;
                 case TYPE_REAL:
-                    if (index >= 0 && (size_t)index < DoubleArray.size())
-                        vdata[i] = (tjs_real)DoubleArray[(size_t)index];
-                    else
-                        vdata[i].Clear();
+                    vdata[i] = (tjs_real)DoubleArray[index];
                     break;
                 case TYPE_BYTE:
-                    if (index >= 0 && (size_t)index < ByteArray.size())
-                        vdata[i] = (tjs_int)ByteArray[index];
-                    else
-                        vdata[i].Clear();
+                    vdata[i] = (tjs_int)ByteArray[index];
                     break;
                 case TYPE_SHORT:
-                    if (index >= 0 && (size_t)index < ShortArray.size())
-                        vdata[i] = (tjs_int)ShortArray[(size_t)index];
-                    else
-                        vdata[i].Clear();
+                    vdata[i] = (tjs_int)ShortArray[index];
                     break;
                 case TYPE_INTEGER:
-                    if (index >= 0 && (size_t)index < LongArray.size())
-                        vdata[i] = (tjs_int)LongArray[(size_t)index];
-                    else
-                        vdata[i].Clear();
+                    vdata[i] = (tjs_int)LongArray[index];
                     break;
                 case TYPE_LONG:
-                    if (index >= 0 && (size_t)index < LongLongArray.size())
-                        vdata[i] = (tjs_int64)LongLongArray[(size_t)index];
-                    else
-                        vdata[i].Clear();
+                    vdata[i] = (tjs_int64)LongLongArray[index];
                     break;
                 case TYPE_UNKNOWN:
                 default:
@@ -422,81 +327,64 @@ bool tTJSByteCodeLoader::ReadObjects(tTJSScriptBlock* block,
                     break;
             }
         }
-
-        if (!read32(count) || count < 0 || (long long)count * 4 > remain())
-        {
-            cleanup();
-            return false;
-        }
-        std::vector<tjs_int> scgetterps((size_t)count);
+        count = read4byte(&(buff[offset]));
+        offset += 4;
+        // int* scgetterps = new int[count];
+        std::vector<tjs_int> scgetterps(count);
         for (int i = 0; i < count; i++)
         {
-            int value;
-            if (!read32(value))
-            {
-                cleanup();
-                return false;
-            }
-            if (value < -1 || value >= objcount)
-            {
-                cleanup();
-                return false;
-            }
-            scgetterps[(size_t)i] = value;
+            scgetterps[i] = read4byte(&(buff[offset]));
+            offset += 4;
         }
-
-        if (!read32(count) || count < 0 || (long long)count * 8 > remain())
-        {
-            cleanup();
-            return false;
-        }
+        // properties
+        count = read4byte(&(buff[offset]));
+        offset += 4;
         if (count > 0)
         {
             int pcount = count << 1;
             std::vector<int>& props = properties[o];
-            props.resize((size_t)pcount);
+            props.resize(pcount);
             for (int i = 0; i < pcount; i++)
             {
-                int value;
-                if (!read32(value))
-                {
-                    cleanup();
-                    return false;
-                }
-                props[(size_t)i] = value;
+                props[i] = read4byte(&(buff[offset]));
+                offset += 4;
             }
         }
 
         tTJSInterCodeContext* obj = new tTJSInterCodeContext(
-            block, StringArray[(size_t)name32].c_str(), (tTJSContextType)contextType, code,
-            codeSize, vdata, datacount, maxVariableCount, variableReserveCount, maxFrameCount,
-            funcDeclArgCount, funcDeclUnnamedArgArrayBase, funcDeclCollapseBase, true, srcPos,
-            srcPosArraySize, scgetterps);
+            block, StringArray[name].c_str(), (tTJSContextType)contextType, code, codeSize, vdata,
+            datacount, maxVariableCount, variableReserveCount, maxFrameCount, funcDeclArgCount,
+            funcDeclUnnamedArgArrayBase, funcDeclCollapseBase, true, srcPos, srcPosArraySize,
+            scgetterps);
         objs[o] = obj;
-        srcPos = NULL;
-        code = NULL;
-        vdata = NULL;
     }
-
-    for (int o = 0; o < objcount; o++)
-    {
-        if (parent[o] < -1 || parent[o] >= objcount || propSetter[o] < -1 ||
-            propSetter[o] >= objcount || propGetter[o] < -1 || propGetter[o] >= objcount ||
-            superClassGetter[o] < -1 || superClassGetter[o] >= objcount)
-            return false;
-    }
-
     tTJSVariant val;
     for (int o = 0; o < objcount; o++)
     {
-        tTJSInterCodeContext* parentObj = parent[o] >= 0 ? objs[parent[o]] : NULL;
-        tTJSInterCodeContext* propSetterObj = propSetter[o] >= 0 ? objs[propSetter[o]] : NULL;
-        tTJSInterCodeContext* propGetterObj = propGetter[o] >= 0 ? objs[propGetter[o]] : NULL;
-        tTJSInterCodeContext* superClassGetterObj =
-            superClassGetter[o] >= 0 ? objs[superClassGetter[o]] : NULL;
+        tTJSInterCodeContext* parentObj = NULL;
+        tTJSInterCodeContext* propSetterObj = NULL;
+        tTJSInterCodeContext* propGetterObj = NULL;
+        tTJSInterCodeContext* superClassGetterObj = NULL;
+
+        if (parent[o] >= 0)
+        {
+            parentObj = objs[parent[o]];
+        }
+        if (propSetter[o] >= 0)
+        {
+            propSetterObj = objs[propSetter[o]];
+        }
+        if (propGetter[o] >= 0)
+        {
+            propGetterObj = objs[propGetter[o]];
+        }
+        if (superClassGetter[o] >= 0)
+        {
+            superClassGetterObj = objs[superClassGetter[o]];
+        }
         objs[o]->SetCodeObject(parentObj, propSetterObj, propGetterObj, superClassGetterObj);
 
-        if (!properties[o].empty())
+        if (properties[o].size() > 0)
         {
             tTJSInterCodeContext* obj = parentObj;
             std::vector<int>& prop = properties[o];
@@ -504,30 +392,30 @@ bool tTJSByteCodeLoader::ReadObjects(tTJSScriptBlock* block,
             for (int i = 0; i < length; i++)
             {
                 int pos = i << 1;
-                int pname = prop[(size_t)pos];
-                int pobj = prop[(size_t)pos + 1];
-                if (!obj || pname < 0 || (size_t)pname >= StringArray.size() || pobj < 0 ||
-                    pobj >= objcount)
-                    continue;
+                int pname = prop[pos];
+                int pobj = prop[pos + 1];
+                // register members to the parent object
                 val = objs[pobj];
-                obj->PropSet(TJS_MEMBERENSURE | TJS_IGNOREPROP, StringArray[(size_t)pname].c_str(),
-                             NULL, &val, obj);
+                obj->PropSet(TJS_MEMBERENSURE | TJS_IGNOREPROP, StringArray[pname].c_str(), NULL,
+                             &val, obj);
             }
         }
     }
     int count = (int)work.size();
     for (int i = 0; i < count; i++)
     {
-        VariantRepalace& w = work[(size_t)i];
-        if (w.Index >= 0 && w.Index < objcount)
-            (*w.Work) = objs[w.Index];
+        VariantRepalace& w = work[i];
+        (*w.Work) = objs[w.Index];
     }
     work.clear();
-    tTJSInterCodeContext* top = toplevel >= 0 ? objs[toplevel] : NULL;
+    tTJSInterCodeContext* top = NULL;
+    if (toplevel >= 0)
+    {
+        top = objs[toplevel];
+    }
     block->SetObjects(top, objs, objcount);
-    return true;
+    // delete[] objs;
 }
-
 #define TJS_OFFSET_VM_REG_ADDR(x) ((x) = TJS_TO_VM_REG_ADDR(x))
 #define TJS_OFFSET_VM_CODE_ADDR(x) ((x) = TJS_TO_VM_CODE_ADDR(x))
 /**
@@ -742,11 +630,6 @@ void tTJSByteCodeLoader::TranslateCodeAddress(tTJSScriptBlock* block,
                 {
                     st = 4;
                 }
-                if (i + st > codeSize)
-                {
-                    TJS_eTJSScriptError(TJSByteCodeBroken, block, 0);
-                    return;
-                }
                 tjs_int num = code[i + st - 1]; // st-1 = argument count
                 tjs_int c = 0;
                 if (num == -1)
@@ -756,17 +639,7 @@ void tTJSByteCodeLoader::TranslateCodeAddress(tTJSScriptBlock* block,
                 else if (num == -2)
                 {
                     st++;
-                    if (i + st > codeSize)
-                    {
-                        TJS_eTJSScriptError(TJSByteCodeBroken, block, 0);
-                        return;
-                    }
                     num = code[i + st - 1];
-                    if (num < 0 || (long long)num * 2 > codeSize - (i + st))
-                    {
-                        TJS_eTJSScriptError(TJSByteCodeBroken, block, 0);
-                        return;
-                    }
                     size = st + num * 2;
                     for (tjs_int j = 0; j < num; j++)
                     {
@@ -783,25 +656,15 @@ void tTJSByteCodeLoader::TranslateCodeAddress(tTJSScriptBlock* block,
                         }
                     }
                 }
-                else if (num >= 0)
+                else
                 {
                     // normal operation
-                    if (num > codeSize - (i + st))
-                    {
-                        TJS_eTJSScriptError(TJSByteCodeBroken, block, 0);
-                        return;
-                    }
                     size = st + num;
                     while (num--)
                     {
                         TJS_OFFSET_VM_REG_ADDR(code[i + c + st]);
                         c++;
                     }
-                }
-                else
-                {
-                    TJS_eTJSScriptError(TJSByteCodeBroken, block, 0);
-                    return;
                 }
                 break;
             }
@@ -920,11 +783,6 @@ void tTJSByteCodeLoader::TranslateCodeAddress(tTJSScriptBlock* block,
                 size = 1;
                 break;
         } /* switch */
-        if (size <= 0 || i + size > codeSize)
-        {
-            TJS_eTJSScriptError(TJSByteCodeBroken, block, 0);
-            return;
-        }
         i += size;
     }
     if (codeSize != i)
