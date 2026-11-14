@@ -15,7 +15,7 @@
 //   1. 窗口贴图合成后端——窗口贴图使用 SDL_Texture，
 //      经平台钩子 TVPCreateTextureBackend / TVPUpdateTextureBackend /
 //      TVPDestroyTextureBackend / TVPRenderTextureBackend / TVPRenderClearBackend /
-//      TVPRenderPresentBackend 完成（与迁移前 sdl3_entry.cpp / sdl2_entry.cpp
+//      TVPRenderPresentBackend 完成（与迁移前 sdl3_entry.cpp
 //      中的 SW 路径行为一致）。
 //   2. 2D 网格渲染器——一般贴图使用 CPU buffer，
 //      由 cpp/plugins/emoteplayer/emoterunner.cpp 的 drawSoftware 迁移而来

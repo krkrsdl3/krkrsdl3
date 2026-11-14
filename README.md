@@ -38,7 +38,6 @@ krkrsdl3的核心源码仓库，源码构建参考[krkrsdl3_build](https://githu
 # 宏定义说明
 
 - ONLYCONSOLE:只编译脚本语言tjs2。
-- _KRKRSDL3_USE_SDL3:使用SDL3作为硬件抽象层后端。
 - _KRKRSDL3_USE_FFMPEG:使用ffmpeg进行视频解码。
 - _KRKRSDL3_USE_OPENGL/_KRKRSDL3_USE_VULKAN...:区分不同的图形后端是否参与编译
 - _KRKRSDL3_ANDROID/_KRKRSDL3_LINUX...:区分不同操作系统。

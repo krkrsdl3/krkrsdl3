@@ -1,5 +1,5 @@
 // OHOS file I/O — POSIX (musl libc)
-// Replaces sdl3/sdl2 file.cpp
+// Replaces sdl3 file.cpp
 
 #include "tjsCommHead.h"
 #include "Platform.h"

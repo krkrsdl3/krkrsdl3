@@ -6,7 +6,7 @@
 //---------------------------------------------------------------------------
 // Vulkan 渲染后端（合并实现：窗口合成 + 2D 网格）
 //
-// 编译条件：_KRKRSDL3_USE_SDL3 且 _KRKRSDL3_USE_VULKAN（CMake 中检测到 Vulkan 时定义）。
+// 编译条件：_KRKRSDL3_USE_VULKAN（CMake 中检测到 Vulkan 时定义）。
 // 不支持的平台（Emscripten/OHOS）不会编译本文件，也不会注册 "vulkan" 后端。
 //
 // 一个类（iTVPRenderBackend，见 backend/RenderBackend.h）同时承担两个角色：

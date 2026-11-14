@@ -1,5 +1,5 @@
 // OHOS thread — pthread (musl libc)
-// Replaces sdl3/sdl2 thread.cpp
+// Replaces sdl3 thread.cpp
 
 #include "tjsCommHead.h"
 #include "Platform.h"

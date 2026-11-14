@@ -6,13 +6,11 @@
 #include "TVPDebug.h"
 #include "RenderManager.h"
 
-#ifdef _KRKRSDL3_USE_SDL3
-#include <SDL3/SDL_cpuinfo.h>
-#elif defined(_KRKRSDL3_OHOS)
+#ifdef _KRKRSDL3_OHOS
 #include <unistd.h>
 #include <sys/sysinfo.h>
 #else
-#include <SDL_cpuinfo.h>
+#include <SDL3/SDL_cpuinfo.h>
 #endif
 
 #include <cstdio>
@@ -220,13 +218,7 @@ void TVPDetectCPU()
     sysinfo(&si);
     log = TJS_N("CPU RAM: ") + ttstr((tjs_int64)(si.totalram / 1024 / 1024 / 1024)) + TJS_N("GB");
 #else
-    log = TJS_N("CPU cores: ") + ttstr(
-#ifdef _KRKRSDL3_USE_SDL3
-        SDL_GetNumLogicalCPUCores()
-#else
-        SDL_GetCPUCount()
-#endif
-    );
+    log = TJS_N("CPU cores: ") + ttstr(SDL_GetNumLogicalCPUCores());
     TVPAddImportantLog(log);
     log = TJS_N("CPU RAM: ") + ttstr(SDL_GetSystemRAM() / 1024) + TJS_N("GB");
 #endif
@@ -263,10 +255,8 @@ tjs_int TVPGetProcessorNum(void)
     {
 #ifdef _KRKRSDL3_OHOS
         processor_num = (tjs_int)sysconf(_SC_NPROCESSORS_ONLN);
-#elif defined(_KRKRSDL3_USE_SDL3)
-        processor_num = SDL_GetNumLogicalCPUCores();
 #else
-        processor_num = SDL_GetCPUCount();
+        processor_num = SDL_GetNumLogicalCPUCores();
 #endif
         tjs_char tmp[34];
         TVPAddLog(ttstr(TJS_N("Detected CPU core(s): ")) + TJS_tTVInt_to_str(processor_num, tmp));

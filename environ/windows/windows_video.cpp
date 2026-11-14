@@ -1,4 +1,3 @@
-// TODO : windowsAPI极其难用，不想搞了
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -10,6 +9,8 @@
 #include <thread>
 #include <vector>
 #include <atomic>
+#include <chrono>
+#include <algorithm>
 #include <cstring>
 
 #pragma comment(lib, "mfplat.lib")
@@ -18,9 +19,12 @@
 
 #include "tjsCommHead.h"
 #include "Platform.h"
+#include "PlatformMutex.h"
 #include "PlatformVideo.h"
+#include "TVPEvent.h"
 #include "TVPStorage.h"
 #include "LayerBitmap.h"
+#include "TVPCompositor.h"
 
 // --- UTF-8 to UTF-16 helper ---
 static std::wstring to_wide(const ttstr& s)
@@ -34,14 +38,18 @@ static std::wstring to_wide(const ttstr& s)
 }
 
 // --- NV12 to RGBA ---
-static void NV12ToRGBA(const uint8_t* src, UINT32 stride, UINT32 height,
-                       uint8_t* dst, UINT32 width, UINT32 dstStride)
+// stride 可能为负（bottom-up 存储），此时首行在缓冲区末尾
+static void NV12ToRGBA(const uint8_t* src, int stride, UINT32 width, UINT32 height,
+                       uint8_t* dst, UINT32 dstStride)
 {
+    const int absStride = stride < 0 ? -stride : stride;
     const uint8_t* y_plane = src;
-    const uint8_t* uv_plane = y_plane + stride * height;
+    const uint8_t* uv_plane = src + absStride * (int)height;
     for (UINT32 y = 0; y < height; y++) {
-        const uint8_t* y_row = y_plane + y * stride;
-        const uint8_t* uv_row = uv_plane + (y / 2) * stride;
+        UINT32 yRow = stride < 0 ? height - 1 - y : y;
+        UINT32 uvRow = stride < 0 ? height / 2 - 1 - y / 2 : y / 2;
+        const uint8_t* y_row = y_plane + yRow * absStride;
+        const uint8_t* uv_row = uv_plane + uvRow * absStride;
         uint8_t* dst_row = dst + y * dstStride;
         for (UINT32 x = 0; x < width; x++) {
             int Y = y_row[x];
@@ -59,13 +67,140 @@ static void NV12ToRGBA(const uint8_t* src, UINT32 stride, UINT32 height,
 }
 
 // --- IMFByteStream wrapper around tTJSBinaryStream ---
+// Media Foundation 的 MP4 解析会用 BeginRead/EndRead 异步读；
+// 同步 Read 只用于嗅探阶段。
 class MFByteStream : public IMFByteStream
 {
     LONG _ref = 1;
     tTJSBinaryStream* _stream;
-    bool _eos = false;
+    tTJSCriticalSection _lock;
+
+    class AsyncResult : public IMFAsyncResult
+    {
+        LONG ref = 1;
+        IUnknown* state = nullptr;
+        HRESULT status = S_OK;
+
+    public:
+        ULONG bytesRead = 0;
+
+        explicit AsyncResult(IUnknown* s) : state(s)
+        {
+            if (state)
+                state->AddRef();
+        }
+        ~AsyncResult()
+        {
+            if (state)
+                state->Release();
+        }
+
+        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override
+        {
+            if (riid == IID_IUnknown || riid == IID_IMFAsyncResult)
+            {
+                *ppv = static_cast<IMFAsyncResult*>(this);
+                AddRef();
+                return S_OK;
+            }
+            *ppv = nullptr;
+            return E_NOINTERFACE;
+        }
+        ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&ref); }
+        ULONG STDMETHODCALLTYPE Release() override
+        { LONG r = InterlockedDecrement(&ref); if (r == 0) delete this; return r; }
+
+        HRESULT STDMETHODCALLTYPE GetState(IUnknown** pp) override
+        {
+            if (!pp)
+                return E_POINTER;
+            *pp = state;
+            if (state)
+                state->AddRef();
+            return S_OK;
+        }
+        HRESULT STDMETHODCALLTYPE GetStatus() override { return status; }
+        HRESULT STDMETHODCALLTYPE SetStatus(HRESULT hr) override { status = hr; return S_OK; }
+        HRESULT STDMETHODCALLTYPE GetObject(IUnknown** pp) override
+        {
+            if (pp)
+                *pp = nullptr;
+            return E_NOTIMPL;
+        }
+        IUnknown* STDMETHODCALLTYPE GetStateNoAddRef() override { return state; }
+    };
+
+    class ReadTask : public IMFAsyncCallback
+    {
+        LONG ref = 1;
+        MFByteStream* owner;
+        BYTE* buffer;
+        ULONG size;
+        IMFAsyncCallback* callback;
+        IUnknown* state;
+
+    public:
+        ReadTask(MFByteStream* o, BYTE* b, ULONG s, IMFAsyncCallback* cb, IUnknown* st)
+            : owner(o), buffer(b), size(s), callback(cb), state(st)
+        {
+            owner->AddRef();
+            callback->AddRef();
+            if (state)
+                state->AddRef();
+        }
+        ~ReadTask()
+        {
+            owner->Release();
+            callback->Release();
+            if (state)
+                state->Release();
+        }
+
+        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override
+        {
+            if (riid == IID_IUnknown || riid == IID_IMFAsyncCallback)
+            {
+                *ppv = static_cast<IMFAsyncCallback*>(this);
+                AddRef();
+                return S_OK;
+            }
+            *ppv = nullptr;
+            return E_NOINTERFACE;
+        }
+        ULONG STDMETHODCALLTYPE AddRef() override { return InterlockedIncrement(&ref); }
+        ULONG STDMETHODCALLTYPE Release() override
+        { LONG r = InterlockedDecrement(&ref); if (r == 0) delete this; return r; }
+
+        HRESULT STDMETHODCALLTYPE GetParameters(DWORD* flags, DWORD* queue) override
+        {
+            if (flags)
+                *flags = 0;
+            if (queue)
+                *queue = MFASYNC_CALLBACK_QUEUE_STANDARD;
+            return S_OK;
+        }
+
+        HRESULT STDMETHODCALLTYPE Invoke(IMFAsyncResult*) override
+        {
+            AsyncResult* result = new (std::nothrow) AsyncResult(state);
+            if (!result)
+                return E_OUTOFMEMORY;
+                result->SetStatus(owner->ReadSync(buffer, size, &result->bytesRead));
+            HRESULT hr = callback->Invoke(result);
+            result->Release();
+            return hr;
+        }
+    };
+
 public:
     MFByteStream(tTJSBinaryStream* s) : _stream(s) { _stream->SetPosition(0); }
+
+    HRESULT ReadSync(BYTE* buf, ULONG len, ULONG* read)
+    {
+        tTJSCriticalSectionHolder lk(_lock);
+        *read = (ULONG)_stream->Read(buf, len);
+        return S_OK;
+    }
 
     HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override
     {
@@ -86,47 +221,61 @@ public:
     HRESULT STDMETHODCALLTYPE GetLength(QWORD* len) override
     {
         *len = (QWORD)_stream->GetSize();
-        if (*len == 0)
-            return E_FAIL;
-        return S_OK;
+        return *len == 0 ? E_FAIL : S_OK;
     }
     HRESULT STDMETHODCALLTYPE SetLength(QWORD) override { return E_NOTIMPL; }
-    HRESULT STDMETHODCALLTYPE GetCurrentPosition(QWORD* pos) override { *pos = _stream->GetPosition(); return S_OK; }
-    HRESULT STDMETHODCALLTYPE SetCurrentPosition(QWORD pos) override { _stream->SetPosition((tjs_uint64)pos); _eos = false; return S_OK; }
+    HRESULT STDMETHODCALLTYPE GetCurrentPosition(QWORD* pos) override
+    {
+        tTJSCriticalSectionHolder lk(_lock);
+        *pos = _stream->GetPosition();
+        return S_OK;
+    }
+    HRESULT STDMETHODCALLTYPE SetCurrentPosition(QWORD pos) override
+    {
+        tTJSCriticalSectionHolder lk(_lock);
+        _stream->SetPosition((tjs_uint64)pos);
+        return S_OK;
+    }
     HRESULT STDMETHODCALLTYPE IsEndOfStream(BOOL* eos) override
     {
-        if (!_stream)
-        {
-            *eos = TRUE;
-            return S_OK;
-        }
+        tTJSCriticalSectionHolder lk(_lock);
         *eos = (_stream->GetPosition() >= _stream->GetSize()) ? TRUE : FALSE;
         return S_OK;
     }
     HRESULT STDMETHODCALLTYPE Read(BYTE* buf, ULONG len, ULONG* read) override
     {
-        ULONG n = (ULONG)_stream->Read(buf, len);
-        if (read)
-            *read = n;
-        if (n == 0 && len > 0)
-            _eos = true;
-        return S_OK;
+        return ReadSync(buf, len, read);
     }
-    HRESULT STDMETHODCALLTYPE BeginRead(BYTE*, ULONG, IMFAsyncCallback*, IUnknown*) override
+    HRESULT STDMETHODCALLTYPE BeginRead(BYTE* buf, ULONG len, IMFAsyncCallback* callback,
+                                        IUnknown* state) override
     {
-        return E_NOTIMPL;
+        if (!callback)
+            return E_INVALIDARG;
+        ReadTask* task = new (std::nothrow) ReadTask(this, buf, len, callback, state);
+        if (!task)
+            return E_OUTOFMEMORY;
+        HRESULT hr = MFPutWorkItem(MFASYNC_CALLBACK_QUEUE_STANDARD, task, nullptr);
+        task->Release();
+        return hr;
     }
-    HRESULT STDMETHODCALLTYPE EndRead(IMFAsyncResult*, ULONG*) override { return E_NOTIMPL; }
+    HRESULT STDMETHODCALLTYPE EndRead(IMFAsyncResult* result, ULONG* read) override
+    {
+        if (!result)
+            return E_INVALIDARG;
+        AsyncResult* r = static_cast<AsyncResult*>(result);
+        if (read)
+            *read = r->bytesRead;
+        return r->GetStatus();
+    }
     HRESULT STDMETHODCALLTYPE Write(const BYTE*, ULONG, ULONG*) override { return E_NOTIMPL; }
     HRESULT STDMETHODCALLTYPE BeginWrite(const BYTE*, ULONG, IMFAsyncCallback*, IUnknown*) override { return E_NOTIMPL; }
     HRESULT STDMETHODCALLTYPE EndWrite(IMFAsyncResult*, ULONG*) override { return E_NOTIMPL; }
     HRESULT STDMETHODCALLTYPE Seek(MFBYTESTREAM_SEEK_ORIGIN origin, LONGLONG offset, DWORD, QWORD* newPos) override
     {
+        tTJSCriticalSectionHolder lk(_lock);
         tjs_uint64 pos = 0;
         if (origin == msoBegin)
-        {
             pos = (tjs_uint64)offset;
-        }
         else if (origin == msoCurrent)
         {
             pos = _stream->GetPosition() + offset;
@@ -134,11 +283,8 @@ public:
                 pos = 0;
         }
         else
-        {
             return E_INVALIDARG;
-        }
         _stream->SetPosition(pos);
-        _eos = false;
         if (newPos)
             *newPos = (QWORD)pos;
         return S_OK;
@@ -148,12 +294,17 @@ public:
 };
 
 // --- WinVideoPlayer --- concrete class for both overlay and layer modes ---
-class WinVideoPlayer : public OverlayVideoPlayer, public LayerVideoPlayer
+class WinVideoPlayer : public OverlayVideoPlayer, public LayerVideoPlayer,
+                      public tTVPContinuousEventCallbackIntf
 {
     uint32_t ref = 1;
     IMFSourceReader* reader = nullptr;
     IMFMediaType* videoType = nullptr;
     DWORD videoStreamIdx = (DWORD)-1;
+    DWORD audioStreamIdx = (DWORD)-1;
+    iTVPSoundBuffer* sound = nullptr;
+    long audioVolume = 100000;
+    long audioBalance = 0;
     bool mfStarted = false;
     UINT32 vWidth = 0, vHeight = 0;
     UINT32 vFrameRateNum = 30, vFrameRateDen = 1;
@@ -165,6 +316,20 @@ class WinVideoPlayer : public OverlayVideoPlayer, public LayerVideoPlayer
     std::atomic<int64_t> seekTarget{-1};
     std::thread* decodeThread = nullptr;
     std::atomic<bool> running{false};
+
+    TVPVideoEventCallback cb = nullptr;
+    void* cbctx = nullptr;
+    std::chrono::steady_clock::time_point paceWall;
+    int64_t pacePts = -1; // 100ns
+    int64_t lastPts = 0;  // 最近写入帧的 pts（100ns），环空时 GetPosition 仍可用
+    std::atomic<int> pendingFrame{0};
+    std::atomic<bool> notifyEnabled{true};
+    bool continuousHook = false;
+
+    // overlay / mixer 模式：把帧画到合成器的 overlay sprite 上（与 FFmpeg 后端一致）
+    bool layerMode = false;
+    bool overlayVisible = false;
+    TVPSprite* overlaySprite = nullptr;
 
     static const int MAX_FRAMES = 3;
     struct VideoFrame
@@ -181,10 +346,94 @@ class WinVideoPlayer : public OverlayVideoPlayer, public LayerVideoPlayer
     std::vector<uint8_t> rgbaScratch;
 
 public:
-    WinVideoPlayer() {}
+    WinVideoPlayer(TVPVideoEventCallback callback, void* ctx) : cb(callback), cbctx(ctx) {}
     ~WinVideoPlayer() { Close(); }
 
-    bool OpenStream(TJS::tTJSBinaryStream* stream, const ttstr&) override
+    // EC_UPDATE 必须在主线程派发（tjsNativeVideoOverlay 会直接操作图层）
+    void OnContinuousCallback(tjs_uint64) override
+    {
+        if (!notifyEnabled)
+            return;
+        if (layerMode)
+        {
+            bool hasFrame;
+            {
+                tTJSCriticalSectionHolder lk(frameMtx);
+                hasFrame = frameCount > 0;
+            }
+            if (hasFrame && cb)
+                cb(cbctx, WM_GRAPHNOTIFY, EC_UPDATE, (uintptr_t)pendingFrame.load());
+        }
+        else
+            PresentOverlayFrame();
+    }
+
+    // overlay / mixer 模式：取队首帧更新合成器 sprite，整窗按比例 letterbox 显示
+    void PresentOverlayFrame()
+    {
+        tTJSCriticalSectionHolder lk(frameMtx);
+        if (frameCount <= 0)
+            return;
+        VideoFrame& f = frames[readIdx];
+        if (!f.rgba)
+            return;
+        if (!overlaySprite)
+        {
+            overlaySprite = new TVPSprite;
+            overlaySprite->type = 2;
+            overlaySprite->width = f.w;
+            overlaySprite->height = f.h;
+            krkrsdl3::TVPCreateTexture(*overlaySprite);
+            krkrsdl3::TVPJoinTexture(overlaySprite);
+        }
+        krkrsdl3::TVPUpdateTexture(overlaySprite, f.rgba, f.w, f.h, f.w * 4);
+        overlaySprite->isVisible = overlayVisible;
+        readIdx = (readIdx + 1) % MAX_FRAMES;
+        frameCount--;
+    }
+
+    void PostEnded()
+    {
+        if (notifyEnabled && cb)
+            cb(cbctx, WM_GRAPHNOTIFY, EC_COMPLETE, 0);
+    }
+
+    // 按 pts 控制帧输出节奏；暂停期间不推进时间基准
+    void PaceTo(int64_t pts)
+    {
+        auto now = std::chrono::steady_clock::now();
+        if (pacePts < 0 || pts < pacePts)
+        {
+            pacePts = pts;
+            paceWall = now;
+            return;
+        }
+        auto due = paceWall + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                 std::chrono::nanoseconds((pts - pacePts) * 100));
+        while (running)
+        {
+            if (seekTarget >= 0)
+                return;
+            if (paused || !playing)
+            {
+                pacePts = pts;
+                paceWall = std::chrono::steady_clock::now();
+                return;
+            }
+            now = std::chrono::steady_clock::now();
+            if (now >= due)
+                break;
+            auto left = due - now;
+            std::this_thread::sleep_for(std::min<decltype(left)>(
+                left, std::chrono::milliseconds(5)));
+        }
+        if (std::chrono::steady_clock::now() - due > std::chrono::seconds(1))
+            due = std::chrono::steady_clock::now();
+        pacePts = pts;
+        paceWall = due;
+    }
+
+    bool OpenStream(TJS::tTJSBinaryStream* stream, const ttstr& streamname) override
     {
         // 1. 初始化 Media Foundation
         HRESULT hr = MFStartup(MF_VERSION);
@@ -195,12 +444,10 @@ public:
         }
         mfStarted = true;
 
-        // 3. 创建字节流
+        // 3. 用 TJS 流构造 IMFByteStream
         MFByteStream* bs = new (std::nothrow) MFByteStream(stream);
         if (!bs)
-        {
             return false;
-        }
         bs->AddRef();
 
         // 4. 创建 SourceReader
@@ -219,30 +466,85 @@ public:
             IMFMediaType* mt = nullptr;
             hr = reader->GetNativeMediaType(idx, 0, &mt);
             if (hr == MF_E_INVALIDSTREAMNUMBER)
-                continue;
+                break;
             if (FAILED(hr))
                 break;
             GUID major = GUID_NULL;
             mt->GetGUID(MF_MT_MAJOR_TYPE, &major);
-            if (major == MFMediaType_Video && videoStreamIdx == (DWORD)-1)
+            if (major == MFMediaType_Audio && audioStreamIdx == (DWORD)-1)
+            {
+                // 音频统一解码成 16bit PCM，交给引擎的 sound buffer 播放
+                UINT32 rate = 0, channels = 0;
+                rate = MFGetAttributeUINT32(mt, MF_MT_AUDIO_SAMPLES_PER_SECOND, 0);
+                channels = MFGetAttributeUINT32(mt, MF_MT_AUDIO_NUM_CHANNELS, 0);
+                if (rate && channels)
+                {
+                    IMFMediaType* pcm = nullptr;
+                    MFCreateMediaType(&pcm);
+                    pcm->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
+                    pcm->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_PCM);
+                    pcm->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
+                    pcm->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, rate);
+                    pcm->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, channels);
+                    pcm->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, channels * 2);
+                    pcm->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, rate * channels * 2);
+                    hr = reader->SetCurrentMediaType(idx, nullptr, pcm);
+                    pcm->Release();
+                    if (SUCCEEDED(hr))
+                    {
+                        audioStreamIdx = idx;
+                        tTVPWaveFormat fmt = {};
+                        fmt.SamplesPerSec = rate;
+                        fmt.Channels = channels;
+                        fmt.BitsPerSample = 16;
+                        fmt.BytesPerSample = 2;
+                        fmt.TotalSamples = 0;
+                        fmt.TotalTime = 0;
+                        fmt.SpeakerConfig = 0;
+                        fmt.IsFloat = false;
+                        fmt.Seekable = false;
+                        TVPInitDirectSound();
+                        sound = TVPCreateSoundBuffer(fmt, 32);
+                        if (sound)
+                        {
+                            sound->SetVolume(audioVolume / 100000.0f);
+                            sound->SetPan(audioBalance / 100000.0f);
+                            TVPConsoleLog("audio: %u Hz %u ch", rate, channels);
+                        }
+                        else
+                            TVPConsoleLog("audio: TVPCreateSoundBuffer failed");
+                    }
+                    else
+                        TVPConsoleLog("SetCurrentMediaType(PCM) failed: 0x%08X", hr);
+                }
+            }
+            else if (major == MFMediaType_Video && videoStreamIdx == (DWORD)-1)
             {
                 IMFMediaType* out = nullptr;
                 MFCreateMediaType(&out);
                 out->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
                 out->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
-                reader->SetCurrentMediaType(idx, nullptr, out);
+                hr = reader->SetCurrentMediaType(idx, nullptr, out);
                 out->Release();
-                reader->GetCurrentMediaType(idx, &videoType);
-                if (videoType)
+                if (FAILED(hr))
                 {
-                    MFGetAttributeSize(videoType, MF_MT_FRAME_SIZE, &vWidth, &vHeight);
-                    UINT32 num = 0, den = 0;
-                    if (SUCCEEDED(MFGetAttributeRatio(videoType, MF_MT_FRAME_RATE, &num, &den)) &&
-                        num && den)
-                    {
-                        vFrameRateNum = num;
-                        vFrameRateDen = den;
-                    }
+                    TVPConsoleLog("SetCurrentMediaType(NV12) failed: 0x%08X", hr);
+                    mt->Release();
+                    continue;
+                }
+                hr = reader->GetCurrentMediaType(idx, &videoType);
+                if (FAILED(hr) || !videoType)
+                {
+                    mt->Release();
+                    continue;
+                }
+                MFGetAttributeSize(videoType, MF_MT_FRAME_SIZE, &vWidth, &vHeight);
+                UINT32 num = 0, den = 0;
+                if (SUCCEEDED(MFGetAttributeRatio(videoType, MF_MT_FRAME_RATE, &num, &den)) &&
+                    num && den)
+                {
+                    vFrameRateNum = num;
+                    vFrameRateDen = den;
                 }
                 videoStreamIdx = idx;
                 if (vWidth > 0 && vHeight > 0)
@@ -253,7 +555,18 @@ public:
         if (videoStreamIdx == (DWORD)-1)
             return false;
 
-        // Estimate total frames
+        // 6. 读取总时长（100ns）
+        {
+            PROPVARIANT var;
+            PropVariantInit(&var);
+            if (SUCCEEDED(reader->GetPresentationAttribute(
+                    MF_SOURCE_READER_MEDIASOURCE, MF_PD_DURATION, &var)) &&
+                var.vt == VT_UI8)
+            {
+                totalDuration = (int64_t)var.uhVal.QuadPart;
+            }
+            PropVariantClear(&var);
+        }
         if (vFrameRateNum && totalDuration > 0)
             totalFrames = (int)((double)totalDuration / 10000000.0 * vFrameRateNum / vFrameRateDen);
 
@@ -264,6 +577,12 @@ public:
 
     void Close()
     {
+        notifyEnabled = false;
+        if (continuousHook)
+        {
+            TVPRemoveContinuousEventHook(this);
+            continuousHook = false;
+        }
         running = false;
         playing = false;
         paused = false;
@@ -272,6 +591,16 @@ public:
             decodeThread->join();
             delete decodeThread;
             decodeThread = nullptr;
+        }
+        if (overlaySprite)
+        {
+            if (overlaySprite->texture)
+            {
+                krkrsdl3::TVPDepartTexture(overlaySprite);
+                krkrsdl3::TVPDestroyTexture(overlaySprite);
+            }
+            delete overlaySprite;
+            overlaySprite = nullptr;
         }
         {
             tTJSCriticalSectionHolder lk(frameMtx);
@@ -292,11 +621,54 @@ public:
             reader->Release();
             reader = nullptr;
         }
+        if (sound)
+        {
+            sound->Stop();
+            delete sound;
+            sound = nullptr;
+        }
         if (mfStarted)
         {
             MFShutdown();
             mfStarted = false;
         }
+    }
+
+    // 音频按 sound buffer 余量节流：一次补若干块，避免视频节拍导致欠载
+    void PumpAudio()
+    {
+        if (!sound || audioStreamIdx == (DWORD)-1 || !running || !playing || paused)
+            return;
+        for (int i = 0; i < 8 && sound->IsBufferValid(); ++i)
+        {
+            DWORD flags = 0;
+            LONGLONG ts = 0;
+            IMFSample* s = nullptr;
+            HRESULT hr = reader->ReadSample(audioStreamIdx, 0, nullptr, &flags, &ts, &s);
+            if (FAILED(hr) || (flags & MF_SOURCE_READERF_ENDOFSTREAM))
+            {
+                if (s)
+                    s->Release();
+                break;
+            }
+            if (!s)
+                break;
+            IMFMediaBuffer* b = nullptr;
+            if (SUCCEEDED(s->ConvertToContiguousBuffer(&b)))
+            {
+                BYTE* p = nullptr;
+                DWORD len = 0;
+                if (SUCCEEDED(b->Lock(&p, nullptr, &len)) && p && len)
+                {
+                    sound->AppendBuffer(p, len);
+                    b->Unlock();
+                }
+                b->Release();
+            }
+            s->Release();
+        }
+        if (!sound->IsPlaying())
+            sound->Play();
     }
 
     void DecodeThreadProc()
@@ -316,18 +688,26 @@ public:
                     tTJSCriticalSectionHolder lk(frameMtx);
                     frameCount = 0;
                 }
+                if (sound)
+                    sound->Reset();
                 ended = false;
+                pacePts = -1;
+                paceWall = std::chrono::steady_clock::now();
             }
             if (paused || (!playing && ended))
             {
+                pacePts = -1; // 暂停/停止期间不走时，恢复后不快进
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 continue;
             }
             if (!playing)
             {
+                pacePts = -1;
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 continue;
             }
+
+            PumpAudio();
 
             DWORD flags = 0;
             LONGLONG ts = 0;
@@ -335,10 +715,13 @@ public:
             HRESULT hr = reader->ReadSample(videoStreamIdx, 0, nullptr, &flags, &ts, &sample);
             if (hr == MF_E_END_OF_STREAM || (flags & MF_SOURCE_READERF_ENDOFSTREAM))
             {
-                ended = true;
-                playing = false;
                 if (sample)
                     sample->Release();
+                if (!ended.exchange(true))
+                {
+                    playing = false;
+                    PostEnded();
+                }
                 continue;
             }
             if (FAILED(hr))
@@ -349,6 +732,19 @@ public:
             if (!sample)
                 continue;
 
+            // 按 pts 等待展示时刻；期间发生 seek 则丢弃这一帧
+            PaceTo(ts);
+            if (!running)
+            {
+                sample->Release();
+                break;
+            }
+            if (seekTarget >= 0)
+            {
+                sample->Release();
+                continue;
+            }
+
             IMFMediaBuffer* buf = nullptr;
             if (SUCCEEDED(sample->ConvertToContiguousBuffer(&buf)))
             {
@@ -356,11 +752,13 @@ public:
                 DWORD len = 0;
                 if (SUCCEEDED(buf->Lock(&data, nullptr, &len)) && data && vWidth)
                 {
-                    UINT32 stride = MFGetAttributeUINT32(videoType, MF_MT_DEFAULT_STRIDE, vWidth);
+                    int stride = (int)(INT32)MFGetAttributeUINT32(
+                        videoType, MF_MT_DEFAULT_STRIDE, (UINT32)vWidth);
                     if (!stride)
-                        stride = vWidth;
-                    NV12ToRGBA(data, stride, vHeight, rgbaScratch.data(), vWidth, vWidth * 4);
+                        stride = (int)vWidth;
+                    NV12ToRGBA(data, stride, vWidth, vHeight, rgbaScratch.data(), vWidth * 4);
                     buf->Unlock();
+
                     tTJSCriticalSectionHolder lk(frameMtx);
                     if (frameCount >= MAX_FRAMES)
                     {
@@ -374,6 +772,7 @@ public:
                     f.w = vWidth;
                     f.h = vHeight;
                     f.pts = ts;
+                    lastPts = ts;
                     writeIdx = (writeIdx + 1) % MAX_FRAMES;
                     frameCount++;
                 }
@@ -381,6 +780,9 @@ public:
             }
             if (sample)
                 sample->Release();
+
+            if (vFrameRateNum && vFrameRateDen)
+                pendingFrame = (int)(ts * vFrameRateNum / (10000000LL * vFrameRateDen));
         }
     }
 
@@ -390,20 +792,36 @@ public:
         if (--ref == 0)
             delete this;
     }
-    void OnContinuousCallback(tjs_uint64) override {}
 
     void SetWindow(class tTJSNI_Window*) override {}
     void SetMessageDrainWindow(void*) override {}
     void SetRect(int, int, int, int) override {}
-    void SetVisible(bool) override {}
+    void SetVisible(bool b) override
+    {
+        if (layerMode)
+            return; // 图层模式由 tTJSNI_VideoOverlay 自己控制可见性
+        overlayVisible = b;
+        if (overlaySprite)
+            overlaySprite->isVisible = b;
+    }
 
     void Play() override
     {
+        if (!continuousHook)
+        {
+            TVPAddContinuousEventHook(this);
+            continuousHook = true;
+        }
         if (ended)
         {
             seekTarget = 0;
             ended = false;
         }
+        overlayVisible = true;
+        if (overlaySprite)
+            overlaySprite->isVisible = true;
+        if (sound)
+            sound->Play();
         playing = true;
         paused = false;
     }
@@ -413,8 +831,18 @@ public:
         paused = false;
         ended = true;
         seekTarget = 0;
+        overlayVisible = false;
+        if (overlaySprite)
+            overlaySprite->isVisible = false;
+        if (sound)
+            sound->Stop();
     }
-    void Pause() override { paused = true; }
+    void Pause() override
+    {
+        paused = true;
+        if (sound)
+            sound->Pause();
+    }
 
     void SetPosition(uint64_t tick) override { seekTarget = (int64_t)tick * 10000; }
     void GetPosition(uint64_t* tick) override
@@ -422,13 +850,7 @@ public:
         if (!tick)
             return;
         tTJSCriticalSectionHolder lk(frameMtx);
-        if (frameCount > 0)
-        {
-            int last = (writeIdx == 0) ? MAX_FRAMES - 1 : writeIdx - 1;
-            *tick = frames[last].pts / 10000;
-        }
-        else
-            *tick = 0;
+        *tick = lastPts / 10000;
     }
 
     void GetStatus(tTVPVideoStatus* s) override
@@ -498,20 +920,21 @@ public:
     tTVPBaseTexture* GetFrontBuffer() override
     {
         tTJSCriticalSectionHolder lk(frameMtx);
-        if (frameCount > 0 && bmp[readIdx % 2])
-        {
-            VideoFrame& f = frames[readIdx];
-            if (f.rgba)
-            {
-                bmp[readIdx % 2]->Update(f.rgba, f.w * 4, 0, 0, f.w, f.h);
-                return bmp[readIdx % 2];
-            }
-        }
-        return nullptr;
+        if (frameCount <= 0)
+            return nullptr;
+        VideoFrame& f = frames[readIdx];
+        tTVPBaseTexture* target = bmp[readIdx % 2];
+        if (!f.rgba || !target)
+            return nullptr;
+        target->Update(f.rgba, f.w * 4, 0, 0, f.w, f.h);
+        readIdx = (readIdx + 1) % MAX_FRAMES;
+        frameCount--;
+        return target;
     }
 
     void SetVideoBuffer(tTVPBaseTexture* b1, tTVPBaseTexture* b2, long size) override
     {
+        layerMode = true;
         bmp[0] = b1;
         bmp[1] = b2;
         bmpSize = size;
@@ -529,28 +952,38 @@ public:
         if (r)
             *r = 1.0;
     }
-    void SetAudioBalance(long) override {}
+    void SetAudioBalance(long balance) override
+    {
+        audioBalance = balance;
+        if (sound)
+            sound->SetPan(balance / 100000.0f);
+    }
     void GetAudioBalance(long* b) override
     {
         if (b)
-            *b = 0;
+            *b = sound ? (long)(sound->GetPan() * 100000) : audioBalance;
     }
-    void SetAudioVolume(long) override {}
+    void SetAudioVolume(long volume) override
+    {
+        audioVolume = volume;
+        if (sound)
+            sound->SetVolume(volume / 100000.0f);
+    }
     void GetAudioVolume(long* v) override
     {
         if (v)
-            *v = 100;
+            *v = sound ? (long)(sound->GetVolume() * 100000) : audioVolume;
     }
     void GetNumberOfAudioStream(unsigned long* c) override
     {
         if (c)
-            *c = 0;
+            *c = (audioStreamIdx != (DWORD)-1 && sound) ? 1 : 0;
     }
     void SelectAudioStream(unsigned long) override {}
     void GetEnableAudioStreamNum(long* n) override
     {
         if (n)
-            *n = -1;
+            *n = (audioStreamIdx != (DWORD)-1 && sound) ? 0 : -1;
     }
     void DisableAudioStream() override {}
     void GetNumberOfVideoStream(unsigned long* c) override
@@ -687,5 +1120,5 @@ public:
 };
 
 // --- Factory functions ---
-OverlayVideoPlayer* CreateOverlayVideoPlayer(TVPVideoEventCallback cb, void* cbctx) { return new WinVideoPlayer(); }
-LayerVideoPlayer*    CreateLayerVideoPlayer(TVPVideoEventCallback cb, void* cbctx)    { return new WinVideoPlayer(); }
+OverlayVideoPlayer* CreateOverlayVideoPlayer(TVPVideoEventCallback cb, void* cbctx) { return new WinVideoPlayer(cb, cbctx); }
+LayerVideoPlayer*    CreateLayerVideoPlayer(TVPVideoEventCallback cb, void* cbctx)    { return new WinVideoPlayer(cb, cbctx); }

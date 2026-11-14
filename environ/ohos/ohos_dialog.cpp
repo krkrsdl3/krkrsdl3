@@ -1,5 +1,5 @@
 // OHOS dialog — native dialog stubs
-// Replaces sdl3/sdl2 dialog.cpp
+// Replaces sdl3 dialog.cpp
 // OHOS uses promptAction / AlertDialog via ArkTS, not native C++
 
 #include "tjsCommHead.h"

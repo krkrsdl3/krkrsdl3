@@ -11,7 +11,7 @@
 // 宿主脚本先 Plugins.link("autotest.dll") 取用；正常进游戏不会加载这个模块。
 // ENABLE_AUTOTEST=OFF 时 CMake 不编译本文件，模块也不会注册。
 //---------------------------------------------------------------------------
-#if defined(_KRKRSDL3_USE_SDL3) && !defined(_KRKRSDL3_OHOS) && defined(_KRKRSDL3_AUTOTEST)
+#if !defined(_KRKRSDL3_OHOS) && defined(_KRKRSDL3_AUTOTEST)
 
 #include "ncbind/ncbind.hpp"
 
@@ -221,4 +221,4 @@ NCB_REGISTER_CLASS(AutoTest)
     NCB_METHOD(quit);
 }
 
-#endif // _KRKRSDL3_USE_SDL3 && !_KRKRSDL3_OHOS && _KRKRSDL3_AUTOTEST
+#endif // !_KRKRSDL3_OHOS && _KRKRSDL3_AUTOTEST

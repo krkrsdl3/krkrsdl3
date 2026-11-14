@@ -1,5 +1,5 @@
 // OHOS input — stubs (input handled via NAPI in ohos_entry.cpp)
-// Replaces sdl3/sdl2 input.cpp
+// Replaces sdl3 input.cpp
 
 #include "tjsCommHead.h"
 

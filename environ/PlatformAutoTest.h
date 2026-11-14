@@ -14,7 +14,7 @@
 #include <vector>
 #include "tjsTypes.h"
 
-#if defined(_KRKRSDL3_USE_SDL3) && !defined(_KRKRSDL3_OHOS) && defined(_KRKRSDL3_AUTOTEST)
+#if !defined(_KRKRSDL3_OHOS) && defined(_KRKRSDL3_AUTOTEST)
 
 namespace krkrsdl3
 {

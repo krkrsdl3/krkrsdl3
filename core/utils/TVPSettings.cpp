@@ -253,6 +253,10 @@ bool TVPParseArguments(int argc, char* argv[])
     TVPNativeProjectData = argv[1];
     if (TVPCheckExistentLocalFolder(TVPNativeProjectData))
     {
+        const tjs_char* last = TVPNativeProjectData.c_str();
+        tjs_int len = TVPNativeProjectData.GetLen();
+        if (len == 0 || (last[len - 1] != '/' && last[len - 1] != '\\'))
+            TVPNativeProjectData += TJS_N("/");
         TVPNativeProjectDir = TVPNativeProjectData;
     }
     else if (TVPCheckExistentLocalFile(TVPNativeProjectData))
