@@ -1241,14 +1241,6 @@ void TextRenderBase::PushCharacter(const std::string& ch)
     m_lines[m_openLine].end = m_chars.size();
     LayoutOpenLine();
 
-    if (m_autoIndent > 0 && !m_options.ignore_style)
-    {
-        if (IsCharIn(m_options.begin, ch))
-            m_indent = static_cast<int>(LineWidth(m_openLine));
-        if (IsCharIn(m_options.end, ch) && m_indent > 0)
-            m_indent = 0;
-    }
-
     if (m_pendingRuby && m_pendingRubyCount > 0)
     {
         if (!m_pendingRubyAttached)
@@ -1262,6 +1254,28 @@ void TextRenderBase::PushCharacter(const std::string& ch)
     }
 
     WrapIfNeeded();
+
+    if (m_autoIndent > 0 && !m_options.ignore_style &&
+        m_openLine != static_cast<size_t>(-1))
+    {
+        // 自动缩进只认行首的连续开括号：正文中间的 “ 等字符不能
+        // 触发缩进，否则会把该处已排好的行宽当成后续行的缩进。
+        const TextLine& line = m_lines[m_openLine];
+        bool lineHead = true;
+        for (size_t i = line.start; i < line.end; ++i)
+        {
+            if (!IsCharIn(m_options.begin, CharAt(i)))
+            {
+                lineHead = false;
+                break;
+            }
+        }
+        if (lineHead)
+            m_indent = line.indent + static_cast<int>(LineWidth(m_openLine));
+        else if (IsCharIn(m_options.end, ch) && m_indent > 0)
+            m_indent = 0;
+    }
+
     m_isBeginningOfLine = false;
 }
 
@@ -2077,7 +2091,8 @@ bool TextRenderBase::RenderText(const std::string& text,
                 case 'i':
                     m_indent = 0;
                     if (m_autoIndent >= 0 && m_openLine != static_cast<size_t>(-1))
-                        m_indent = static_cast<int>(LineWidth(m_openLine));
+                        m_indent = m_lines[m_openLine].indent +
+                            static_cast<int>(LineWidth(m_openLine));
                     break;
                 case 'r':
                     m_indent = 0;
