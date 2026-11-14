@@ -86,18 +86,35 @@ uint32_t FindHostVisibleMemory(VkPhysicalDevice phys,
 {
     VkPhysicalDeviceMemoryProperties props;
     vkGetPhysicalDeviceMemoryProperties(phys, &props);
+    // 打分选择：优先 device-local（GPU 采样/写入带宽最高），其次 host-cached
+    // （CPU 读写不绕过缓存），最后 host-coherent（免手动 flush）。
+    // 集显上常见 device-local|host-visible|host-cached 这一档，选它比默认取
+    // 第一个 host-visible（通常是不带缓存的写合并内存）快得多。
+    uint32_t best = 0xFFFFFFFF;
+    int bestScore = -1;
     for (uint32_t i = 0; i < props.memoryTypeCount; i++)
     {
         if (!(req.memoryTypeBits & (1u << i)))
             continue;
         VkMemoryPropertyFlags flags = props.memoryTypes[i].propertyFlags;
-        if (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)
+        if (!(flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
+            continue;
+        if (coherentOnly && !(flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))
+            continue;
+        int score = 0;
+        if (flags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
+            score += 4;
+        if (flags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT)
+            score += 2;
+        if (flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)
+            score += 1;
+        if (score > bestScore)
         {
-            if (!coherentOnly || (flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))
-                return i;
+            bestScore = score;
+            best = i;
         }
     }
-    return 0xFFFFFFFF;
+    return best;
 }
 } // namespace
 
@@ -212,7 +229,8 @@ private:
     bool EnsureMeshPipelines();
     bool BeginPass(Target* target, bool clear);
     void EndPass();
-    void FlushMeshCommands(); // 提交并等待未录制的 mesh 命令（销毁被引用资源前必须先调用）
+    bool FlushMeshCommands(bool wait = true, VkSemaphore signal = VK_NULL_HANDLE); // 提交并（可选）等待
+    void WaitMeshIdle(); // 命令缓冲复用前确认上一次提交已完成
     bool EnsureStaging(size_t bytes);
     bool EnsureVertexBuffers(size_t vertexBytes, size_t indexBytes);
     uint8_t* LockTargetInternal(Target* target, int& pitch);
@@ -268,6 +286,8 @@ private:
     VkFence frameFence_ = VK_NULL_HANDLE;
     VkSemaphore imageReady_ = VK_NULL_HANDLE;
     VkSemaphore renderFinished_ = VK_NULL_HANDLE;
+    // mesh 提交 → 窗口帧提交之间的跨提交依赖（不等待栅栏时使用）
+    VkSemaphore meshDone_ = VK_NULL_HANDLE;
     int lastWidth_ = 0, lastHeight_ = 0;
     bool vsync_ = true;
 
@@ -322,6 +342,27 @@ private:
 
     std::vector<Target*> targets_;
     std::vector<Texture*> textures_;
+
+    // 当前 command buffer 内被写入过的目标图像（采样前需要先提交，避免同提交内写后读）
+    std::vector<VkImage> writtenImages_;
+    bool IsImageWritten(VkImage image) const
+    {
+        return std::find(writtenImages_.begin(), writtenImages_.end(), image) != writtenImages_.end();
+    }
+    // 当前/最近一次提交中被采样的图像（覆盖其映射内存前需要确认 GPU 不再读取）
+    std::vector<VkImage> sampledImages_;
+    bool IsImageSampled(VkImage image) const
+    {
+        return std::find(sampledImages_.begin(), sampledImages_.end(), image) != sampledImages_.end();
+    }
+    bool meshInFlight_ = false;
+    // 上一帧上屏采样的图像（窗口 pass 可能仍在读取）
+    std::vector<VkImage> presentedImages_;
+    bool IsImagePresented(VkImage image) const
+    {
+        return std::find(presentedImages_.begin(), presentedImages_.end(), image) !=
+               presentedImages_.end();
+    }
 };
 
 //---------------------------------------------------------------------------
@@ -965,6 +1006,8 @@ void VulkanRenderBackend::BeginFrame(int winWidth, int winHeight)
     }
 
     VkResult result = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX, imageReady_, VK_NULL_HANDLE, &currentImage_);
+    // 上一帧窗口 pass 已完成（上一帧的贴图上传也已在此之前发生），清空呈现图像记录
+    presentedImages_.clear();
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
     {
         TVPConsoleLog("Vulkan BeginFrame: acquire returned %d (out-of-date/suboptimal)", (int)result);
@@ -1024,6 +1067,8 @@ void VulkanRenderBackend::DrawWindowTexture(void* handle, float posX, float posY
     Texture* tex = FindTexture(handle);
     if (!tex)
         return;
+    if (!IsImagePresented(tex->image))
+        presentedImages_.push_back(tex->image);
 
     WindowPushConstants pc{};
     pc.posX = posX;
@@ -1060,20 +1105,38 @@ void VulkanRenderBackend::EndFrame()
     // 提交未提交的 2D 网格命令（离屏 composite/填充绘制）。
     // 纯 GPU 路径下 composite 完成后没有 LockTarget 提交点，必须在这里把
     // mesh 命令提交到队列，且先于窗口帧提交（同队列串行 → 帧采样看到最新内容）。
-    FlushMeshCommands();
+    const bool meshSubmitted = FlushMeshCommands(false, meshDone_); // 只提交不等待
 
-    VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    // 窗口帧采样 mesh 写的合成目标：用二值信号量建立跨提交的依赖（不阻塞 CPU）
+    VkSemaphore waitSems[2] = {imageReady_, meshDone_};
+    VkPipelineStageFlags waitStages[2] = {
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.waitSemaphoreCount = 1;
-    submitInfo.pWaitSemaphores = &imageReady_;
-    submitInfo.pWaitDstStageMask = &waitStage;
+    submitInfo.waitSemaphoreCount = meshSubmitted ? 2 : 1;
+    submitInfo.pWaitSemaphores = waitSems;
+    submitInfo.pWaitDstStageMask = waitStages;
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &frameCommandBuffer_;
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = &renderFinished_;
     if (!CheckVkResult(vkQueueSubmit(graphicsQueue_, 1, &submitInfo, frameFence_), "QueueSubmit"))
+    {
+        // 窗口帧没提交：用空提交消费掉 meshDone_ 并重新置位帧栅栏，避免后续等待悬挂
+        if (meshSubmitted)
+        {
+            VkPipelineStageFlags drainStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+            VkSubmitInfo drain{};
+            drain.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            drain.waitSemaphoreCount = 1;
+            drain.pWaitSemaphores = &meshDone_;
+            drain.pWaitDstStageMask = &drainStage;
+            vkQueueSubmit(graphicsQueue_, 1, &drain, frameFence_);
+        }
+        WaitMeshIdle();
         return;
+    }
 
     VkPresentInfoKHR presentInfo{};
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -1269,7 +1332,14 @@ void VulkanRenderBackend::UpdateTextureInternal(Texture* texture, const uint8_t*
     // LayerManager；如果这里直接覆盖 mapped 内存，前一个尚未执行的 draw 会采到
     // 后一次上传的内容。LockTarget 调试回读之所以能“修好”，只是因为它在两次
     // 上传之间提交并等待了命令。正式路径在覆盖贴图前显式提交即可避免依赖回读。
-    FlushMeshCommands();
+    // 只有该贴图可能正被尚未完成的 GPU 读取时才需要同步：
+    //  - 本帧/上一帧的网格绘制采样过它（覆盖映射内存会破坏正在进行的采样）；
+    //  - 它是上一帧上屏的窗口贴图（窗口 pass 可能仍在读取映射内存）。
+    // D3D 合成路径下 ScratchTexture 只被"上传之后的"绘制采样，因此这里通常无需等待。
+    if (IsImageSampled(texture->image))
+        FlushMeshCommands();
+    if (IsImagePresented(texture->image))
+        vkWaitForFences(device_, 1, &frameFence_, VK_TRUE, UINT64_MAX);
 
     // 线性布局图像按行写入（pitch 可能含对齐填充）
     for (int y = 0; y < height; y++)
@@ -1299,6 +1369,7 @@ void VulkanRenderBackend::DestroyTextureInternal(Texture* texture)
     // 已录制的 mesh 命令可能引用本纹理的描述符集：先提交并等待
     FlushMeshCommands();
     vkDeviceWaitIdle(device_);
+    presentedImages_.clear();
     for (size_t i = 0; i < textures_.size(); i++)
     {
         if (textures_[i] == texture)
@@ -1362,6 +1433,10 @@ bool VulkanRenderBackend::EnsureMeshResources()
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
     if (!CheckVkResult(vkCreateFence(device_, &fenceInfo, nullptr, &meshFence_), "CreateMeshFence"))
+        return false;
+    VkSemaphoreCreateInfo semInfo{};
+    semInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    if (!CheckVkResult(vkCreateSemaphore(device_, &semInfo, nullptr, &meshDone_), "CreateMeshSemaphore"))
         return false;
 
     // 蒙版布局（set1，与 set0 纹理布局相同）
@@ -2030,6 +2105,7 @@ void VulkanRenderBackend::DestroyTarget(void* handle)
     // 已录制的 mesh 命令可能引用本 target 的 imageView/描述符集：先提交并等待
     FlushMeshCommands();
     vkDeviceWaitIdle(device_);
+    presentedImages_.clear();
     if (currentTarget_ == target)
     {
         passActive_ = false;
@@ -2074,12 +2150,20 @@ void VulkanRenderBackend::DestroyTarget(void* handle)
 
 void VulkanRenderBackend::SetTarget(void* handle)
 {
+    Target* next = FindTarget(handle);
+    if (next && next == currentTarget_)
+    {
+        // 同一目标：保持当前 pass 连续录制，避免每个图层都 EndPass/BeginPass。
+        // 已请求清屏时才结束当前 pass，让下一次绘制以 CLEAR 变体重开。
+        if (passClear_)
+            EndPass();
+        return;
+    }
     EndPass();
     // 清屏标志语义（与 GL 立即模式对齐）：ClearTarget(true) 的请求应作用于
     // 下一次对"当前目标"的 pass——调用方常在 ClearTarget 之后再次 SetTarget
     // 同一目标（如 emote 引擎逐节点 SetTarget），同目标的 SetTarget 不得抹掉
     // 清屏请求，否则 pass 走 LOAD 变体导致残影。
-    Target* next = FindTarget(handle);
     if (next != currentTarget_)
         passClear_ = false;
     currentTarget_ = next;
@@ -2093,7 +2177,13 @@ void VulkanRenderBackend::ClearTarget(bool clearColor)
     //（例如 RenderFrame 先 ClearTarget(true)、各 D3D 层绘制前又 ClearTarget(false)，
     // GL 下目标已被清过，VK 下清屏必须仍然发生）。
     if (clearColor)
+    {
         passClear_ = true;
+        // 清屏请求要作用于"下一次绘制"：若当前已有进行中的 pass，先结束它，
+        // 让下一次绘制用 CLEAR 变体重开（与原先每层 EndPass 的语义一致）。
+        if (passActive_)
+            EndPass();
+    }
 }
 
 //---------------------------------------------------------------------------
@@ -2105,6 +2195,7 @@ bool VulkanRenderBackend::BeginPass(Target* target, bool clear)
         return false;
     if (!commandActive_)
     {
+        WaitMeshIdle(); // 上一次提交可能仍在执行，复用它之前必须确认完成
         vkResetCommandBuffer(meshCommandBuffer_, 0);
         VkCommandBufferBeginInfo beginInfo{};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -2162,6 +2253,8 @@ bool VulkanRenderBackend::BeginPass(Target* target, bool clear)
     passActive_ = true;
     if (clear)
         passClear_ = false; // 清屏请求已消费，后续同目标 pass 用 LOAD 累积
+    if (!IsImageWritten(target->image))
+        writtenImages_.push_back(target->image);
     return true;
 }
 
@@ -2172,17 +2265,35 @@ void VulkanRenderBackend::EndPass()
     passActive_ = false;
 }
 
-void VulkanRenderBackend::FlushMeshCommands()
+void VulkanRenderBackend::WaitMeshIdle()
 {
-    // 提交并等待当前录制的 mesh 命令。调用场景：
+    if (!meshInFlight_)
+        return;
+    vkWaitForFences(device_, 1, &meshFence_, VK_TRUE, UINT64_MAX);
+    meshInFlight_ = false;
+    // GPU 已完成此前提交的全部读写，可以安全复用命令缓冲/覆盖映射内存
+    writtenImages_.clear();
+    sampledImages_.clear();
+}
+
+bool VulkanRenderBackend::FlushMeshCommands(bool wait, VkSemaphore signal)
+{
+    // 提交并（可选）等待当前录制的 mesh 命令。调用场景：
     //   1. 渲染目标被销毁前（已录制命令可能引用其 imageView/描述符集）；
     //   2. 每帧呈现前（纯 GPU 路径下没有其他提交点）；
     //   3. 采样一个"本 command buffer 内刚被写入"的 target 前
     //      （写后读需要跨提交边界保证可见性——RADV 会忽略 GENERAL→GENERAL 的
     //       image barrier，同提交内写后读结果未定义）。
+    // wait=false 只提交不等待（signal 用于让后续窗口帧等待该提交完成），
+    // 命令缓冲在下一次录制前由 WaitMeshIdle 兜底。
     if (!commandActive_)
-        return;
+    {
+        if (wait)
+            WaitMeshIdle();
+        return false;
+    }
     EndPass();
+    bool submitted = false;
     if (CheckVkResult(vkEndCommandBuffer(meshCommandBuffer_), "EndMeshCommandBuffer"))
     {
         vkResetFences(device_, 1, &meshFence_);
@@ -2190,12 +2301,30 @@ void VulkanRenderBackend::FlushMeshCommands()
         meshSubmit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         meshSubmit.commandBufferCount = 1;
         meshSubmit.pCommandBuffers = &meshCommandBuffer_;
+        if (signal)
+        {
+            meshSubmit.signalSemaphoreCount = 1;
+            meshSubmit.pSignalSemaphores = &signal;
+        }
         if (CheckVkResult(vkQueueSubmit(graphicsQueue_, 1, &meshSubmit, meshFence_), "SubmitMeshCommandBuffer"))
-            vkWaitForFences(device_, 1, &meshFence_, VK_TRUE, UINT64_MAX);
+        {
+            submitted = true;
+            meshInFlight_ = true;
+            if (wait)
+            {
+                vkWaitForFences(device_, 1, &meshFence_, VK_TRUE, UINT64_MAX);
+                meshInFlight_ = false;
+            }
+        }
         else
             vkQueueSubmit(graphicsQueue_, 0, nullptr, meshFence_); // 重新置位栅栏，避免后续等待悬挂
     }
     commandActive_ = false;
+    // 写入已经离开当前 command buffer：后续采样由提交顺序保证
+    writtenImages_.clear();
+    if (wait)
+        sampledImages_.clear();
+    return submitted;
 }
 
 bool VulkanRenderBackend::EnsureStaging(size_t bytes)
@@ -2341,12 +2470,16 @@ void VulkanRenderBackend::DrawMesh(const float* vertices,
     if (!texture && !targetAsTexture)
         return;
 
-    // 写后读可见性：采样源（target 或纹理）在本 command buffer 内刚被写入时，
-    // 必须通过提交边界保证可见——RADV 会忽略 GENERAL→GENERAL 的 image barrier，
-    // 同提交内写后读结果未定义。这里每次新 pass 前统一提交（简单且正确：
-    // 每帧绘制次数有限，提交开销可接受）。
-    if (!passActive_)
+    // 写后读可见性：只有采样"本 command buffer 内刚写入过的目标图像"时才需要
+    // 先提交（跨提交边界保证可见——RADV 忽略 GENERAL→GENERAL 的同提交 barrier）。
+    // 普通的新 pass 不再提交等待，否则每帧每个图层都会产生一次 GPU 同步。
+    VkImage sampleImage = texture ? texture->image : targetAsTexture->image;
+    if (IsImageWritten(sampleImage) || (maskTarget_ && IsImageWritten(maskTarget_->image)))
         FlushMeshCommands();
+    if (sampleImage != VK_NULL_HANDLE && !IsImageSampled(sampleImage))
+        sampledImages_.push_back(sampleImage);
+    if (maskTarget_ && !IsImageSampled(maskTarget_->image))
+        sampledImages_.push_back(maskTarget_->image);
 
     if (!passActive_)
     {
@@ -2439,10 +2572,13 @@ void VulkanRenderBackend::LayerDrawRect(void* handle,
     if (!texture && !targetAsTexture)
         return;
 
-    // 写后读可见性：采样源在本 command buffer 内刚被写入时跨提交边界保证可见
-    // （与 DrawMesh 相同策略：每次新 pass 前统一提交）
-    if (!passActive_)
+    // 写后读可见性：采样源在本 command buffer 内刚被写入时才需要先提交
+    // （与 DrawMesh 相同策略；普通新 pass 不再提交等待）
+    VkImage sampleImage = texture ? texture->image : targetAsTexture->image;
+    if (IsImageWritten(sampleImage))
         FlushMeshCommands();
+    if (sampleImage != VK_NULL_HANDLE && !IsImageSampled(sampleImage))
+        sampledImages_.push_back(sampleImage);
     if (!passActive_)
     {
         if (!BeginPass(currentTarget_, passClear_))
@@ -2544,6 +2680,7 @@ uint8_t* VulkanRenderBackend::LockTargetInternal(Target* target, int& pitch)
     // 渲染 → 回读（GENERAL 布局免转换，仅需内存屏障）
     if (!commandActive_)
     {
+        WaitMeshIdle(); // 复用命令缓冲前确认上一次提交完成
         vkResetCommandBuffer(meshCommandBuffer_, 0);
         VkCommandBufferBeginInfo beginInfo{};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -2777,6 +2914,10 @@ void VulkanRenderBackend::Shutdown()
         if (meshFence_)
             vkDestroyFence(device_, meshFence_, nullptr);
         meshFence_ = VK_NULL_HANDLE;
+        if (meshDone_)
+            vkDestroySemaphore(device_, meshDone_, nullptr);
+        meshDone_ = VK_NULL_HANDLE;
+        meshInFlight_ = false;
         for (int i = 0; i < 3; i++)
         {
             if (meshPipelines_[i])
