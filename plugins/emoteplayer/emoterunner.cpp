@@ -692,7 +692,8 @@ bool emotenoderef::draw(krkrsdl3::iTVPRenderBackend* renderer, void* target, emo
         colorModulation[2] = ((tint >> 16) & 0xFF) / 255.0f;
         colorModulation[3] = ((tint >> 24) & 0xFF) / 255.0f;
     }
-    renderer->SetBlendMode(blendMode, blendMode == 21 ? uniformColor : nullptr);
+    renderer->SetBlend(blendMode, totalOpa, blendMode == 21 ? uniformColor : nullptr,
+                       colorModulation);
     if (blendMode == 6 || totalOpa <= 0)
         return false; // 该模式不绘制（GL 后端原行为）
 

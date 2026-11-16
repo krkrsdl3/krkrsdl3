@@ -17,7 +17,7 @@
 namespace drawdevice
 {
 
-// 后端混合模式映射（Layer.type 常量 → 后端 SetBlendMode）
+// 后端混合模式映射（Layer.type 常量 → 后端 SetBlend）
 static int MapLayerTypeToBlendMode(int type)
 {
     switch (type)
@@ -44,14 +44,14 @@ static int LayerToMeshBlendMode(int lbm)
     using namespace krkrsdl3;
     switch (lbm)
     {
-        case iTVPRenderBackend::LBM_COPY:
-        case iTVPRenderBackend::LBM_ALPHA:
-        case iTVPRenderBackend::LBM_CONSTALPHA:
+        case iTVPRenderBackend::BM_COPY:
+        case iTVPRenderBackend::BM_ALPHA:
+        case iTVPRenderBackend::BM_CONSTALPHA:
             return 0;
-        case iTVPRenderBackend::LBM_ADD:
+        case iTVPRenderBackend::BM_ADD_RM:
             return 3;
-        case iTVPRenderBackend::LBM_MUL:
-        case iTVPRenderBackend::LBM_MUL_HDA:
+        case iTVPRenderBackend::BM_MUL_RM:
+        case iTVPRenderBackend::BM_MUL_HDA:
             return 1;
         default:
             return 0;
@@ -359,30 +359,31 @@ void DrawDeviceD3D::DrawQuadTo(void* target,
         cy3 = matrix[1] * l + matrix[5] * b + matrix[13];
     }
     // 混合模式 → Layer 合成方法（软件 RenderManager 语义）：
-    //   2（覆盖）→ LBM_COPY；0（alpha）→ LBM_ALPHA；1（乘）→ LBM_MUL；
-    //   3（加）→ LBM_ADD
-    int lbm = krkrsdl3::iTVPRenderBackend::LBM_ALPHA;
+    //   2（覆盖）→ BM_COPY；0（alpha）→ BM_ALPHA；1（乘）→ BM_MUL_RM；
+    //   3（加）→ BM_ADD_RM
+    int lbm = krkrsdl3::iTVPRenderBackend::BM_ALPHA;
     switch (blendMode)
     {
         case 2:
-            lbm = krkrsdl3::iTVPRenderBackend::LBM_COPY;
+            lbm = krkrsdl3::iTVPRenderBackend::BM_COPY;
             break;
         case 1:
-            lbm = krkrsdl3::iTVPRenderBackend::LBM_MUL;
+            lbm = krkrsdl3::iTVPRenderBackend::BM_MUL_RM;
             break;
         case 3:
-            lbm = krkrsdl3::iTVPRenderBackend::LBM_ADD;
+            lbm = krkrsdl3::iTVPRenderBackend::BM_ADD_RM;
             break;
         default:
-            lbm = krkrsdl3::iTVPRenderBackend::LBM_ALPHA;
+            lbm = krkrsdl3::iTVPRenderBackend::BM_ALPHA;
             break;
     }
     Backend->SetTarget(target);
     Backend->ClearTarget(false);
-    Backend->LayerSetBlend(lbm, opacity, nullptr);
     if (matrix)
     {
-        // 仿射四边形：走网格路径（Layer 合成仅支持矩形）
+        // 仿射四边形：走网格路径（矩形原语仅表达轴对齐矩形）。
+        // 一次 SetBlend 定状态，不再重复设置 Layer/网格两套混合。
+        Backend->SetBlend(LayerToMeshBlendMode(lbm), opacity, nullptr, nullptr);
         float tw = (float)Width, th = (float)Height;
         float v[16] = {
             cx0 / tw * 2.f, cy0 / th * 2.f, 0.f, 0.f, //
@@ -391,12 +392,12 @@ void DrawDeviceD3D::DrawQuadTo(void* target,
             cx3 / tw * 2.f, cy3 / th * 2.f, 0.f, 1.f, //
         };
         uint16_t idx[] = {0, 1, 2, 2, 3, 0};
-        Backend->SetBlendMode(LayerToMeshBlendMode(lbm), nullptr);
         Backend->DrawMesh(v, 4, idx, 6, srcTexture, opacity);
     }
     else
     {
-        Backend->LayerDrawRect(srcTexture, l, t, r - l, b - t);
+        Backend->SetBlend(lbm, opacity, nullptr, nullptr);
+        Backend->DrawRect(srcTexture, l, t, r - l, b - t);
     }
 }
 
@@ -409,11 +410,11 @@ void DrawDeviceD3D::ComposeLayerManager(int index, void* target)
         return;
     // 合成图层树到 DrawBuffer（FrontBuff）：
     //  1) 先清为全透明 0,0,0,0 —— 空区域不留不透明黑（uibase 等独立 primary 的
-    //     DrawBuffer 初始为 0xFF000000，直接整幅 LBM_COPY 上传会得到"黑白表面"）；
+    //     DrawBuffer 初始为 0xFF000000，直接整幅 BM_COPY 上传会得到"黑白表面"）；
     //  2) SetHoldAlpha(false) —— ltAlpha 图层以 bmAlphaOnAlpha（src-over，写入 alpha）
     //     合成，而不是 bmAlpha（保持目标 alpha=255 的不透明叠加）；
     //  3) 强制全矩形失效重绘 —— 否则旧帧内容残留在 DrawBuffer 里与本次绘制重叠。
-    // 结果：DrawBuffer 的透明区域在 GPU 侧用 LBM_ALPHA 上传，露出下层
+    // 结果：DrawBuffer 的透明区域在 GPU 侧用 BM_ALPHA 上传，露出下层
     // （D3D 世界层）内容。
     tTVPLayerManager* lm = dynamic_cast<tTVPLayerManager*>(mgr);
     if (!lm)
@@ -456,14 +457,16 @@ void DrawDeviceD3D::ComposeLayerManager(int index, void* target)
                 ScratchTexture = Backend->CreateTexture(bufW, bufH);
             if (ScratchTexture)
             {
-                Backend->UpdateTexture(ScratchTexture, data, bufW, bufH, pitch);
+                // 走入队契约：Vulkan 子矩形上传攒进暂存环、帧末一次提交；
+                // GL/SW 后端默认实现回退到原来的整幅 UpdateTexture（行为/性能不变）。
+                Backend->UploadTextureRect(ScratchTexture, 0, 0, bufW, bufH, data, pitch);
                 srcTex = ScratchTexture;
             }
         }
     }
 
     if (srcTex)
-        // mode 0 = LBM_ALPHA：透明区域露出下层（D3D 世界层等）
+        // mode 0 = BM_ALPHA：透明区域露出下层（D3D 世界层等）
         DrawQuadTo(target, srcTex, 0, 0, (float)Width, (float)Height, 0, 1.0f);
 }
 
@@ -474,28 +477,51 @@ void DrawDeviceD3D::ComposeLayerManager(int index, void* target)
 static void DrawD3DLayerPictures(DrawDeviceD3D* dev, void* target, D3DLayer* layer,
                                  float offsetX, float offsetY)
 {
+    // 批绘制：把连续的、同 texture + 同混合 + 同 opacity 的图片合并为一次
+    // DrawQuads 提交（抽象层现代原语）。VK 后端一次 bind/draw 完成整批，
+    // 取代原先每图一次 SetTarget/ClearTarget/SetBlend/DrawMesh 的重复开销。
+    krkrsdl3::iTVPRenderBackend* backend = dev->GetBackend();
+    backend->SetTarget(target);
+
+    const float* m = layer->Matrix;
+    const float tw = (float)dev->GetWidth(), th = (float)dev->GetHeight();
+    void* batchTex = nullptr;
+    int batchBlend = -1;
+    float batchOpa = -1.0f;
+    std::vector<float> batchVerts; // 每 quad 16 float (x,y,u,v)
+    auto flush = [&]() {
+        if (batchVerts.empty())
+            return;
+        backend->SetBlend(batchBlend, batchOpa, nullptr, nullptr);
+        backend->DrawQuads(batchTex, batchVerts.data(), (int)(batchVerts.size() / 16));
+        batchVerts.clear();
+    };
+
     for (auto* pic : layer->Pictures)
     {
         if (!pic || !pic->Image || !pic->Image->Texture)
             continue;
         int mode = MapLayerTypeToBlendMode(pic->blendMode);
-        int lbm = krkrsdl3::iTVPRenderBackend::LBM_ALPHA;
+        int lbm = krkrsdl3::iTVPRenderBackend::BM_ALPHA;
         switch (mode)
         {
-            case 2:
-                lbm = krkrsdl3::iTVPRenderBackend::LBM_COPY;
-                break;
-            case 3:
-                lbm = krkrsdl3::iTVPRenderBackend::LBM_ADD;
-                break;
-            case 1:
-                lbm = krkrsdl3::iTVPRenderBackend::LBM_MUL;
-                break;
-            default:
-                lbm = krkrsdl3::iTVPRenderBackend::LBM_ALPHA;
-                break;
+            case 2: lbm = krkrsdl3::iTVPRenderBackend::BM_COPY; break;
+            case 3: lbm = krkrsdl3::iTVPRenderBackend::BM_ADD_RM; break;
+            case 1: lbm = krkrsdl3::iTVPRenderBackend::BM_MUL_RM; break;
+            default: lbm = krkrsdl3::iTVPRenderBackend::BM_ALPHA; break;
         }
+        int meshBlend = LayerToMeshBlendMode(lbm);
         float opa = (float)pic->opacity / 255.0f;
+        void* tex = pic->Image->Texture;
+        if (!batchVerts.empty() && (tex != batchTex || meshBlend != batchBlend || opa != batchOpa))
+            flush();
+        if (batchVerts.empty())
+        {
+            batchTex = tex;
+            batchBlend = meshBlend;
+            batchOpa = opa;
+        }
+
         float px = (float)pic->DstX + pic->CoordX + offsetX;
         float py = (float)pic->DstY + pic->CoordY + offsetY;
         float pw = (float)pic->SrcW, ph = (float)pic->SrcH;
@@ -503,41 +529,20 @@ static void DrawD3DLayerPictures(DrawDeviceD3D* dev, void* target, D3DLayer* lay
         float u0 = (float)pic->SrcX / sw, v0 = (float)pic->SrcY / sh;
         float u1 = (float)(pic->SrcX + pic->SrcW) / sw, v1 = (float)(pic->SrcY + pic->SrcH) / sh;
 
-        krkrsdl3::iTVPRenderBackend* backend = dev->GetBackend();
-        backend->SetTarget(target);
-        backend->ClearTarget(false);
-
-        // 仿射矩阵是否为单位阵（仅平移/缩放可由 LayerDrawRect 直接表达；
-        // 一般仿射走 DrawMesh）
-        const float* m = layer->Matrix;
-        bool affine = (m[0] != 1.0f || m[1] != 0.0f || m[4] != 0.0f || m[5] != 1.0f ||
-                       m[12] != 0.0f || m[13] != 0.0f);
-        if (!affine)
-        {
-            //加速在渲染侧做判断更好吧
-        }
-
-        // 仿射：4 角经矩阵变换 → NDC（内容坐标 y 向下，顶=NDC -1，与 Layer 路径一致）
         float l = px, t = py, r = px + pw, b = py + ph;
-        float cx0 = m[0] * l + m[4] * t + m[12];
-        float cy0 = m[1] * l + m[5] * t + m[13];
-        float cx1 = m[0] * r + m[4] * t + m[12];
-        float cy1 = m[1] * r + m[5] * t + m[13];
-        float cx2 = m[0] * r + m[4] * b + m[12];
-        float cy2 = m[1] * r + m[5] * b + m[13];
-        float cx3 = m[0] * l + m[4] * b + m[12];
-        float cy3 = m[1] * l + m[5] * b + m[13];
-        float tw = (float)dev->GetWidth(), th = (float)dev->GetHeight();
-        float v[16] = {
-            cx0 / tw * 2.f, cy0 / th * 2.f, u0, v0, //
-            cx1 / tw * 2.f, cy1 / th * 2.f, u1, v0, //
-            cx2 / tw * 2.f, cy2 / th * 2.f, u1, v1, //
-            cx3 / tw * 2.f, cy3 / th * 2.f, u0, v1, //
+        float cx0 = m[0] * l + m[4] * t + m[12], cy0 = m[1] * l + m[5] * t + m[13];
+        float cx1 = m[0] * r + m[4] * t + m[12], cy1 = m[1] * r + m[5] * t + m[13];
+        float cx2 = m[0] * r + m[4] * b + m[12], cy2 = m[1] * r + m[5] * b + m[13];
+        float cx3 = m[0] * l + m[4] * b + m[12], cy3 = m[1] * l + m[5] * b + m[13];
+        const float v[16] = {
+            cx0 / tw * 2.f, cy0 / th * 2.f, u0, v0,
+            cx1 / tw * 2.f, cy1 / th * 2.f, u1, v0,
+            cx2 / tw * 2.f, cy2 / th * 2.f, u1, v1,
+            cx3 / tw * 2.f, cy3 / th * 2.f, u0, v1,
         };
-        uint16_t idx[] = {0, 1, 2, 2, 3, 0};
-        backend->SetBlendMode(LayerToMeshBlendMode(lbm), nullptr);
-        backend->DrawMesh(v, 4, idx, 6, pic->Image->Texture, opa);
+        batchVerts.insert(batchVerts.end(), v, v + 16);
     }
+    flush();
 }
 
 void DrawDeviceD3D::RenderFrame()
@@ -643,7 +648,7 @@ void DrawDeviceD3D::RenderFrame()
             uint16_t idx[] = {0, 1, 2, 2, 3, 0};
             Backend->SetTarget(CompositeTarget);
             Backend->ClearTarget(false);
-            Backend->SetBlendMode(0, nullptr);
+            Backend->SetBlend(krkrsdl3::iTVPRenderBackend::BM_NORMAL, opa, nullptr, nullptr);
             Backend->DrawMesh(v, 4, idx, 6, prevTex, opa);
         }
     }
@@ -1001,8 +1006,8 @@ void D3DLayer::DrawEmoteTarget(void* target)
     if (!tex)
         return;
     Device->GetBackend()->SetTarget(target);
-    Device->GetBackend()->LayerSetBlend(krkrsdl3::iTVPRenderBackend::LBM_ALPHA, 1.0f, nullptr);
-    Device->GetBackend()->LayerDrawRect(tex, 0, 0, (float)Device->GetWidth(), (float)Device->GetHeight());
+    Device->GetBackend()->SetBlend(krkrsdl3::iTVPRenderBackend::BM_ALPHA, 1.0f, nullptr, nullptr);
+    Device->GetBackend()->DrawRect(tex, 0, 0, (float)Device->GetWidth(), (float)Device->GetHeight());
 }
 
 void D3DLayer::finalize()

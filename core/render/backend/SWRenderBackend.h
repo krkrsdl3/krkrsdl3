@@ -53,7 +53,8 @@ public:
     void DestroyTexture(void* texture) override;
     uint8_t* LockTexture(void* texture, int& pitch) override;
     void SetMask(void* maskTarget) override;
-    void SetBlendMode(int mode, const float* uniformColor) override;
+    void SetBlend(int mode, float opacity, const float* uniformColor,
+                  const float* colorModulation) override;
     void DrawMesh(const float* vertices,
                   int vertexCount,
                   const uint16_t* indices,
@@ -61,20 +62,19 @@ public:
                   void* texture,
                   float opacity,
                   const float* colorModulation = nullptr) override;
-
-    // ---- Layer 合成（图层合成路径，软件 RenderManager 语义）----
-    void LayerSetBlend(int method, float opacity, const float* uniformColor) override;
-    void LayerDrawRect(void* texture,
-                       float x,
-                       float y,
-                       float w,
-                       float h,
-                       float u0,
-                       float v0,
-                       float u1,
-                       float v1) override;
+    void DrawRect(void* texture,
+                  float x,
+                  float y,
+                  float w,
+                  float h,
+                  float u0,
+                  float v0,
+                  float u1,
+                  float v1) override;
 
 private:
+    void applyEmoteBlend(int mode, const float* uniformColor);
+    void applyRMBlend(int method, float opacity, const float* uniformColor);
     struct Target
     {
         std::vector<uint8_t> pixels;

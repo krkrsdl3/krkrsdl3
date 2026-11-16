@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cstring>
 #include <string>
+#include <chrono>
+#include <unordered_set>
 #include <vector>
 
 #include "Platform.h"
@@ -38,6 +40,82 @@ constexpr int kPipelineNormal = 0;   // bm 0 / 3 / 默认
 constexpr int kPipelineMultiply = 1; // bm 1 / 4
 constexpr int kPipelineColor = 2;    // bm 21
 
+//---------------------------------------------------------------------------
+// 阶段耗时插桩（KRKR_VK_PROF=1 时每 120 帧输出一次均值，单位 ms/帧）
+// 仅用于定位热路径，默认完全关闭，不影响正常运行。
+//---------------------------------------------------------------------------
+struct VkProf
+{
+    using Clock = std::chrono::steady_clock;
+    double waitFenceMs = 0; // BeginFrame 等上一帧栅栏
+    double acquireMs = 0;   // vkAcquireNextImageKHR
+    double beginMs = 0;     // BeginFrame 其余（重置/录制 pass 头）
+    double uploadMs = 0;    // 纹理上传（memcpy + copy 录制）
+    double drawMs = 0;      // DrawMesh / DrawRect / DrawQuads
+    double drawFindMs = 0;  // 其中：句柄查找
+    double drawPassMs = 0;  // 其中：BeginPass / 写后读提交
+    double drawWriteMs = 0; // 其中：顶点/索引写入
+    double drawCmdMs = 0;   // 其中：vkCmd* 录制
+    double drawFlushMs = 0; // 其中：写后读 FlushMeshCommands
+    double drawEnsureMs = 0;// 其中：EnsureVertexBuffers
+    double drawBeginMs = 0; // 其中：BeginPass
+    double bpWaitMs = 0;    //   BeginPass 内：WaitMeshIdle（GPU 等待）
+    double bpResetMs = 0;   //   BeginPass 内：重置/开始命令缓冲
+    double bpBarrierMs = 0; //   BeginPass 内：image barrier
+    double bpRpMs = 0;      //   BeginPass 内：vkCmdBeginRenderPass
+    int waitTotal = 0;      // WaitMeshIdle 调用次数
+    int waitNotReady = 0;   // 其中 fence 尚未完成的比例
+    double endMs = 0;       // EndFrame（含 mesh 提交）
+    double lockMs = 0;      // LockTarget 回读
+    int frames = 0;
+    int drawCalls = 0;      // 每帧落到 vkCmdDrawIndexed 的次数
+    int quadCount = 0;      // 每帧四边形总数
+
+    static bool Enabled()
+    {
+        static const bool on = []() {
+            const char* v = getenv("KRKR_VK_PROF");
+            return v && *v && *v != '0';
+        }();
+        return on;
+    }
+    static VkProf& Get()
+    {
+        static VkProf p;
+        return p;
+    }
+    struct Scope
+    {
+        double* slot;
+        Clock::time_point t0;
+        explicit Scope(double* s) : slot(s), t0(Clock::now()) {}
+        ~Scope() { *slot += std::chrono::duration<double, std::milli>(Clock::now() - t0).count(); }
+    };
+    static Scope Time(double& slot) { return Scope(&slot); }
+
+    void Tick()
+    {
+        if (!Enabled())
+            return;
+        if (++frames % 120)
+            return;
+        const double n = frames;
+        TVPConsoleLog("[vkprof] frames=%d wait=%.3f acq=%.3f begin=%.3f upload=%.3f "
+                      "draw=%.3f end=%.3f lock=%.3f drw/f=%.1f quad/f=%.1f (ms/frame)",
+                      frames, waitFenceMs / n, acquireMs / n, beginMs / n, uploadMs / n,
+                      drawMs / n, endMs / n, lockMs / n, drawCalls / n, quadCount / n);
+        TVPConsoleLog("[vkprof]   draw = find %.3f + pass %.3f + write %.3f + cmd %.3f",
+                      drawFindMs / n, drawPassMs / n, drawWriteMs / n, drawCmdMs / n);
+        TVPConsoleLog("[vkprof]   detail = flush %.3f + ensurebuf %.3f + beginpass %.3f",
+                      drawFlushMs / n, drawEnsureMs / n, drawBeginMs / n);
+        TVPConsoleLog("[vkprof]   beginpass = waitidle %.3f + reset %.3f + barrier %.3f + rp %.3f",
+                      bpWaitMs / n, bpResetMs / n, bpBarrierMs / n, bpRpMs / n);
+        TVPConsoleLog("[vkprof]   waitMesh calls=%d notReady=%d (%.0f%% already done)",
+                      waitTotal, waitNotReady,
+                      waitTotal > 0 ? 100.0 * (waitTotal - waitNotReady) / waitTotal : 0.0);
+    }
+};
+
 // 窗口合成 push constant：position(2) + size(2) + viewport(2)
 struct WindowPushConstants
 {
@@ -64,7 +142,7 @@ static_assert(sizeof(MeshPushConstants) == 64, "mesh push constant layout");
 struct LayerPushConstants
 {
     float opa;                  // @0
-    int method;                 // @4（LayerBlendMethod）
+    int method;                 // @4（BlendMode）
     float pad[2];               // @8-15
     alignas(16) float uniformColor[4]; // @16（16 字节对齐）
 };
@@ -116,6 +194,52 @@ uint32_t FindHostVisibleMemory(VkPhysicalDevice phys,
     }
     return best;
 }
+
+// 是否存在"既是 device-local 又 host-visible"的内存类型。
+// 集显/统一内存架构（UMA）：只有单一堆，CPU 映射写的内存 GPU 采样同样快，
+// 此时 LINEAR 直写比 OPTIMAL+暂存拷贝少一次全帧 memcpy —— 应选直写路径。
+// 独显：host 内存在 PCIe 另一侧，采样慢，应选 device-local OPTIMAL+暂存。
+bool HasUnifiedHostVisibleMemory(VkPhysicalDevice phys)
+{
+    VkPhysicalDeviceMemoryProperties props;
+    vkGetPhysicalDeviceMemoryProperties(phys, &props);
+    for (uint32_t i = 0; i < props.memoryTypeCount; i++)
+    {
+        VkMemoryPropertyFlags f = props.memoryTypes[i].propertyFlags;
+        if ((f & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) && (f & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
+            return true;
+    }
+    return false;
+}
+
+uint32_t FindDeviceLocalMemory(VkPhysicalDevice phys, const VkMemoryRequirements& req)
+{
+    VkPhysicalDeviceMemoryProperties props;
+    vkGetPhysicalDeviceMemoryProperties(phys, &props);
+    // 采样贴图优先纯 device-local（独显 VRAM）；集显的 DEVICE_LOCAL|HOST_VISIBLE
+    // 也满足，退而求其次；最后才回退到任意可用类型，保证低端设备仍可运行。
+    uint32_t best = 0xFFFFFFFF;
+    int bestScore = -1;
+    for (uint32_t i = 0; i < props.memoryTypeCount; i++)
+    {
+        if (!(req.memoryTypeBits & (1u << i)))
+            continue;
+        VkMemoryPropertyFlags flags = props.memoryTypes[i].propertyFlags;
+        int score = 0;
+        if (flags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
+            score += 4;
+        if (!(flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) && (flags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT))
+            score += 2; // 纯 VRAM 优于集显共享内存
+        if (flags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT)
+            score += 1;
+        if (score > bestScore)
+        {
+            bestScore = score;
+            best = i;
+        }
+    }
+    return best;
+}
 } // namespace
 
 class VulkanRenderBackend : public iTVPRenderBackend
@@ -158,10 +282,13 @@ public:
                              int pitch) override;
     void* CreateTexture(int width, int height) override;
     void UpdateTexture(void* texture, const uint8_t* pixels, int width, int height, int pitch) override;
+    void UploadTextureRect(void* texture, int x, int y, int width, int height,
+                           const uint8_t* pixels, int pitch) override;
     void DestroyTexture(void* texture) override;
     uint8_t* LockTexture(void* texture, int& pitch) override;
     void SetMask(void* maskTarget) override;
-    void SetBlendMode(int mode, const float* uniformColor) override;
+    void SetBlend(int mode, float opacity, const float* uniformColor,
+                  const float* colorModulation) override;
     void DrawMesh(const float* vertices,
                   int vertexCount,
                   const uint16_t* indices,
@@ -169,20 +296,21 @@ public:
                   void* texture,
                   float opacity,
                   const float* colorModulation = nullptr) override;
-
-    // ---- Layer 合成（图层合成路径，软件 RenderManager 语义）----
-    void LayerSetBlend(int method, float opacity, const float* uniformColor) override;
-    void LayerDrawRect(void* texture,
-                       float x,
-                       float y,
-                       float w,
-                       float h,
-                       float u0,
-                       float v0,
-                       float u1,
-                       float v1) override;
+    void DrawQuads(void* texture, const float* vertices, int quadCount,
+                   const uint16_t* indices, int indexCount) override;
+    void DrawRect(void* texture,
+                  float x,
+                  float y,
+                  float w,
+                  float h,
+                  float u0,
+                  float v0,
+                  float u1,
+                  float v1) override;
 
 private:
+    void applyEmoteBlend(int mode, const float* uniformColor);
+    void applyRMBlend(int method, float opacity, const float* uniformColor);
     // ---- 统一贴图（窗口贴图与一般贴图共用同一实现）----
     struct Texture
     {
@@ -190,9 +318,11 @@ private:
         VkDeviceMemory memory = VK_NULL_HANDLE;
         VkImageView view = VK_NULL_HANDLE;
         VkDescriptorSet set = VK_NULL_HANDLE; // set0（纹理）
-        uint8_t* mapped = nullptr;
+        uint8_t* mapped = nullptr; // 仅遗留线性贴图（回退/blankMask）使用
         int width = 0, height = 0;
         int pitch = 0;
+        bool optimal = false; // true=device-local OPTIMAL，上传走暂存环
+
     };
     // 2D 离屏目标
     struct Target
@@ -206,9 +336,16 @@ private:
         int width = 0, height = 0;
     };
     Texture* FindTexture(void* handle) const;
-    Texture* CreateTextureInternal(int width, int height);
+    Texture* CreateTextureInternal(int width, int height, bool optimal = true);
     void UpdateTextureInternal(Texture* texture, const uint8_t* pixels, int width, int height, int pitch);
     void DestroyTextureInternal(Texture* texture);
+    // 现代上传：子矩形入队到暂存环，录制 vkCmdCopyBufferToImage 进 mesh 命令缓冲，
+    // 由帧末的单一提交统一执行；CPU 全程不等待。
+    void EnqueueTextureUpload(Texture* texture, int x, int y, int width, int height,
+                              const uint8_t* pixels, int pitch);
+    // 暂存环：环形主机可见 buffer，按帧推进；只在环回时确认上一次使用已完成。
+    bool EnsureUploadRing(size_t bytes);
+    void RetireCurrentUploadRegion();
 
     // 窗口合成
     bool PickDevice();
@@ -241,6 +378,11 @@ private:
     Target* FindTarget(void* handle) const;
 
     bool initialized_ = false;
+    // UMA（集显/统一内存）：host-visible 同时 device-local，采样贴图走 LINEAR 直写
+    // 比 OPTIMAL+暂存拷贝少一次全帧 memcpy；独显才走 OPTIMAL+暂存环。
+    bool preferLinearTextures_ = false;
+    // 自旋等待 fence（KRKR_VK_SPIN=0 可关闭）：规避 Windows 事件等待的调度粒度
+    bool spinWait_ = true;
 
     bool swapchainDirty_ = false;
     bool frameActive_ = false; // BeginFrame 成功开始、等待 EndFrame 提交
@@ -308,19 +450,70 @@ private:
                                      VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE};
     bool layerReady_ = false;
 
+    //---------------------------------------------------------------------------
+    // 帧流水（多槽）
+    //
+    // 单槽时每帧第一次绘制都要 vkWaitForFences 等上一帧的命令执行完——CPU 与 GPU
+    // 完全串行，帧时间 = CPU 时间 + GPU 时间。实测该等待占 1.2ms/帧（GPU 真的
+    // 还在跑，不是等待机制的调度延迟），而 CPU 侧只要 2.1ms。
+    //
+    // 改成 kFramesInFlight 个槽后，每帧等到的是"N 帧前"的提交，稳态下早已完成，
+    // 于是帧时间收敛到 max(CPU, GPU) 而不是两者之和。
+    //
+    // 句柄重绑定：meshCommandBuffer_ / meshFence_ / 顶点索引缓冲等成员保持原样，
+    // 切槽时把槽内句柄重新赋给它们，因此既有绘制代码无需感知槽的存在。
+    //---------------------------------------------------------------------------
+    static constexpr int kFramesInFlight = 2;
+    struct MeshSlot
+    {
+        VkCommandBuffer cmd = VK_NULL_HANDLE;
+        VkFence fence = VK_NULL_HANDLE;
+        VkBuffer vertexBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory vertexMemory = VK_NULL_HANDLE;
+        uint8_t* vertexMapped = nullptr;
+        size_t vertexCapacity = 0;
+        size_t vertexCursor = 0;
+        VkBuffer indexBuffer = VK_NULL_HANDLE;
+        VkDeviceMemory indexMemory = VK_NULL_HANDLE;
+        uint8_t* indexMapped = nullptr;
+        size_t indexCapacity = 0;
+        size_t indexCursor = 0;
+        bool inFlight = false;
+    };
+    MeshSlot meshSlots_[kFramesInFlight];
+    int meshSlot_ = 0;
+    void SaveMeshSlot();          // 把当前句柄/游标写回所在槽
+    void LoadMeshSlot(int slot);  // 载入指定槽的句柄/游标
+    void AdvanceMeshSlot();       // 帧首切槽并等待该槽上一次提交
+
     VkBuffer meshVertexBuffer_ = VK_NULL_HANDLE;
     VkDeviceMemory meshVertexMemory_ = VK_NULL_HANDLE;
     size_t meshVertexCapacity_ = 0;
     uint8_t* meshVertexMapped_ = nullptr;
+    size_t meshVertexCursor_ = 0; // 本帧已写入字节（DrawMesh/DrawQuads 递增，避免相互覆盖）
     VkBuffer meshIndexBuffer_ = VK_NULL_HANDLE;
     VkDeviceMemory meshIndexMemory_ = VK_NULL_HANDLE;
     size_t meshIndexCapacity_ = 0;
     uint8_t* meshIndexMapped_ = nullptr;
+    size_t meshIndexCursor_ = 0;
 
-    VkBuffer stagingBuffer_ = VK_NULL_HANDLE;
+    VkBuffer stagingBuffer_ = VK_NULL_HANDLE; // 回读用（TRANSFER_DST）
     VkDeviceMemory stagingMemory_ = VK_NULL_HANDLE;
     size_t stagingSize_ = 0;
     uint8_t* stagingMapped_ = nullptr;
+
+    // 上传暂存环（TRANSFER_SRC + host-visible）：一般贴图/modern 路径写入这里，
+    // 再由 mesh 命令缓冲里的 vkCmdCopyBufferToImage 搬到 device-local 采样图。
+    // 双区交替：一帧的上传写入当前区，帧末提交后 flip；GPU 在下一次复用该区前
+    // 已完成上一批 copy（EndFrame 的 mesh 提交 → 下一帧 BeginPass 的 WaitMeshIdle），
+    // 因此稳态帧内零等待、且不需要逐上传扩容。
+    VkBuffer uploadRingBuffer_ = VK_NULL_HANDLE;
+    VkDeviceMemory uploadRingMemory_ = VK_NULL_HANDLE;
+    uint8_t* uploadRingMapped_ = nullptr;
+    size_t uploadRingRegionSize_ = 0; // 每个区的容量（buffer 总容量 = 2 × 此值）
+    size_t uploadRingCursor_ = 0;     // 当前区已写入字节数
+    int uploadRingRegion_ = 0;        // 当前区索引 0/1
+    bool uploadRingUsedThisBatch_ = false;
 
     // 空白蒙版（1x1 全白，无蒙版时绑定）
     Texture* blankMask_ = nullptr;
@@ -334,6 +527,8 @@ private:
     bool skipDraw_ = false;
     bool enableColor_ = false;
     float uniformColor_[4] = {0, 0, 0, 0};
+    // 批绘制状态（blendOpacity_ / blendModulation_）在基类 iTVPRenderBackend 中，
+    // 由 SetBlend 写入，GL/SW/VK 三个后端的 DrawQuads 共用同一来源。
 
     // Layer 合成状态
     int layerMethod_ = 0;
@@ -342,6 +537,11 @@ private:
 
     std::vector<Target*> targets_;
     std::vector<Texture*> textures_;
+    // 句柄索引：FindTexture/FindTarget 在绘制热路径上被每条绘制调用，
+    // 线性遍历 vector 会随资源数量线性退化（实测数千张贴图时单帧 1.2ms）。
+    // vector 保留做生命周期遍历，这里只做 O(1) 存在性判定。
+    std::unordered_set<const void*> textureIndex_;
+    std::unordered_set<const void*> targetIndex_;
 
     // 当前 command buffer 内被写入过的目标图像（采样前需要先提交，避免同提交内写后读）
     std::vector<VkImage> writtenImages_;
@@ -449,6 +649,14 @@ bool VulkanRenderBackend::PickDevice()
     VkPhysicalDeviceProperties props;
     vkGetPhysicalDeviceProperties(physicalDevice_, &props);
     TVPConsoleLog("Vulkan device: %s", props.deviceName);
+    // UMA 判定：host-visible 同时 device-local（集显/统一内存）。
+    // 直写 LINEAR 贴图可省掉每帧一次全幅 staging→VRAM 拷贝，且不损失采样带宽；
+    // 独显则用 device-local OPTIMAL + 暂存环，避免从 PCIe 采样。
+    preferLinearTextures_ = HasUnifiedHostVisibleMemory(physicalDevice_);
+    if (const char* spin = getenv("KRKR_VK_SPIN"))
+        spinWait_ = (*spin != '0');
+    TVPConsoleLog("Vulkan texture path: %s", preferLinearTextures_
+                  ? "LINEAR direct-map (unified memory)" : "OPTIMAL + staging ring (discrete)");
     return true;
 }
 
@@ -996,7 +1204,11 @@ void VulkanRenderBackend::BeginFrame(int winWidth, int winHeight)
         return;
 
     // 等待上一帧完成（超时则跳过本帧；不重置栅栏，避免无提交可等待）
-    VkResult waitRes = vkWaitForFences(device_, 1, &frameFence_, VK_TRUE, 500000000ull);
+    VkResult waitRes;
+    {
+        auto _t = VkProf::Time(VkProf::Get().waitFenceMs);
+        waitRes = vkWaitForFences(device_, 1, &frameFence_, VK_TRUE, 500000000ull);
+    }
     if (waitRes == VK_TIMEOUT)
     {
         VkResult fs = vkGetFenceStatus(device_, frameFence_);
@@ -1005,7 +1217,12 @@ void VulkanRenderBackend::BeginFrame(int winWidth, int winHeight)
         return; // 上一帧仍在执行，跳过本帧
     }
 
-    VkResult result = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX, imageReady_, VK_NULL_HANDLE, &currentImage_);
+    VkResult result;
+    {
+        auto _t = VkProf::Time(VkProf::Get().acquireMs);
+        result = vkAcquireNextImageKHR(device_, swapchain_, UINT64_MAX, imageReady_, VK_NULL_HANDLE,
+                                       &currentImage_);
+    }
     // 上一帧窗口 pass 已完成（上一帧的贴图上传也已在此之前发生），清空呈现图像记录
     presentedImages_.clear();
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
@@ -1018,6 +1235,7 @@ void VulkanRenderBackend::BeginFrame(int winWidth, int winHeight)
         return;
 
     // 只有帧确定会提交后才重置栅栏；若后续失败则用空提交重新置位
+    auto _beginTimer = VkProf::Time(VkProf::Get().beginMs);
     vkResetFences(device_, 1, &frameFence_);
     vkResetCommandBuffer(frameCommandBuffer_, 0);
     VkCommandBufferBeginInfo beginInfo{};
@@ -1097,6 +1315,7 @@ void VulkanRenderBackend::EndFrame()
         return;
     }
     frameActive_ = false;
+    auto _endTimer = VkProf::Time(VkProf::Get().endMs);
 
     vkCmdEndRenderPass(frameCommandBuffer_);
     if (!CheckVkResult(vkEndCommandBuffer(frameCommandBuffer_), "EndCommandBuffer"))
@@ -1106,6 +1325,7 @@ void VulkanRenderBackend::EndFrame()
     // 纯 GPU 路径下 composite 完成后没有 LockTarget 提交点，必须在这里把
     // mesh 命令提交到队列，且先于窗口帧提交（同队列串行 → 帧采样看到最新内容）。
     const bool meshSubmitted = FlushMeshCommands(false, meshDone_); // 只提交不等待
+    RetireCurrentUploadRegion(); // 帧内上传攒批结束；下次扩容/回绕前由栅栏兜底
 
     // 窗口帧采样 mesh 写的合成目标：用二值信号量建立跨提交的依赖（不阻塞 CPU）
     VkSemaphore waitSems[2] = {imageReady_, meshDone_};
@@ -1153,6 +1373,13 @@ void VulkanRenderBackend::EndFrame()
     }
     else
         CheckVkResult(result, "QueuePresent");
+    VkProf::Get().Tick();
+
+    // 帧流水：本帧已提交，切到下一槽。必须在这里切而不是 BeginFrame——
+    // 合成器的绘制（DrawDeviceD3D::RenderFrame）发生在 Application->Run() 里，
+    // 早于 TVPRenderOnce 的 BeginFrame；若在 BeginFrame 切槽，这批命令会留在
+    // 旧槽的命令缓冲里永不提交（表现为画面在第一帧之后完全冻结）。
+    AdvanceMeshSlot();
 }
 
 //---------------------------------------------------------------------------
@@ -1160,15 +1387,13 @@ void VulkanRenderBackend::EndFrame()
 //---------------------------------------------------------------------------
 VulkanRenderBackend::Texture* VulkanRenderBackend::FindTexture(void* handle) const
 {
-    for (Texture* tex : textures_)
-    {
-        if (tex == handle)
-            return tex;
-    }
+    // O(1)：句柄就是 Texture*，索引只用于确认它仍属于本后端实例。
+    if (handle && textureIndex_.find(handle) != textureIndex_.end())
+        return static_cast<Texture*>(handle);
     return nullptr;
 }
 
-VulkanRenderBackend::Texture* VulkanRenderBackend::CreateTextureInternal(int width, int height)
+VulkanRenderBackend::Texture* VulkanRenderBackend::CreateTextureInternal(int width, int height, bool optimal)
 {
     if (width <= 0 || height <= 0)
         return nullptr;
@@ -1176,8 +1401,16 @@ VulkanRenderBackend::Texture* VulkanRenderBackend::CreateTextureInternal(int wid
     Texture* texture = new Texture();
     texture->width = width;
     texture->height = height;
+    // UMA（集显）上 LINEAR 直写更快（少一次全幅拷贝），独显上 OPTIMAL+暂存更快。
+    // blankMask 调用方显式传 false；其余一般贴图跟随设备能力。
+    if (optimal)
+        optimal = !preferLinearTextures_;
 
-    // 线性布局 + 主机可见（与"每帧全量上传"的数据流一致；行距查询驱动）
+    // 现代采样图：device-local OPTIMAL tiling（GPU 采样带宽/缓存最优）。
+    // 上传不再是 CPU 直接写映射内存，而是写入暂存环 → vkCmdCopyBufferToImage。
+    // 布局全程 GENERAL（与离屏目标一致），绘制/采样/回读免布局转换。
+    // optimal=false 仅用于 EnsureMeshResources 内部提前创建的 blankMask（1x1），
+    // 保持旧的 host-visible 线性路径，避免在网格资源初始化完成前触发上传环。
     VkImageCreateInfo imageInfo{};
     imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageInfo.imageType = VK_IMAGE_TYPE_2D;
@@ -1186,8 +1419,9 @@ VulkanRenderBackend::Texture* VulkanRenderBackend::CreateTextureInternal(int wid
     imageInfo.mipLevels = 1;
     imageInfo.arrayLayers = 1;
     imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-    imageInfo.tiling = VK_IMAGE_TILING_LINEAR;
-    imageInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+    imageInfo.tiling = optimal ? VK_IMAGE_TILING_OPTIMAL : VK_IMAGE_TILING_LINEAR;
+    imageInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                      VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     if (!CheckVkResult(vkCreateImage(device_, &imageInfo, nullptr, &texture->image), "CreateTextureImage"))
@@ -1195,9 +1429,11 @@ VulkanRenderBackend::Texture* VulkanRenderBackend::CreateTextureInternal(int wid
         delete texture;
         return nullptr;
     }
+    texture->optimal = optimal;
     VkMemoryRequirements memReq;
     vkGetImageMemoryRequirements(device_, texture->image, &memReq);
-    uint32_t memoryType = FindHostVisibleMemory(physicalDevice_, memReq, true);
+    uint32_t memoryType = optimal ? FindDeviceLocalMemory(physicalDevice_, memReq)
+                                  : FindHostVisibleMemory(physicalDevice_, memReq, true);
     if (memoryType == 0xFFFFFFFF)
     {
         vkDestroyImage(device_, texture->image, nullptr);
@@ -1216,15 +1452,21 @@ VulkanRenderBackend::Texture* VulkanRenderBackend::CreateTextureInternal(int wid
     }
     vkBindImageMemory(device_, texture->image, texture->memory, 0);
 
-    // 行距查询
-    VkImageSubresource subres{};
-    subres.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    subres.mipLevel = 0;
-    subres.arrayLayer = 0;
-    VkSubresourceLayout subresLayout;
-    vkGetImageSubresourceLayout(device_, texture->image, &subres, &subresLayout);
-    texture->pitch = (int)subresLayout.rowPitch;
-    vkMapMemory(device_, texture->memory, 0, memReq.size, 0, (void**)&texture->mapped);
+    if (optimal)
+    {
+        // OPTIMAL 图不可映射；逻辑行距固定 RGBA8 紧排，回读另行走 staging。
+        texture->pitch = width * 4;
+    }
+    else
+    {
+        // 遗留线性贴图（blankMask）：保留行距查询与主机映射。
+        VkImageSubresource subres{};
+        subres.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        VkSubresourceLayout subresLayout;
+        vkGetImageSubresourceLayout(device_, texture->image, &subres, &subresLayout);
+        texture->pitch = (int)subresLayout.rowPitch;
+        vkMapMemory(device_, texture->memory, 0, memReq.size, 0, (void**)&texture->mapped);
+    }
 
     // 一次性转换到 GENERAL（采样布局）
     VkCommandBufferAllocateInfo cmdAlloc{};
@@ -1319,33 +1561,197 @@ VulkanRenderBackend::Texture* VulkanRenderBackend::CreateTextureInternal(int wid
     vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
 
     textures_.push_back(texture);
+    textureIndex_.insert(texture);
     return texture;
 }
 
 void VulkanRenderBackend::UpdateTextureInternal(Texture* texture, const uint8_t* pixels, int width, int height, int pitch)
 {
-    if (!texture || !texture->mapped || !pixels)
+    EnqueueTextureUpload(texture, 0, 0, width, height, pixels, pitch);
+}
+
+void VulkanRenderBackend::RetireCurrentUploadRegion()
+{
+    // 帧末提交后 flip 到另一半暂存区。当前区正被本帧 mesh 提交读取，
+    // 下一帧不碰它；再过一帧复用时，中间帧的 BeginPass/WaitMeshIdle 已
+    // 确认 GPU 读完。双区交替 → 稳态帧内零等待。
+    uploadRingUsedThisBatch_ = false;
+    uploadRingRegion_ ^= 1;
+    uploadRingCursor_ = 0;
+}
+
+bool VulkanRenderBackend::EnsureUploadRing(size_t bytes)
+{
+    if (uploadRingBuffer_ && uploadRingRegionSize_ >= bytes)
+        return true;
+
+    // 扩容：每个区至少 4MB（覆盖整幅 1080p），buffer 总容量 = 2 × 区大小。
+    size_t newRegion = std::max(bytes, uploadRingRegionSize_ * 2);
+    newRegion = std::max<size_t>(newRegion, 4 * 1024 * 1024);
+    size_t total = newRegion * 2;
+
+    if (uploadRingBuffer_)
+    {
+        // 旧 buffer 可能仍被上一次提交的 copy 引用：调用方在扩容前已 Flush+Wait。
+        if (meshInFlight_)
+            WaitMeshIdle();
+        vkUnmapMemory(device_, uploadRingMemory_);
+        vkDestroyBuffer(device_, uploadRingBuffer_, nullptr);
+        vkFreeMemory(device_, uploadRingMemory_, nullptr);
+        uploadRingBuffer_ = VK_NULL_HANDLE;
+        uploadRingMemory_ = VK_NULL_HANDLE;
+        uploadRingMapped_ = nullptr;
+        uploadRingRegionSize_ = 0;
+    }
+
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = total;
+    bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (!CheckVkResult(vkCreateBuffer(device_, &bufferInfo, nullptr, &uploadRingBuffer_), "CreateUploadRing"))
+        return false;
+    VkMemoryRequirements memReq;
+    vkGetBufferMemoryRequirements(device_, uploadRingBuffer_, &memReq);
+    uint32_t memoryType = FindHostVisibleMemory(physicalDevice_, memReq, true);
+    if (memoryType == 0xFFFFFFFF)
+    {
+        vkDestroyBuffer(device_, uploadRingBuffer_, nullptr);
+        uploadRingBuffer_ = VK_NULL_HANDLE;
+        return false;
+    }
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memReq.size;
+    allocInfo.memoryTypeIndex = memoryType;
+    if (!CheckVkResult(vkAllocateMemory(device_, &allocInfo, nullptr, &uploadRingMemory_), "AllocateUploadRing"))
+    {
+        vkDestroyBuffer(device_, uploadRingBuffer_, nullptr);
+        uploadRingBuffer_ = VK_NULL_HANDLE;
+        return false;
+    }
+    vkBindBufferMemory(device_, uploadRingBuffer_, uploadRingMemory_, 0);
+    vkMapMemory(device_, uploadRingMemory_, 0, memReq.size, 0, (void**)&uploadRingMapped_);
+    uploadRingRegionSize_ = newRegion;
+    uploadRingRegion_ = 0;
+    uploadRingCursor_ = 0;
+    return true;
+}
+
+void VulkanRenderBackend::EnqueueTextureUpload(Texture* texture, int x, int y, int width, int height,
+                                               const uint8_t* pixels, int pitch)
+{
+    auto _t = VkProf::Time(VkProf::Get().uploadMs);
+    if (!texture || !pixels || width <= 0 || height <= 0 || !initialized_)
+        return;
+    // 直写路径（UMA 集显的一般贴图 / blankMask）：CPU 直接写映射内存，零拷贝。
+    if (!texture->optimal)
+    {
+        if (!texture->mapped)
+            return;
+        // 线性贴图可能正被尚未提交的绘制采样；覆盖前确认 GPU 读完。
+        if (IsImageSampled(texture->image))
+            FlushMeshCommands();
+        if (IsImagePresented(texture->image))
+            vkWaitForFences(device_, 1, &frameFence_, VK_TRUE, UINT64_MAX);
+        for (int yy = 0; yy < height; yy++)
+            memcpy(texture->mapped + (size_t)(yy + y) * texture->pitch + x * 4,
+                   pixels + (size_t)yy * pitch, (size_t)width * 4);
+        return;
+    }
+
+    size_t bytes = (size_t)width * height * 4;
+    if (!EnsureMeshResources())
         return;
 
-    // 线性贴图可能正被尚未提交的 mesh/layer 命令采样。
-    // DrawDeviceD3D::ComposeLayerManager 会复用同一个 ScratchTexture 依次上传多个
-    // LayerManager；如果这里直接覆盖 mapped 内存，前一个尚未执行的 draw 会采到
-    // 后一次上传的内容。LockTarget 调试回读之所以能“修好”，只是因为它在两次
-    // 上传之间提交并等待了命令。正式路径在覆盖贴图前显式提交即可避免依赖回读。
-    // 只有该贴图可能正被尚未完成的 GPU 读取时才需要同步：
-    //  - 本帧/上一帧的网格绘制采样过它（覆盖映射内存会破坏正在进行的采样）；
-    //  - 它是上一帧上屏的窗口贴图（窗口 pass 可能仍在读取映射内存）。
-    // D3D 合成路径下 ScratchTexture 只被"上传之后的"绘制采样，因此这里通常无需等待。
-    if (IsImageSampled(texture->image))
-        FlushMeshCommands();
-    if (IsImagePresented(texture->image))
-        vkWaitForFences(device_, 1, &frameFence_, VK_TRUE, UINT64_MAX);
-
-    // 线性布局图像按行写入（pitch 可能含对齐填充）
-    for (int y = 0; y < height; y++)
+    // 双区暂存：本帧上传写当前区；帧末提交后 flip。若本区剩余空间装不下本批，
+    // 必须按"已用 + 本批"扩容——只按本批大小判断会让 EnsureUploadRing 原样返回
+    // （4MB 区 >= 1MB 批次），随后仍按旧游标写入，越过本区尾部（堆越界写）。
+    size_t regionBase = (size_t)uploadRingRegion_ * uploadRingRegionSize_;
+    if (uploadRingCursor_ + bytes > uploadRingRegionSize_)
     {
-        memcpy(texture->mapped + (size_t)y * texture->pitch, pixels + (size_t)y * pitch, (size_t)width * 4);
+        if (commandActive_)
+            FlushMeshCommands(); // 提交并等待，释放旧 buffer 引用
+        if (!EnsureUploadRing(uploadRingCursor_ + bytes))
+            return;
+        uploadRingCursor_ = 0; // 扩容后从头写当前区
+        regionBase = (size_t)uploadRingRegion_ * uploadRingRegionSize_;
     }
+    uploadRingUsedThisBatch_ = true;
+
+    // 逐行紧排写入当前区（VK 侧 pitch 固定 width*4，拷贝源按调用方 pitch）
+    uint8_t* dst = uploadRingMapped_ + regionBase + uploadRingCursor_;
+    for (int yy = 0; yy < height; yy++)
+        memcpy(dst + (size_t)yy * width * 4, pixels + (size_t)yy * pitch, (size_t)width * 4);
+
+    // vkCmdCopyBufferToImage 不能录制在 render pass 内；DrawDeviceD3D 会在多个
+    // LayerManager 之间穿插"上传→绘制"，所以在 copy 前收尾当前 pass。
+    // 后续 DrawMesh/DrawRect 会以 LOAD 变体重开 pass（同目标，无提交/等待）。
+    if (passActive_)
+    {
+        EndPass();
+        // 上一 pass 可能采样过同一张贴图（ScratchTexture 复用）；显式保证
+        // 采样读完成后再覆盖图像（WAR 依赖），不跨提交、不阻塞 CPU。
+        // 跨提交的一侧由 !commandActive_ 分支里的 WaitMeshIdle() 兜底。
+        VkImageMemoryBarrier war{};
+        war.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        war.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+        war.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        war.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        war.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        war.image = texture->image;
+        war.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        war.subresourceRange.levelCount = 1;
+        war.subresourceRange.layerCount = 1;
+        war.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        war.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(meshCommandBuffer_, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &war);
+    }
+    if (!commandActive_)
+    {
+        WaitMeshIdle();
+        vkResetCommandBuffer(meshCommandBuffer_, 0);
+        VkCommandBufferBeginInfo beginInfo{};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        if (!CheckVkResult(vkBeginCommandBuffer(meshCommandBuffer_, &beginInfo), "BeginUploadCmd"))
+            return;
+        commandActive_ = true;
+    }
+
+    VkBufferImageCopy region{};
+    region.bufferOffset = regionBase + uploadRingCursor_;
+    region.bufferRowLength = (uint32_t)width;
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageOffset = {(int32_t)x, (int32_t)y, 0};
+    region.imageExtent = {(uint32_t)width, (uint32_t)height, 1};
+    vkCmdCopyBufferToImage(meshCommandBuffer_, uploadRingBuffer_, texture->image,
+                           VK_IMAGE_LAYOUT_GENERAL, 1, &region);
+    uploadRingCursor_ += bytes;
+
+    // copy写入 → 片元采样 可见性（同提交内，GENERAL→GENERAL 免布局转换）。
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = texture->image;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.layerCount = 1;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(meshCommandBuffer_, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+}
+
+void VulkanRenderBackend::UploadTextureRect(void* handle, int x, int y, int width, int height,
+                                            const uint8_t* pixels, int pitch)
+{
+    EnqueueTextureUpload(FindTexture(handle), x, y, width, height, pixels, pitch);
 }
 
 void VulkanRenderBackend::DestroyTextureInternal(Texture* texture)
@@ -1360,6 +1766,7 @@ void VulkanRenderBackend::DestroyTextureInternal(Texture* texture)
             if (textures_[i] == texture)
             {
                 textures_.erase(textures_.begin() + i);
+                textureIndex_.erase(texture);
                 break;
             }
         }
@@ -1375,6 +1782,7 @@ void VulkanRenderBackend::DestroyTextureInternal(Texture* texture)
         if (textures_[i] == texture)
         {
             textures_.erase(textures_.begin() + i);
+            textureIndex_.erase(texture);
             break;
         }
     }
@@ -1421,19 +1829,28 @@ bool VulkanRenderBackend::EnsureMeshResources()
 
     // 共享设备/命令池/采样器/描述符池/纹理布局由窗口侧创建，这里只建网格专属资源
 
-    VkCommandBufferAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.commandPool = commandPool_;
-    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandBufferCount = 1;
-    if (!CheckVkResult(vkAllocateCommandBuffers(device_, &allocInfo, &meshCommandBuffer_), "AllocateMeshCommandBuffer"))
-        return false;
+    // 帧流水：每槽一套命令缓冲 + 栅栏（顶点/索引缓冲在首次绘制时按需创建）
+    for (int i = 0; i < kFramesInFlight; i++)
+    {
+        VkCommandBufferAllocateInfo allocInfo{};
+        allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocInfo.commandPool = commandPool_;
+        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandBufferCount = 1;
+        if (!CheckVkResult(vkAllocateCommandBuffers(device_, &allocInfo, &meshSlots_[i].cmd),
+                           "AllocateMeshCommandBuffer"))
+            return false;
 
-    VkFenceCreateInfo fenceInfo{};
-    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-    if (!CheckVkResult(vkCreateFence(device_, &fenceInfo, nullptr, &meshFence_), "CreateMeshFence"))
-        return false;
+        VkFenceCreateInfo fenceInfo{};
+        fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+        if (!CheckVkResult(vkCreateFence(device_, &fenceInfo, nullptr, &meshSlots_[i].fence),
+                           "CreateMeshFence"))
+            return false;
+    }
+    // 首帧从槽 0 开始（AdvanceMeshSlot 会切到槽 1，所以这里预置成 -1 的等价物）
+    meshSlot_ = kFramesInFlight - 1;
+    LoadMeshSlot(kFramesInFlight - 1);
     VkSemaphoreCreateInfo semInfo{};
     semInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
     if (!CheckVkResult(vkCreateSemaphore(device_, &semInfo, nullptr, &meshDone_), "CreateMeshSemaphore"))
@@ -1456,7 +1873,7 @@ bool VulkanRenderBackend::EnsureMeshResources()
         return false;
 
     // 空白蒙版（1x1 全白）
-    blankMask_ = CreateTextureInternal(1, 1);
+    blankMask_ = CreateTextureInternal(1, 1, false); // 线性+映射：初始化期不可用上传环
     if (!blankMask_)
         return false;
     uint8_t white[4] = {255, 255, 255, 255};
@@ -1787,7 +2204,7 @@ bool VulkanRenderBackend::EnsureLayerPipelines()
     dynamicState.dynamicStateCount = 2;
     dynamicState.pDynamicStates = dynamicStates;
 
-    // 各 LayerBlendMethod 的混合状态（与 GL 后端 LayerSetBlend 一一对应）：
+    // 各 BlendMode 的混合状态（与 GL 后端 SetBlend 一一对应）：
     //   0 COPY / 7 FILL / 9 COPYOPAQUE：不混合（直写）
     //   1 ALPHA / 2 CONSTALPHA：SRC_ALPHA/ONE_MINUS_SRC_ALPHA（全通道）
     //   3 ADD：ONE/ONE 加
@@ -1895,11 +2312,9 @@ bool VulkanRenderBackend::EnsureLayerPipelines()
 //---------------------------------------------------------------------------
 VulkanRenderBackend::Target* VulkanRenderBackend::FindTarget(void* handle) const
 {
-    for (Target* t : targets_)
-    {
-        if (t == handle)
-            return t;
-    }
+    // O(1)：同 FindTexture，句柄即 Target*，索引负责归属校验。
+    if (handle && targetIndex_.find(handle) != targetIndex_.end())
+        return static_cast<Target*>(handle);
     return nullptr;
 }
 
@@ -2071,6 +2486,7 @@ void* VulkanRenderBackend::CreateTarget(int width, int height)
             texWrite.pImageInfo = &texInfo;
             vkUpdateDescriptorSets(device_, 1, &texWrite, 0, nullptr);
             textures_.push_back(target->texture);
+            textureIndex_.insert(target->texture);
         }
         else
         {
@@ -2080,6 +2496,7 @@ void* VulkanRenderBackend::CreateTarget(int width, int height)
     }
 
     targets_.push_back(target);
+    targetIndex_.insert(target);
     return target;
 }
 
@@ -2096,6 +2513,7 @@ void VulkanRenderBackend::DestroyTarget(void* handle)
             if (targets_[i] == target)
             {
                 targets_.erase(targets_.begin() + i);
+                targetIndex_.erase(target);
                 break;
             }
         }
@@ -2130,6 +2548,7 @@ void VulkanRenderBackend::DestroyTarget(void* handle)
             if (textures_[i] == target->texture)
             {
                 textures_.erase(textures_.begin() + i);
+                textureIndex_.erase(target->texture);
                 break;
             }
         }
@@ -2193,9 +2612,18 @@ bool VulkanRenderBackend::BeginPass(Target* target, bool clear)
 {
     if (!target)
         return false;
+    const bool prof = VkProf::Enabled();
+    auto bdt = [](VkProf::Clock::time_point a, VkProf::Clock::time_point b) {
+        return std::chrono::duration<double, std::milli>(b - a).count();
+    };
+    VkProf::Clock::time_point b0, b1, b2, b3, b4;
+    if (prof)
+        b0 = VkProf::Clock::now();
     if (!commandActive_)
     {
         WaitMeshIdle(); // 上一次提交可能仍在执行，复用它之前必须确认完成
+        if (prof)
+            b1 = VkProf::Clock::now();
         vkResetCommandBuffer(meshCommandBuffer_, 0);
         VkCommandBufferBeginInfo beginInfo{};
         beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -2203,7 +2631,15 @@ bool VulkanRenderBackend::BeginPass(Target* target, bool clear)
         if (!CheckVkResult(vkBeginCommandBuffer(meshCommandBuffer_, &beginInfo), "BeginCommandBuffer"))
             return false;
         commandActive_ = true;
+        if (prof)
+        {
+            b2 = VkProf::Clock::now();
+            VkProf::Get().bpWaitMs += bdt(b0, b1);
+            VkProf::Get().bpResetMs += bdt(b1, b2);
+        }
     }
+    else if (prof)
+        b2 = VkProf::Clock::now();
 
     VkClearValue clearValue = {{{0.0f, 0.0f, 0.0f, 0.0f}}};
     if (!clear)
@@ -2226,6 +2662,8 @@ bool VulkanRenderBackend::BeginPass(Target* target, bool clear)
                              VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0, nullptr, 1,
                              &loadBarrier);
     }
+    if (prof)
+        b3 = VkProf::Clock::now();
     VkRenderPassBeginInfo rpBegin{};
     rpBegin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     rpBegin.renderPass = clear ? meshClearPass_ : meshLoadPass_;
@@ -2255,6 +2693,12 @@ bool VulkanRenderBackend::BeginPass(Target* target, bool clear)
         passClear_ = false; // 清屏请求已消费，后续同目标 pass 用 LOAD 累积
     if (!IsImageWritten(target->image))
         writtenImages_.push_back(target->image);
+    if (prof)
+    {
+        b4 = VkProf::Clock::now();
+        VkProf::Get().bpBarrierMs += bdt(b2, b3);
+        VkProf::Get().bpRpMs += bdt(b3, b4);
+    }
     return true;
 }
 
@@ -2269,11 +2713,44 @@ void VulkanRenderBackend::WaitMeshIdle()
 {
     if (!meshInFlight_)
         return;
-    vkWaitForFences(device_, 1, &meshFence_, VK_TRUE, UINT64_MAX);
+    if (VkProf::Enabled())
+    {
+        // 诊断：等待前 fence 是否已完成。已完成说明慢在等待机制本身
+        // （Windows 上 vkWaitForFences 走内核事件，可能受调度粒度影响）；
+        // 未完成说明 GPU 真的还没跑完，要找提交内容的问题。
+        VkResult st = vkGetFenceStatus(device_, meshFence_);
+        ++VkProf::Get().waitTotal;
+        if (st != VK_SUCCESS)
+            ++VkProf::Get().waitNotReady;
+    }
+    if (spinWait_)
+    {
+        // 自旋等待：Windows 的 vkWaitForFences 走内核事件对象，最坏情况受
+        // 线程调度粒度（1~15ms）影响；低延迟渲染路径用 poll 更稳。
+        // 超过阈值仍没完成则退回阻塞等待，避免极端情况下空转。
+        int spins = 0;
+        while (vkGetFenceStatus(device_, meshFence_) != VK_SUCCESS)
+        {
+            if (++spins > 200000)
+            {
+                vkWaitForFences(device_, 1, &meshFence_, VK_TRUE, UINT64_MAX);
+                break;
+            }
+#if defined(_MSC_VER)
+            _mm_pause();
+#elif defined(__x86_64__) || defined(__i386__)
+            __builtin_ia32_pause();
+#endif
+        }
+    }
+    else
+        vkWaitForFences(device_, 1, &meshFence_, VK_TRUE, UINT64_MAX);
     meshInFlight_ = false;
-    // GPU 已完成此前提交的全部读写，可以安全复用命令缓冲/覆盖映射内存
+    meshSlots_[meshSlot_].inFlight = false;
     writtenImages_.clear();
     sampledImages_.clear();
+    meshVertexCursor_ = 0;
+    meshIndexCursor_ = 0;
 }
 
 bool VulkanRenderBackend::FlushMeshCommands(bool wait, VkSemaphore signal)
@@ -2310,10 +2787,16 @@ bool VulkanRenderBackend::FlushMeshCommands(bool wait, VkSemaphore signal)
         {
             submitted = true;
             meshInFlight_ = true;
+            meshSlots_[meshSlot_].inFlight = true;
             if (wait)
             {
                 vkWaitForFences(device_, 1, &meshFence_, VK_TRUE, UINT64_MAX);
                 meshInFlight_ = false;
+                meshSlots_[meshSlot_].inFlight = false;
+                // 提交已完成：顶点/索引缓冲内容不再被 GPU 引用，游标与
+                // WaitMeshIdle 保持一致地归零，避免帧内多次 flush 后单调膨胀。
+                meshVertexCursor_ = 0;
+                meshIndexCursor_ = 0;
             }
         }
         else
@@ -2364,12 +2847,83 @@ bool VulkanRenderBackend::EnsureStaging(size_t bytes)
     return true;
 }
 
+void VulkanRenderBackend::SaveMeshSlot()
+{
+    MeshSlot& s = meshSlots_[meshSlot_];
+    s.vertexBuffer = meshVertexBuffer_;
+    s.vertexMemory = meshVertexMemory_;
+    s.vertexMapped = meshVertexMapped_;
+    s.vertexCapacity = meshVertexCapacity_;
+    s.vertexCursor = meshVertexCursor_;
+    s.indexBuffer = meshIndexBuffer_;
+    s.indexMemory = meshIndexMemory_;
+    s.indexMapped = meshIndexMapped_;
+    s.indexCapacity = meshIndexCapacity_;
+    s.indexCursor = meshIndexCursor_;
+    s.inFlight = meshInFlight_;
+}
+
+void VulkanRenderBackend::LoadMeshSlot(int slot)
+{
+    meshSlot_ = slot;
+    MeshSlot& s = meshSlots_[slot];
+    meshCommandBuffer_ = s.cmd;
+    meshFence_ = s.fence;
+    meshVertexBuffer_ = s.vertexBuffer;
+    meshVertexMemory_ = s.vertexMemory;
+    meshVertexMapped_ = s.vertexMapped;
+    meshVertexCapacity_ = s.vertexCapacity;
+    meshVertexCursor_ = s.vertexCursor;
+    meshIndexBuffer_ = s.indexBuffer;
+    meshIndexMemory_ = s.indexMemory;
+    meshIndexMapped_ = s.indexMapped;
+    meshIndexCapacity_ = s.indexCapacity;
+    meshIndexCursor_ = s.indexCursor;
+    meshInFlight_ = s.inFlight;
+    commandActive_ = false;
+    passActive_ = false;
+}
+
+void VulkanRenderBackend::AdvanceMeshSlot()
+{
+    if (!meshReady_)
+        return;
+    // 防御：若当前槽还有未提交的录制（绘制可能发生在本帧提交点之外），
+    // 先提交，避免切槽后这批命令永远留在未提交的命令缓冲里。
+    if (commandActive_)
+        FlushMeshCommands(false, VK_NULL_HANDLE);
+    SaveMeshSlot();
+    LoadMeshSlot((meshSlot_ + 1) % kFramesInFlight);
+    // 等本槽上一次提交完成：那是 kFramesInFlight 帧前提交的，稳态下已完成，
+    // 这正是"CPU 不再被上一帧 GPU 拖住"的关键。首帧/卡顿时才会真的等待。
+    WaitMeshIdle();
+    writtenImages_.clear();
+    sampledImages_.clear();
+    meshVertexCursor_ = 0;
+    meshIndexCursor_ = 0;
+}
+
 bool VulkanRenderBackend::EnsureVertexBuffers(size_t vertexBytes, size_t indexBytes)
 {
+    // vertexBytes/indexBytes 是"本帧累计所需容量"（调用方传 游标+本批），不是本批大小。
+    // 需要扩容时必须先把已录制的命令提交并等待 GPU 完成：旧 buffer/memory 已被
+    // 命令缓冲引用，直接 vkDestroy 会让在飞的命令访问已释放内存（UAF）。
+    if ((meshVertexCapacity_ < vertexBytes || meshIndexCapacity_ < indexBytes) && commandActive_)
+    {
+        FlushMeshCommands(true);
+        // 提交完成 → WaitMeshIdle 已把游标归零，后续写入从头开始
+        if (meshVertexCapacity_ >= vertexBytes && meshIndexCapacity_ >= indexBytes)
+            return true;
+    }
+
     auto ensureBuffer = [&](VkBuffer& buffer, VkDeviceMemory& memory, size_t& capacity, size_t bytes,
                             VkBufferUsageFlags usage, uint8_t*& mapped) -> bool {
         if (capacity >= bytes && buffer)
             return true;
+        // 预留 2 倍 + 64KB 余量：帧间顶点数小幅波动时不再重建缓冲。
+        // 重建必须等 GPU 完成（旧 buffer 可能仍被命令缓冲引用），
+        // 精确分配会让"每帧多一点"的负载退化成每帧同步。
+        bytes = std::max(bytes * 2, bytes + 64 * 1024);
         if (buffer)
         {
             vkDestroyBuffer(device_, buffer, nullptr);
@@ -2410,6 +2964,7 @@ bool VulkanRenderBackend::EnsureVertexBuffers(size_t vertexBytes, size_t indexBy
         vkMapMemory(device_, meshVertexMemory_, 0, meshVertexCapacity_, 0, (void**)&meshVertexMapped_);
     if (!meshIndexMapped_)
         vkMapMemory(device_, meshIndexMemory_, 0, meshIndexCapacity_, 0, (void**)&meshIndexMapped_);
+    SaveMeshSlot(); // 扩容后把新句柄写回当前槽，避免切槽时用回旧 buffer
     return true;
 }
 
@@ -2441,7 +2996,20 @@ void VulkanRenderBackend::SetMask(void* handle)
     maskTarget_ = FindTarget(handle);
 }
 
-void VulkanRenderBackend::SetBlendMode(int mode, const float* uniformColor)
+void VulkanRenderBackend::SetBlend(int mode, float opacity, const float* uniformColor,
+                                   const float* colorModulation)
+{
+    // 批绘制状态：DrawQuads 一次提交整批时从此处取 opacity/染色。
+    blendOpacity_ = opacity;
+    const float white[4] = {1, 1, 1, 1};
+    std::memcpy(blendModulation_, colorModulation ? colorModulation : white, sizeof(blendModulation_));
+    if (iTVPRenderBackend::IsRMBlend(mode))
+        applyRMBlend(mode, opacity, uniformColor);
+    else
+        applyEmoteBlend(mode, uniformColor);
+}
+
+void VulkanRenderBackend::applyEmoteBlend(int mode, const float* uniformColor)
 {
     blendMode_ = mode;
     skipDraw_ = (mode == 6);
@@ -2461,14 +3029,27 @@ void VulkanRenderBackend::DrawMesh(const float* vertices,
                                    float opacity,
                                    const float* colorModulation)
 {
+    auto _t = VkProf::Time(VkProf::Get().drawMs);
     if (skipDraw_ || !currentTarget_ || !vertices || !indices || vertexCount <= 0 || indexCount <= 0)
         return;
     if (!EnsureMeshResources())
         return;
+    const bool prof = VkProf::Enabled();
+    VkProf::Clock::time_point tp0, tpA, tpB, tpC, tp1, tp2, tp3;
+    auto dtms = [](VkProf::Clock::time_point a, VkProf::Clock::time_point b) {
+        return std::chrono::duration<double, std::milli>(b - a).count();
+    };
+    if (prof)
+        tp0 = VkProf::Clock::now();
     Texture* texture = FindTexture(handle);
     Target* targetAsTexture = texture ? nullptr : FindTarget(handle);
     if (!texture && !targetAsTexture)
         return;
+    if (prof)
+    {
+        tpA = VkProf::Clock::now();
+        VkProf::Get().drawFindMs += dtms(tp0, tpA);
+    }
 
     // 写后读可见性：只有采样"本 command buffer 内刚写入过的目标图像"时才需要
     // 先提交（跨提交边界保证可见——RADV 忽略 GENERAL→GENERAL 的同提交 barrier）。
@@ -2480,6 +3061,25 @@ void VulkanRenderBackend::DrawMesh(const float* vertices,
         sampledImages_.push_back(sampleImage);
     if (maskTarget_ && !IsImageSampled(maskTarget_->image))
         sampledImages_.push_back(maskTarget_->image);
+    if (prof)
+    {
+        tpB = VkProf::Clock::now();
+        VkProf::Get().drawFlushMs += dtms(tpA, tpB);
+    }
+
+    // 顶点/索引缓冲（主机可见，录制期间写入；提交发生在 LockTarget，串行安全）
+    size_t vertexBytes = (size_t)vertexCount * 4 * sizeof(float);
+    size_t indexBytes = (size_t)indexCount * sizeof(uint16_t);
+    // 容量判断必须用"累计游标 + 本批"——缓冲区按帧复用，游标会一直递增，
+    // 只按本批大小判断会通过检查却写到缓冲之外（堆越界）。
+    // 必须在 BeginPass 之前：扩容会提交并结束当前 pass，之后就不能再录制了。
+    if (!EnsureVertexBuffers(meshVertexCursor_ + vertexBytes, meshIndexCursor_ + indexBytes))
+        return;
+    if (prof)
+    {
+        tpC = VkProf::Clock::now();
+        VkProf::Get().drawEnsureMs += dtms(tpB, tpC);
+    }
 
     if (!passActive_)
     {
@@ -2489,12 +3089,11 @@ void VulkanRenderBackend::DrawMesh(const float* vertices,
             return;
         }
     }
-
-    // 顶点/索引缓冲（主机可见，录制期间写入；提交发生在 LockTarget，串行安全）
-    size_t vertexBytes = (size_t)vertexCount * 4 * sizeof(float);
-    size_t indexBytes = (size_t)indexCount * sizeof(uint16_t);
-    if (!EnsureVertexBuffers(vertexBytes, indexBytes))
-        return;
+    if (prof)
+    {
+        tp1 = VkProf::Clock::now();
+        VkProf::Get().drawBeginMs += dtms(tpC, tp1);
+    }
 
     int pipelineIndex = kPipelineNormal;
     switch (blendMode_)
@@ -2512,11 +3111,23 @@ void VulkanRenderBackend::DrawMesh(const float* vertices,
     }
     vkCmdBindPipeline(meshCommandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, meshPipelines_[pipelineIndex]);
 
-    std::memcpy(meshVertexMapped_, vertices, vertexBytes);
-    std::memcpy(meshIndexMapped_, indices, indexBytes);
+    // 写入本帧游标位置，后续 draw 用对应 baseVertex/index 偏移，避免相互覆盖
+    std::memcpy(meshVertexMapped_ + meshVertexCursor_, vertices, vertexBytes);
+    uint32_t vBase = (uint32_t)(meshVertexCursor_ / 16); // 每顶点 4 float = 16B
+    uint16_t* idxDst = (uint16_t*)(meshIndexMapped_ + meshIndexCursor_);
+    for (int k = 0; k < indexCount; ++k)
+        idxDst[k] = (uint16_t)(indices[k] + vBase);
+    uint32_t iBase = (uint32_t)(meshIndexCursor_ / sizeof(uint16_t));
+    meshVertexCursor_ += vertexBytes;
+    meshIndexCursor_ += indexBytes;
+    if (prof)
+        tp2 = VkProf::Clock::now();
 
-    VkDeviceSize offset = 0;
-    vkCmdBindVertexBuffers(meshCommandBuffer_, 0, 1, &meshVertexBuffer_, &offset);
+    // 顶点缓冲整段绑定（偏移 0）：索引里已经加了 vBase（相对本帧起点），
+    // 若这里再绑定 vOffset，顶点地址会被偏移两次——本帧第二次及之后的绘制
+    // 会读到别的 quad 的顶点（表现为图层被放大/串位）。
+    VkDeviceSize bindOffset = 0;
+    vkCmdBindVertexBuffers(meshCommandBuffer_, 0, 1, &meshVertexBuffer_, &bindOffset);
     vkCmdBindIndexBuffer(meshCommandBuffer_, meshIndexBuffer_, 0, VK_INDEX_TYPE_UINT16);
 
     // 描述符：set0 = 纹理（或目标自身）；set1 = 蒙版（无蒙版时用全白 1x1）
@@ -2539,13 +3150,36 @@ void VulkanRenderBackend::DrawMesh(const float* vertices,
     vkCmdPushConstants(meshCommandBuffer_, meshPipelineLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(pc),
                        &pc);
 
-    vkCmdDrawIndexed(meshCommandBuffer_, (uint32_t)indexCount, 1, 0, 0, 0);
+    vkCmdDrawIndexed(meshCommandBuffer_, (uint32_t)indexCount, 1, iBase, 0, 0);
+    ++VkProf::Get().drawCalls;
+    ++VkProf::Get().quadCount;
+    if (prof)
+    {
+        tp3 = VkProf::Clock::now();
+        VkProf::Get().drawWriteMs += dtms(tp1, tp2);
+        VkProf::Get().drawCmdMs += dtms(tp2, tp3);
+    }
+}
+
+void VulkanRenderBackend::DrawQuads(void* handle, const float* vertices, int quadCount,
+                                    const uint16_t* indices, int indexCount)
+{
+    // 批绘制：抽象层契约是"同一 texture / 当前 SetBlend 状态下一批 quad"。
+    // VK 实现逐 quad 走 DrawMesh 的成熟路径——描述符/管线/缓冲绑定与单图绘制
+    // 完全一致，避免专用批路径在复杂资源生命周期下出现命令缓冲状态失配。
+    // 批处理的核心收益在调用方：一次 SetBlend、一段连续顶点数据，CPU 缓存友好。
+    if (skipDraw_ || !currentTarget_ || !vertices || quadCount <= 0)
+        return;
+    const uint16_t defaultIdx[6] = {0, 1, 2, 2, 3, 0};
+    const uint16_t* srcIdx = (indices && indexCount >= quadCount * 6) ? indices : defaultIdx;
+    for (int q = 0; q < quadCount; ++q)
+        DrawMesh(vertices + (size_t)q * 16, 4, srcIdx, 6, handle, blendOpacity_, blendModulation_);
 }
 
 //---------------------------------------------------------------------------
 // Layer 合成（图层合成路径，软件 RenderManager 语义）
 //---------------------------------------------------------------------------
-void VulkanRenderBackend::LayerSetBlend(int method, float opacity, const float* uniformColor)
+void VulkanRenderBackend::applyRMBlend(int method, float opacity, const float* uniformColor)
 {
     layerMethod_ = method;
     layerOpa_ = opacity;
@@ -2553,16 +3187,17 @@ void VulkanRenderBackend::LayerSetBlend(int method, float opacity, const float* 
         std::memcpy(layerUniformColor_, uniformColor, sizeof(layerUniformColor_));
 }
 
-void VulkanRenderBackend::LayerDrawRect(void* handle,
-                                        float x,
-                                        float y,
-                                        float w,
-                                        float h,
-                                        float u0,
-                                        float v0,
-                                        float u1,
-                                        float v1)
+void VulkanRenderBackend::DrawRect(void* handle,
+                                   float x,
+                                   float y,
+                                   float w,
+                                   float h,
+                                   float u0,
+                                   float v0,
+                                   float u1,
+                                   float v1)
 {
+    auto _t = VkProf::Time(VkProf::Get().drawMs);
     if (!currentTarget_ || !handle)
         return;
     if (!EnsureMeshResources() || !EnsureLayerPipelines())
@@ -2579,11 +3214,19 @@ void VulkanRenderBackend::LayerDrawRect(void* handle,
         FlushMeshCommands();
     if (sampleImage != VK_NULL_HANDLE && !IsImageSampled(sampleImage))
         sampledImages_.push_back(sampleImage);
+
+    // 顶点/索引缓冲必须在 BeginPass 之前确保容量：扩容会提交并结束当前 pass，
+    // 之后继续 vkCmd* 录制会落到已结束的命令缓冲上，整次绘制作废。
+    size_t vertexBytes = 16 * sizeof(float);
+    size_t indexBytes = 6 * sizeof(uint16_t);
+    if (!EnsureVertexBuffers(meshVertexCursor_ + vertexBytes, meshIndexCursor_ + indexBytes))
+        return;
+
     if (!passActive_)
     {
         if (!BeginPass(currentTarget_, passClear_))
         {
-            TVPConsoleLog("VK LayerDrawRect: BeginPass failed");
+            TVPConsoleLog("VK DrawRect: BeginPass failed");
             return;
         }
     }
@@ -2603,48 +3246,53 @@ void VulkanRenderBackend::LayerDrawRect(void* handle,
     };
     uint16_t indices[6] = {0, 1, 2, 2, 3, 0};
 
-    size_t vertexBytes = sizeof(vertices);
-    size_t indexBytes = sizeof(indices);
-    if (!EnsureVertexBuffers(vertexBytes, indexBytes))
-        return;
-
     // 方法 → 管线（与 EnsureLayerPipelines 的混合状态一一对应）
     int pipelineIndex = 0;
     switch (layerMethod_)
     {
-        case iTVPRenderBackend::LBM_ALPHA:
-        case iTVPRenderBackend::LBM_CONSTALPHA:
+        case iTVPRenderBackend::BM_ALPHA:
+        case iTVPRenderBackend::BM_CONSTALPHA:
             pipelineIndex = 1;
             break;
-        case iTVPRenderBackend::LBM_ADD:
+        case iTVPRenderBackend::BM_ADD_RM:
             pipelineIndex = 3;
             break;
-        case iTVPRenderBackend::LBM_SUB:
+        case iTVPRenderBackend::BM_SUB:
             pipelineIndex = 4;
             break;
-        case iTVPRenderBackend::LBM_MUL:
+        case iTVPRenderBackend::BM_MUL_RM:
             pipelineIndex = 5;
             break;
-        case iTVPRenderBackend::LBM_MUL_HDA:
+        case iTVPRenderBackend::BM_MUL_HDA:
             pipelineIndex = 6;
             break;
-        case iTVPRenderBackend::LBM_COPYCOLOR:
+        case iTVPRenderBackend::BM_COPYCOLOR:
             pipelineIndex = 7;
             break;
-        case iTVPRenderBackend::LBM_COPYMASK:
+        case iTVPRenderBackend::BM_COPYMASK:
             pipelineIndex = 8;
             break;
-        default: // LBM_COPY / LBM_FILL / LBM_COPYOPAQUE
+        default: // BM_COPY / BM_FILL / BM_COPYOPAQUE
             pipelineIndex = 0;
             break;
     }
     vkCmdBindPipeline(meshCommandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, layerPipelines_[pipelineIndex]);
 
-    std::memcpy(meshVertexMapped_, vertices, vertexBytes);
-    std::memcpy(meshIndexMapped_, indices, indexBytes);
+    // 写入本帧游标位置，后续 draw 用对应 baseVertex/index 偏移，避免相互覆盖
+    std::memcpy(meshVertexMapped_ + meshVertexCursor_, vertices, vertexBytes);
+    uint32_t vBase = (uint32_t)(meshVertexCursor_ / 16); // 每顶点 4 float = 16B
+    uint16_t* idxDst = (uint16_t*)(meshIndexMapped_ + meshIndexCursor_);
+    for (int k = 0; k < 6; ++k)
+        idxDst[k] = (uint16_t)(indices[k] + vBase);
+    uint32_t iBase = (uint32_t)(meshIndexCursor_ / sizeof(uint16_t));
+    meshVertexCursor_ += vertexBytes;
+    meshIndexCursor_ += indexBytes;
 
-    VkDeviceSize offset = 0;
-    vkCmdBindVertexBuffers(meshCommandBuffer_, 0, 1, &meshVertexBuffer_, &offset);
+    // 顶点缓冲整段绑定（偏移 0）：索引里已经加了 vBase（相对本帧起点），
+    // 若这里再绑定 vOffset，顶点地址会被偏移两次——本帧第二次及之后的绘制
+    // 会读到别的 quad 的顶点（表现为图层被放大/串位）。
+    VkDeviceSize bindOffset = 0;
+    vkCmdBindVertexBuffers(meshCommandBuffer_, 0, 1, &meshVertexBuffer_, &bindOffset);
     vkCmdBindIndexBuffer(meshCommandBuffer_, meshIndexBuffer_, 0, VK_INDEX_TYPE_UINT16);
 
     VkDescriptorSet textureSet = texture ? texture->set : targetAsTexture->maskSet;
@@ -2658,7 +3306,9 @@ void VulkanRenderBackend::LayerDrawRect(void* handle,
     vkCmdPushConstants(meshCommandBuffer_, layerPipelineLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                        sizeof(pc), &pc);
 
-    vkCmdDrawIndexed(meshCommandBuffer_, 6, 1, 0, 0, 0);
+    vkCmdDrawIndexed(meshCommandBuffer_, 6, 1, iBase, 0, 0);
+    ++VkProf::Get().drawCalls;
+    ++VkProf::Get().quadCount;
 }
 
 //---------------------------------------------------------------------------
@@ -2672,6 +3322,7 @@ uint8_t* VulkanRenderBackend::LockTarget(void* handle, int& pitch)
 
 uint8_t* VulkanRenderBackend::LockTargetInternal(Target* target, int& pitch)
 {
+    auto _t = VkProf::Time(VkProf::Get().lockMs);
     if (!EnsureMeshResources())
         return nullptr;
 
@@ -2718,6 +3369,13 @@ uint8_t* VulkanRenderBackend::LockTargetInternal(Target* target, int& pitch)
         return nullptr;
     commandActive_ = false;
 
+    // 同 LockTexture：栅栏未信号时不能 reset，否则等待会立刻返回、读到旧内容
+    if (meshInFlight_)
+    {
+        vkWaitForFences(device_, 1, &meshFence_, VK_TRUE, UINT64_MAX);
+        meshInFlight_ = false;
+        meshSlots_[meshSlot_].inFlight = false;
+    }
     vkResetFences(device_, 1, &meshFence_);
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -2729,6 +3387,13 @@ uint8_t* VulkanRenderBackend::LockTargetInternal(Target* target, int& pitch)
         return nullptr;
     }
     vkWaitForFences(device_, 1, &meshFence_, VK_TRUE, UINT64_MAX);
+    meshInFlight_ = false;
+    meshSlots_[meshSlot_].inFlight = false;
+    writtenImages_.clear();
+    sampledImages_.clear();
+    // 诊断用：环境变量启用全设备等待，排除"fence 只覆盖本提交"导致的读旧数据
+    if (VkProf::Enabled())
+        vkDeviceWaitIdle(device_);
 
     pitch = target->width * 4;
     return stagingMapped_;
@@ -2747,12 +3412,78 @@ uint8_t* VulkanRenderBackend::LockTexture(void* handle, int& pitch)
         if (target->texture == handle)
             return LockTargetInternal(target, pitch);
     }
-    // 一般贴图是 host-visible 线性图像，CPU 侧直接可读
     Texture* tex = FindTexture(handle);
-    if (!tex || !tex->mapped)
+    if (!tex)
         return nullptr;
-    pitch = tex->pitch;
-    return tex->mapped;
+    // 遗留线性贴图：CPU 侧直接可读
+    if (tex->mapped)
+    {
+        pitch = tex->pitch;
+        return tex->mapped;
+    }
+    // 现代 OPTIMAL 贴图：经 image→staging 回读（仅测试截图等低频路径使用）。
+    // 先把尚未提交的上传/绘制攒批提交，再在同一个 mesh 命令缓冲里做回读拷贝。
+    if (!tex->optimal || !EnsureMeshResources())
+        return nullptr;
+    EndPass();
+    if (!commandActive_)
+    {
+        WaitMeshIdle();
+        vkResetCommandBuffer(meshCommandBuffer_, 0);
+        VkCommandBufferBeginInfo beginInfo{};
+        beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        if (!CheckVkResult(vkBeginCommandBuffer(meshCommandBuffer_, &beginInfo), "BeginReadbackCmd"))
+            return nullptr;
+        commandActive_ = true;
+    }
+    size_t bytes = (size_t)tex->width * tex->height * 4;
+    if (!EnsureStaging(bytes))
+        return nullptr;
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = tex->image;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.layerCount = 1;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    vkCmdPipelineBarrier(meshCommandBuffer_, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    VkBufferImageCopy region{};
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.layerCount = 1;
+    region.imageExtent = {(uint32_t)tex->width, (uint32_t)tex->height, 1};
+    vkCmdCopyImageToBuffer(meshCommandBuffer_, tex->image, VK_IMAGE_LAYOUT_GENERAL, stagingBuffer_, 1, &region);
+    if (!CheckVkResult(vkEndCommandBuffer(meshCommandBuffer_), "EndReadbackCmd"))
+        return nullptr;
+    commandActive_ = false;
+    // 提交前必须保证栅栏处于已信号状态：本帧可能已有在飞提交（截图发生在帧内），
+    // 对未信号栅栏 vkResetFences 是未定义行为，会让随后的等待立刻返回、
+    // staging 缓冲保持旧内容（表现为截图永远同一帧）。
+    if (meshInFlight_)
+    {
+        vkWaitForFences(device_, 1, &meshFence_, VK_TRUE, UINT64_MAX);
+        meshInFlight_ = false;
+    }
+    vkResetFences(device_, 1, &meshFence_);
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &meshCommandBuffer_;
+    if (!CheckVkResult(vkQueueSubmit(graphicsQueue_, 1, &submitInfo, meshFence_), "QueueReadback"))
+        return nullptr;
+    vkWaitForFences(device_, 1, &meshFence_, VK_TRUE, UINT64_MAX);
+    meshInFlight_ = false;
+    meshSlots_[meshSlot_].inFlight = false;
+    writtenImages_.clear();
+    sampledImages_.clear();
+    pitch = tex->width * 4;
+    return stagingMapped_;
 }
 
 void* VulkanRenderBackend::GetTargetTexture(void* handle)
@@ -2854,6 +3585,25 @@ void VulkanRenderBackend::Shutdown()
     // 2D 网格目标
     for (Target* t : targets_)
     {
+        // 先回收目标的"采样包装"：它与 target 共享 image/view（memory 不拥有）。
+        // 若不在这里摘除，下面的 textures_ 循环会对同一个 view/image 再销毁一次
+        // （double free），在退出阶段表现为堆损坏。
+        if (t->texture)
+        {
+            for (size_t i = 0; i < textures_.size(); i++)
+            {
+                if (textures_[i] == t->texture)
+                {
+                    textures_.erase(textures_.begin() + i);
+                    textureIndex_.erase(t->texture);
+                    break;
+                }
+            }
+            if (t->texture->set)
+                vkFreeDescriptorSets(device_, descriptorPool_, 1, &t->texture->set);
+            delete t->texture; // 不销毁 image/view/memory（归 target）
+            t->texture = nullptr;
+        }
         if (t->maskSet)
             vkFreeDescriptorSets(device_, descriptorPool_, 1, &t->maskSet);
         if (t->framebuffer)
@@ -2867,6 +3617,7 @@ void VulkanRenderBackend::Shutdown()
         delete t;
     }
     targets_.clear();
+    targetIndex_.clear();
 
     // 贴图（窗口贴图与一般贴图共用同一列表）
     for (Texture* tex : textures_)
@@ -2882,6 +3633,7 @@ void VulkanRenderBackend::Shutdown()
         delete tex;
     }
     textures_.clear();
+    textureIndex_.clear();
     blankMask_ = nullptr;
 
     if (device_ != VK_NULL_HANDLE)
@@ -2895,24 +3647,56 @@ void VulkanRenderBackend::Shutdown()
         stagingMemory_ = VK_NULL_HANDLE;
         stagingMapped_ = nullptr;
         stagingSize_ = 0;
-        if (meshIndexBuffer_)
-            vkDestroyBuffer(device_, meshIndexBuffer_, nullptr);
-        if (meshIndexMemory_)
-            vkFreeMemory(device_, meshIndexMemory_, nullptr);
-        meshIndexBuffer_ = VK_NULL_HANDLE;
-        meshIndexMemory_ = VK_NULL_HANDLE;
-        meshIndexCapacity_ = 0;
-        meshIndexMapped_ = nullptr;
-        if (meshVertexBuffer_)
-            vkDestroyBuffer(device_, meshVertexBuffer_, nullptr);
-        if (meshVertexMemory_)
-            vkFreeMemory(device_, meshVertexMemory_, nullptr);
+        // 上传暂存环
+        if (uploadRingBuffer_)
+        {
+            vkUnmapMemory(device_, uploadRingMemory_);
+            vkDestroyBuffer(device_, uploadRingBuffer_, nullptr);
+            vkFreeMemory(device_, uploadRingMemory_, nullptr);
+            uploadRingBuffer_ = VK_NULL_HANDLE;
+            uploadRingMemory_ = VK_NULL_HANDLE;
+            uploadRingMapped_ = nullptr;
+            uploadRingRegionSize_ = 0;
+            uploadRingCursor_ = 0;
+            uploadRingRegion_ = 0;
+        }
+        // 释放所有帧流水槽（每槽各有一套命令缓冲/栅栏/顶点索引缓冲）
+        for (int i = 0; i < kFramesInFlight; i++)
+        {
+            MeshSlot& s = meshSlots_[i];
+            if (s.indexBuffer)
+                vkDestroyBuffer(device_, s.indexBuffer, nullptr);
+            if (s.indexMemory)
+                vkFreeMemory(device_, s.indexMemory, nullptr);
+            s.indexBuffer = VK_NULL_HANDLE;
+            s.indexMemory = VK_NULL_HANDLE;
+            s.indexMapped = nullptr;
+            s.indexCapacity = 0;
+            s.indexCursor = 0;
+            if (s.vertexBuffer)
+                vkDestroyBuffer(device_, s.vertexBuffer, nullptr);
+            if (s.vertexMemory)
+                vkFreeMemory(device_, s.vertexMemory, nullptr);
+            s.vertexBuffer = VK_NULL_HANDLE;
+            s.vertexMemory = VK_NULL_HANDLE;
+            s.vertexMapped = nullptr;
+            s.vertexCapacity = 0;
+            s.vertexCursor = 0;
+            if (s.fence)
+                vkDestroyFence(device_, s.fence, nullptr);
+            s.fence = VK_NULL_HANDLE;
+            s.cmd = VK_NULL_HANDLE; // 随 commandPool 一起回收
+            s.inFlight = false;
+        }
         meshVertexBuffer_ = VK_NULL_HANDLE;
         meshVertexMemory_ = VK_NULL_HANDLE;
         meshVertexCapacity_ = 0;
         meshVertexMapped_ = nullptr;
-        if (meshFence_)
-            vkDestroyFence(device_, meshFence_, nullptr);
+        meshIndexBuffer_ = VK_NULL_HANDLE;
+        meshIndexMemory_ = VK_NULL_HANDLE;
+        meshIndexCapacity_ = 0;
+        meshIndexMapped_ = nullptr;
+        meshCommandBuffer_ = VK_NULL_HANDLE;
         meshFence_ = VK_NULL_HANDLE;
         if (meshDone_)
             vkDestroySemaphore(device_, meshDone_, nullptr);

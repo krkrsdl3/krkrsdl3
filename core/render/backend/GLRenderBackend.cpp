@@ -199,12 +199,12 @@ const char* kMeshFragmentShaderSrc = R"(#version 100
 
 //---------------------------------------------------------------------------
 // Layer 合成 shader（330 core / 100 es）
-// 混合状态由 LayerSetBlend 设置；本 shader 只负责按方法变换采样颜色：
-//   LBM_ALPHA/CONSTALPHA：alpha 通道按软件 (x * opa8) >> 8 语义折算
+// 混合状态由 SetBlend 设置；本 shader 只负责按方法变换采样颜色：
+//   BM_ALPHA/CONSTALPHA：alpha 通道按软件 (x * opa8) >> 8 语义折算
 //     （×255/256 模拟 >>8 的截断），作为 SRC_ALPHA 混合因子
-//   LBM_ADD：RGB 按 opa 缩放（alpha 通道置 0 → 饱和加不影响目标 alpha）
-//   LBM_SUB/MUL：RGB = 1-(1-src)*opa（软件 255-(255-src)*opa8>>8 语义）
-//   LBM_FILL：直接输出 uniformColor
+//   BM_ADD_RM：RGB 按 opa 缩放（alpha 通道置 0 → 饱和加不影响目标 alpha）
+//   BM_SUB/MUL：RGB = 1-(1-src)*opa（软件 255-(255-src)*opa8>>8 语义）
+//   BM_FILL：直接输出 uniformColor
 //---------------------------------------------------------------------------
 #if defined(_KRKRSDL3_GL) && _KRKRSDL3_GL
 const char* kLayerFragmentShaderSrc = R"(
@@ -812,6 +812,23 @@ void GLRenderBackend::UpdateTexture(void* handle, const uint8_t* pixels, int wid
     glGenerateMipmap(GL_TEXTURE_2D); // 与迁移前 emoteplayer 行为一致
 }
 
+void GLRenderBackend::UploadTextureRect(void* handle, int x, int y, int width, int height,
+                                        const uint8_t* pixels, int pitch)
+{
+    // 子矩形上传：GL 原生 glTexSubImage2D 带偏移，无需单独暂存。
+    // 默认路径（x=y=0 且整幅）与 UpdateTexture 完全一致。
+    Texture* texture = FindTexture(handle);
+    if (!texture || !pixels || width <= 0 || height <= 0)
+        return;
+    glBindTexture(GL_TEXTURE_2D, texture->id);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, pitch / 4);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glGenerateMipmap(GL_TEXTURE_2D); // 保持采样行为（MIN_FILTER 用 mipmap）
+}
+
 void GLRenderBackend::DestroyTexture(void* handle)
 {
     Texture* texture = FindTexture(handle);
@@ -837,7 +854,22 @@ void GLRenderBackend::SetMask(void* handle)
     maskTarget_ = FindTarget(handle);
 }
 
-void GLRenderBackend::SetBlendMode(int mode, const float* uniformColor)
+void GLRenderBackend::SetBlend(int mode, float opacity, const float* uniformColor,
+                               const float* colorModulation)
+{
+    // 批绘制（DrawQuads 默认实现）从这里取 opacity/染色：DrawMesh 是逐次参数，
+    // 而 DrawQuads 只表达"当前状态"，不记录就会退化成全不透明。
+    blendOpacity_ = opacity;
+    const float white[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    std::memcpy(blendModulation_, colorModulation ? colorModulation : white,
+                sizeof(blendModulation_));
+    if (iTVPRenderBackend::IsRMBlend(mode))
+        applyRMBlend(mode, opacity, uniformColor);
+    else
+        applyEmoteBlend(mode, uniformColor);
+}
+
+void GLRenderBackend::applyEmoteBlend(int mode, const float* uniformColor)
 {
     blendMode_ = mode;
     skipDraw_ = (mode == 6);
@@ -948,7 +980,7 @@ void GLRenderBackend::DrawMesh(const float* vertices,
 //---------------------------------------------------------------------------
 // Layer 合成（图层合成路径，软件 RenderManager 语义）
 //---------------------------------------------------------------------------
-void GLRenderBackend::LayerSetBlend(int method, float opacity, const float* uniformColor)
+void GLRenderBackend::applyRMBlend(int method, float opacity, const float* uniformColor)
 {
     layerMethod_ = method;
     layerOpa_ = opacity;
@@ -959,51 +991,51 @@ void GLRenderBackend::LayerSetBlend(int method, float opacity, const float* unif
     glBlendEquation(GL_FUNC_ADD);
     switch (method)
     {
-        case iTVPRenderBackend::LBM_COPY:
-        case iTVPRenderBackend::LBM_FILL:
-        case iTVPRenderBackend::LBM_COPYOPAQUE:
+        case iTVPRenderBackend::BM_COPY:
+        case iTVPRenderBackend::BM_FILL:
+        case iTVPRenderBackend::BM_COPYOPAQUE:
             // 直写（覆盖）
             glDisable(GL_BLEND);
             break;
-        case iTVPRenderBackend::LBM_ALPHA:
-        case iTVPRenderBackend::LBM_CONSTALPHA:
+        case iTVPRenderBackend::BM_ALPHA:
+        case iTVPRenderBackend::BM_CONSTALPHA:
             // dest = src*f + dest*(1-f)，f 由 shader 折算后的 alpha 通道给出（全通道）
             glEnable(GL_BLEND);
             glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_SRC_ALPHA,
                                 GL_ONE_MINUS_SRC_ALPHA);
             glBlendEquation(GL_FUNC_ADD);
             break;
-        case iTVPRenderBackend::LBM_ADD:
+        case iTVPRenderBackend::BM_ADD_RM:
             // 饱和加（含 alpha 通道由 shader 置 0 保证目标 alpha 不变）
             glEnable(GL_BLEND);
             glBlendFunc(GL_ONE, GL_ONE);
             glBlendEquation(GL_FUNC_ADD);
             break;
-        case iTVPRenderBackend::LBM_SUB:
+        case iTVPRenderBackend::BM_SUB:
             // 饱和减（REVERSE_SUBTRACT：dst - src，输出钳制到 [0,1]）
             glEnable(GL_BLEND);
             glBlendFunc(GL_ONE, GL_ONE);
             glBlendEquation(GL_FUNC_REVERSE_SUBTRACT);
             break;
-        case iTVPRenderBackend::LBM_MUL:
+        case iTVPRenderBackend::BM_MUL_RM:
             // dest.rgb *= src.rgb；alpha 清 0（软件 MulBlend 语义）
             glEnable(GL_BLEND);
             glBlendFuncSeparate(GL_DST_COLOR, GL_ZERO, GL_ZERO, GL_ZERO);
             glBlendEquation(GL_FUNC_ADD);
             break;
-        case iTVPRenderBackend::LBM_MUL_HDA:
+        case iTVPRenderBackend::BM_MUL_HDA:
             // dest.rgb *= src.rgb；alpha 保留（MulBlend_HDA）
             glEnable(GL_BLEND);
             glBlendFuncSeparate(GL_DST_COLOR, GL_ZERO, GL_ONE, GL_ZERO);
             glBlendEquation(GL_FUNC_ADD);
             break;
-        case iTVPRenderBackend::LBM_COPYCOLOR:
+        case iTVPRenderBackend::BM_COPYCOLOR:
             // dest = (dest & A) | (src & RGB)
             glEnable(GL_BLEND);
             glBlendFuncSeparate(GL_ONE, GL_ZERO, GL_ZERO, GL_ONE);
             glBlendEquation(GL_FUNC_ADD);
             break;
-        case iTVPRenderBackend::LBM_COPYMASK:
+        case iTVPRenderBackend::BM_COPYMASK:
             // dest = (dest & RGB) | (src & A)
             glEnable(GL_BLEND);
             glBlendFuncSeparate(GL_ZERO, GL_ONE, GL_ONE, GL_ZERO);
@@ -1018,15 +1050,15 @@ void GLRenderBackend::LayerSetBlend(int method, float opacity, const float* unif
     }
 }
 
-void GLRenderBackend::LayerDrawRect(void* handle,
-                                    float x,
-                                    float y,
-                                    float w,
-                                    float h,
-                                    float u0,
-                                    float v0,
-                                    float u1,
-                                    float v1)
+void GLRenderBackend::DrawRect(void* handle,
+                               float x,
+                               float y,
+                               float w,
+                               float h,
+                               float u0,
+                               float v0,
+                               float u1,
+                               float v1)
 {
     if (!currentTarget_ || !handle)
         return;

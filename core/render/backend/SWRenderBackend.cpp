@@ -240,25 +240,25 @@ static uint32_t LayerBlendPixel(int method, uint32_t src, uint32_t dst, int opa8
 
     switch (method)
     {
-        case iTVPRenderBackend::LBM_COPY:
+        case iTVPRenderBackend::BM_COPY:
             return src;
-        case iTVPRenderBackend::LBM_ALPHA:
+        case iTVPRenderBackend::BM_ALPHA:
         {
             int sopa = (sa * opa8) >> 8;
             return (uint32_t)Lerp8(dr, sr, sopa) | (uint32_t)Lerp8(dg, sg, sopa) << 8 |
                    (uint32_t)Lerp8(db, sb, sopa) << 16 | (uint32_t)Lerp8(da, sa, sopa) << 24;
         }
-        case iTVPRenderBackend::LBM_CONSTALPHA:
+        case iTVPRenderBackend::BM_CONSTALPHA:
             return (uint32_t)Lerp8(dr, sr, opa8) | (uint32_t)Lerp8(dg, sg, opa8) << 8 |
                    (uint32_t)Lerp8(db, sb, opa8) << 16 | (uint32_t)Lerp8(da, sa, opa8) << 24;
-        case iTVPRenderBackend::LBM_ADD:
+        case iTVPRenderBackend::BM_ADD_RM:
         {
             // 软件 AddBlend_o：仅 RGB 按 opa8 缩放后饱和加，alpha 不变
             int s_r = (sr * opa8) >> 8, s_g = (sg * opa8) >> 8, s_b = (sb * opa8) >> 8;
             return (uint32_t)Sat8(dr + s_r) | (uint32_t)Sat8(dg + s_g) << 8 |
                    (uint32_t)Sat8(db + s_b) << 16 | (uint32_t)da << 24;
         }
-        case iTVPRenderBackend::LBM_SUB:
+        case iTVPRenderBackend::BM_SUB:
         {
             // 软件 SubBlend_o：s.RGB = 255-(255-src.RGB)*opa8>>8，s.A = src.A（不缩放）
             int s_r = 255 - ((255 - sr) * opa8 >> 8), s_g = 255 - ((255 - sg) * opa8 >> 8),
@@ -266,24 +266,24 @@ static uint32_t LayerBlendPixel(int method, uint32_t src, uint32_t dst, int opa8
             return (uint32_t)Sat8(dr - s_r) | (uint32_t)Sat8(dg - s_g) << 8 |
                    (uint32_t)Sat8(db - s_b) << 16 | (uint32_t)Sat8(da - sa) << 24;
         }
-        case iTVPRenderBackend::LBM_MUL:
-        case iTVPRenderBackend::LBM_MUL_HDA:
+        case iTVPRenderBackend::BM_MUL_RM:
+        case iTVPRenderBackend::BM_MUL_HDA:
         {
             int s_r = 255 - ((255 - sr) * opa8 >> 8), s_g = 255 - ((255 - sg) * opa8 >> 8),
                 s_b = 255 - ((255 - sb) * opa8 >> 8);
             uint32_t rgb = (uint32_t)((dr * s_r) >> 8) | (uint32_t)((dg * s_g) >> 8) << 8 |
                            (uint32_t)((db * s_b) >> 8) << 16;
-            if (method == iTVPRenderBackend::LBM_MUL_HDA)
+            if (method == iTVPRenderBackend::BM_MUL_HDA)
                 return rgb | (uint32_t)da << 24; // MulBlend_HDA：alpha 保留
             return rgb;                          // MulBlend：alpha 清 0
         }
-        case iTVPRenderBackend::LBM_FILL:
+        case iTVPRenderBackend::BM_FILL:
             return color;
-        case iTVPRenderBackend::LBM_COPYCOLOR:
+        case iTVPRenderBackend::BM_COPYCOLOR:
             return (dst & 0xff000000) | (src & 0x00ffffff); // CopyColor：RGB 复制，alpha 保留
-        case iTVPRenderBackend::LBM_COPYOPAQUE:
+        case iTVPRenderBackend::BM_COPYOPAQUE:
             return src | 0xff000000; // CopyOpaqueImage：RGB 复制，alpha 置 255
-        case iTVPRenderBackend::LBM_COPYMASK:
+        case iTVPRenderBackend::BM_COPYMASK:
             return (dst & 0x00ffffff) | (src & 0xff000000); // CopyMask：alpha 复制
         default:
             return src;
@@ -514,7 +514,21 @@ void SWRenderBackend::SetMask(void* handle)
     maskTarget_ = FindTarget(handle);
 }
 
-void SWRenderBackend::SetBlendMode(int mode, const float* uniformColor)
+void SWRenderBackend::SetBlend(int mode, float opacity, const float* uniformColor,
+                               const float* colorModulation)
+{
+    // 与 GL 一致：DrawQuads 的默认实现从当前状态取 opacity/染色。
+    blendOpacity_ = opacity;
+    const float white[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    std::memcpy(blendModulation_, colorModulation ? colorModulation : white,
+                sizeof(blendModulation_));
+    if (iTVPRenderBackend::IsRMBlend(mode))
+        applyRMBlend(mode, opacity, uniformColor);
+    else
+        applyEmoteBlend(mode, uniformColor);
+}
+
+void SWRenderBackend::applyEmoteBlend(int mode, const float* uniformColor)
 {
     blendMode_ = mode;
     skipDraw_ = (mode == 6);
@@ -745,7 +759,7 @@ void SWRenderBackend::DrawMesh(const float* vertices,
 //---------------------------------------------------------------------------
 // Layer 合成（图层合成路径，软件 RenderManager 语义）
 //---------------------------------------------------------------------------
-void SWRenderBackend::LayerSetBlend(int method, float opacity, const float* uniformColor)
+void SWRenderBackend::applyRMBlend(int method, float opacity, const float* uniformColor)
 {
     layerMethod_ = method;
     // 软件方法 opacity 参数为 0..255：浮点 0..1 圆整回 0..255
@@ -764,7 +778,7 @@ void SWRenderBackend::LayerSetBlend(int method, float opacity, const float* unif
     }
 }
 
-void SWRenderBackend::LayerDrawRect(
+void SWRenderBackend::DrawRect(
     void* handle, float x, float y, float w, float h, float u0, float v0, float u1, float v1)
 {
     if (!currentTarget_ || w <= 0.0f || h <= 0.0f)
@@ -806,11 +820,11 @@ void SWRenderBackend::LayerDrawRect(
         return;
     const bool fillsOpaqueTarget =
         x0 == 0 && y0 == 0 && x1 == width && y1 == height &&
-        ((layerMethod_ == LBM_COPY && sourceOpaque) || layerMethod_ == LBM_COPYOPAQUE);
+        ((layerMethod_ == BM_COPY && sourceOpaque) || layerMethod_ == BM_COPYOPAQUE);
 
     // An unscaled copy maps each destination texel to the same source texel.
     // Keep self-blits on the scalar path, which has defined traversal behavior.
-    if (layerMethod_ == LBM_COPY && targetAsTexture != currentTarget_ && w == texW && h == texH &&
+    if (layerMethod_ == BM_COPY && targetAsTexture != currentTarget_ && w == texW && h == texH &&
         x == std::floor(x) && y == std::floor(y) && u0 == 0.0f && v0 == 0.0f && u1 == 1.0f &&
         v1 == 1.0f)
     {
@@ -848,7 +862,7 @@ void SWRenderBackend::LayerDrawRect(
             sy = texH_1;
         uint32_t* row = dst + (size_t)py * width;
         const uint32_t* texRow = texData + (size_t)sy * texW;
-        if (layerMethod_ == LBM_COPY)
+        if (layerMethod_ == BM_COPY)
         {
             for (int px = x0; px < x1; ++px)
                 row[px] = texRow[sampleColumns_[px - x0]];

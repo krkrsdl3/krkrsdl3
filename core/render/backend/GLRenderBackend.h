@@ -50,10 +50,13 @@ public:
     void UpdateTargetTexture(void* target, const uint8_t* pixels, int width, int height, int pitch) override;
     void* CreateTexture(int width, int height) override;
     void UpdateTexture(void* texture, const uint8_t* pixels, int width, int height, int pitch) override;
+    void UploadTextureRect(void* texture, int x, int y, int width, int height,
+                           const uint8_t* pixels, int pitch) override;
     void DestroyTexture(void* texture) override;
     uint8_t* LockTexture(void* texture, int& pitch) override;
     void SetMask(void* maskTarget) override;
-    void SetBlendMode(int mode, const float* uniformColor) override;
+    void SetBlend(int mode, float opacity, const float* uniformColor,
+                  const float* colorModulation) override;
     void DrawMesh(const float* vertices,
                   int vertexCount,
                   const uint16_t* indices,
@@ -61,18 +64,15 @@ public:
                   void* texture,
                   float opacity,
                   const float* colorModulation = nullptr) override;
-
-    // ---- Layer 合成（图层合成路径，软件 RenderManager 语义）----
-    void LayerSetBlend(int method, float opacity, const float* uniformColor) override;
-    void LayerDrawRect(void* texture,
-                       float x,
-                       float y,
-                       float w,
-                       float h,
-                       float u0,
-                       float v0,
-                       float u1,
-                       float v1) override;
+    void DrawRect(void* texture,
+                  float x,
+                  float y,
+                  float w,
+                  float h,
+                  float u0,
+                  float v0,
+                  float u1,
+                  float v1) override;
 
 private:
     // ---- 贴图（窗口贴图与一般贴图共用同一实现）----
@@ -108,7 +108,9 @@ private:
     Target* FindTarget(void* handle) const;
 
     bool EnsureMeshProgram();
-    bool EnsureLayerProgram(); // Layer 合成专用 shader（软件 bm* 语义）
+    bool EnsureLayerProgram(); // 矩形/RM 路径 shader（软件 bm* 语义）
+    void applyEmoteBlend(int mode, const float* uniformColor);
+    void applyRMBlend(int method, float opacity, const float* uniformColor);
 
     unsigned int program_ = 0, vao_ = 0, vbo_ = 0, ibo_ = 0;
     size_t vboSize_ = 0, iboSize_ = 0;

@@ -95,18 +95,62 @@ public:
     virtual void* CreateTexture(int width, int height) = 0;
     virtual void UpdateTexture(void* texture, const uint8_t* pixels, int width, int height, int pitch) = 0;
     virtual void DestroyTexture(void* texture) = 0;
+    // 上传契约（可选优化，带默认实现）：把 pixels 的 (x,y,w,h) 区域"入队"到 texture。
+    // 语义与 UpdateTexture 一致：返回后数据对本帧后续绘制可见，但不保证 GPU 已完成，
+    // 调用方可立即复用/释放 pixels 缓冲。后端须把同步内部消化（§3 上传契约）。
+    // 默认实现忽略 x/y 走整幅 UpdateTexture —— GL/SW 行为与性能完全不变；
+    // 支持子矩形的后端（Vulkan）覆盖此方法，把上传攒进暂存环、帧末一次性提交。
+    virtual void UploadTextureRect(void* texture, int x, int y, int width, int height,
+                                   const uint8_t* pixels, int pitch)
+    {
+        (void)x;
+        (void)y;
+        UpdateTexture(texture, pixels, width, height, pitch);
+    }
     // 读取贴图像素（SW=CPU 缓冲零拷贝；GPU 后端回读后返回同一格式）。
     // 约定：RGBA 字节序、自上而下行序，返回值在下次上传/回读前有效；nullptr 表示不支持。
     // 测试宿主截屏即经此取帧（见 tests/autotest.md）。
     virtual uint8_t* LockTexture(void* texture, int& pitch) { return nullptr; }
 
+    // ---- 统一绘制状态与原语 ----
     // 蒙版：绑定蒙版目标（alpha >= 128 为有效像素）；nullptr 关闭蒙版
     virtual void SetMask(void* maskTarget) = 0;
-    // 混合模式：0 普通 alpha / 1,4 乘色 / 3 加色 / 6 跳过 / 21 纯色替换；
-    // uniformColor 仅 mode 21 使用，可为 nullptr
-    virtual void SetBlendMode(int mode, const float* uniformColor = nullptr) = 0;
-    // vertices: 交错 (x, y, u, v)，每顶点 4 个 float（NDC + UV）
-    // colorModulation：采样后乘到纹素上；nullptr 视为 (1,1,1,1)。
+
+    // 一套混合枚举容纳两套语义（数值区间分离，因为 0/1/3/4/6 在两边含义不同）。
+    // 后端按区间选各自管线/shader，保证 emote 与 RenderManager(bm*) 的公式都逐像素保持。
+    enum BlendMode
+    {
+        // emoteplayer 约定
+        BM_NORMAL = 0,    // 普通 alpha（alpha 通道走 MAX 方程）
+        BM_MULTIPLY = 1,  // 乘色（1 与 4 等价）
+        BM_ADD = 3,       // 加色
+        BM_SKIP = 6,      // 跳过绘制
+        BM_SOLID = 21,    // 纯色替换，uniformColor 有效
+
+        // 软件 RenderManager bm* 约定（从 0x100 起避免与 emote 数值冲突）
+        BM_COPY = 0x100,
+        BM_ALPHA = 0x101,
+        BM_CONSTALPHA = 0x102,
+        BM_ADD_RM = 0x103,
+        BM_SUB = 0x104,
+        BM_MUL_RM = 0x105,
+        BM_MUL_HDA = 0x106,
+        BM_FILL = 0x107,
+        BM_COPYCOLOR = 0x108,
+        BM_COPYOPAQUE = 0x109,
+        BM_COPYMASK = 0x10A,
+    };
+    static bool IsRMBlend(int mode) { return mode >= BM_COPY; }
+
+    // 统一混合状态：emote 与 bm* 两套语义共用此入口。
+    // opacity: 0..1（emote 走 DrawMesh/DrawRect 的 opacity；bm* 路径后端换算成 0..255）。
+    // uniformColor: BM_SOLID / BM_FILL 使用，可为 nullptr；colorModulation: 采样后乘色。
+    virtual void SetBlend(int mode,
+                          float opacity = 1.0f,
+                          const float* uniformColor = nullptr,
+                          const float* colorModulation = nullptr) = 0;
+
+    // 任意网格：vertices 交错 (x, y, u, v)，每顶点 4 个 float（NDC + UV）。
     // emote PSB 的中性 frame.color 是 0xff808080，调用方应传 identity，不要把 128/255 当染色。
     virtual void DrawMesh(const float* vertices,
                           int vertexCount,
@@ -116,43 +160,43 @@ public:
                           float opacity,
                           const float* colorModulation = nullptr) = 0;
 
-    // ---- Layer 合成（图层合成路径，供 DrawDeviceD3D 的 GPU RenderManager 使用）----
-    // 与 2D 网格（DrawMesh，emoteplayer 用）的区别：混合公式遵循软件 RenderManager
-    // （gl/tvpgl.cpp 的 bm* 方法语义），而非 emoteplayer 的混合约定。GL/VK/SW
-    // 三个后端实现与软件合成保持一致（允许 ±1 舍入误差）。
-    //
-    // opacity 为 0..1 的浮点（对应软件方法 0..255 的 opacity 参数，后端内部换算）。
-    enum LayerBlendMethod
-    {
-        LBM_COPY = 0,       // dest = src（直写，含 alpha）
-        LBM_ALPHA = 1,      // dest = dest + (src - dest) * ((src.a * opa8) >> 8) >> 8（全通道）
-        LBM_CONSTALPHA = 2, // dest = dest + (src - dest) * opa8 >> 8（源视为不透明）
-        LBM_ADD = 3,        // dest = sat(dest + s)；s.RGB = src.RGB * opa8 >> 8，s.A = 0
-        LBM_SUB = 4,        // dest = sat(dest - s)；s.RGB = 255-(255-src.RGB)*opa8>>8，s.A = src.A
-        LBM_MUL = 5,        // dest.RGB = dest.RGB * s.RGB >> 8（s 同 SUB），dest.A = 0
-        LBM_MUL_HDA = 6,    // 同 LBM_MUL，dest.A 保留
-        LBM_FILL = 7,       // dest = uniformColor（直写，含 alpha；opacity 忽略）
-        LBM_COPYCOLOR = 8,  // dest = (dest & 0xff000000) | (src & 0x00ffffff)
-        LBM_COPYOPAQUE = 9, // dest = src | 0xff000000
-        LBM_COPYMASK = 10,  // dest = (dest & 0x00ffffff) | (src & 0xff000000)
-    };
-    // 设置图层合成混合状态（作用于当前目标；uniformColor 仅 LBM_FILL 使用）
-    virtual void LayerSetBlend(int method, float opacity, const float* uniformColor = nullptr) = 0;
-    // 在当前目标上绘制源贴图矩形（目标像素坐标；uv0/uv1 为归一化源矩形）。
-    // 坐标约定与 DrawDeviceD3D 的合成路径一致：内容 y 向下，内容顶(t=0)
-    // 映射到 NDC -1（GL/VK/SW 三后端回读结果一致）。
-    virtual void LayerDrawRect(void* texture,
-                               float x,
-                               float y,
-                               float w,
-                               float h,
-                               float u0 = 0.0f,
-                               float v0 = 0.0f,
-                               float u1 = 1.0f,
-                               float v1 = 1.0f) = 0;
+    // 轴对齐矩形：在当前目标上绘制源贴图的 (uv0..uv1) 区域到像素矩形 (x,y,w,h)。
+    // 与 DrawMesh 是同级原语（不是"另一个渲染器"）：矩形可由后端走更省的管线。
+    // 坐标约定：内容 y 向下，内容顶(t=0) 映射到 NDC -1（三后端回读一致）。
+    virtual void DrawRect(void* texture,
+                          float x,
+                          float y,
+                          float w,
+                          float h,
+                          float u0 = 0.0f,
+                          float v0 = 0.0f,
+                          float u1 = 1.0f,
+                          float v1 = 1.0f) = 0;
+
+    // 批绘制（现代原语）：同一 texture、当前 SetBlend 状态下，一次提交 count 个
+    // 四边形。vertices 为 count*4 个交错 (x,y,u,v)（NDC + UV），indices 为空时
+    // 用默认 (0,1,2,2,3,0) 逐 quad 展开。语义 = 同一批 texture/blend 的多个
+    // DrawMesh 合并，避免每 sprite 一次 descriptor/pipeline bind（VK 热路径）。
+    // 默认实现逐 quad 回退到 DrawMesh —— GL/SW 行为不变；VK 覆盖为单次 draw。
+    virtual void DrawQuads(void* texture,
+                           const float* vertices,
+                           int quadCount,
+                           const uint16_t* indices = nullptr,
+                           int indexCount = 0);
 
     // 后端信息采集（GL 的厂商/版本/扩展日志等），无操作默认实现
     virtual void FetchInfo() {}
+
+    // 当前混合状态里的 opacity / 染色。DrawQuads 不带这两个参数（它们属于
+    // "当前状态"），默认实现必须从这里取——否则批绘制会把半透明图层按
+    // 全不透明画出来（曾导致标题画面的淡入蒙层直接盖住标题内容）。
+    float GetBlendOpacity() const { return blendOpacity_; }
+    const float* GetBlendModulation() const { return blendModulation_; }
+
+protected:
+    // 由各后端 SetBlend 写入；默认值等价于"不透明、无染色"。
+    float blendOpacity_ = 1.0f;
+    float blendModulation_[4] = {1.0f, 1.0f, 1.0f, 1.0f};
 };
 
 //---------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 #include "tjsCommHead.h"
 #include "TVPCompositor.h"
+#include "Platform.h"
 
 #include <algorithm>
 #include <vector>
@@ -226,6 +227,30 @@ void TVPClearAllTexture()
         TVPDestroyTexture(sp);
     }
     renderTexture.clear();
+}
+
+void iTVPRenderBackend::DrawQuads(void* texture,
+                                  const float* vertices,
+                                  int quadCount,
+                                  const uint16_t* indices,
+                                  int indexCount)
+{
+    // 默认回退：逐 quad 调用 DrawMesh（GL/SW 立即模式无批量开销，行为不变）。
+    // 顶点布局按每 quad 4 个交错 (x,y,u,v)；索引默认 (0,1,2,2,3,0)。
+    if (!vertices || quadCount <= 0)
+        return;
+    // opacity / 染色属于"当前混合状态"（Batch 接口不带这两个参数）：
+    // 必须取 SetBlend 记录的值，不能写死 1.0，否则半透明图层会被画成不透明。
+    const float opacity = GetBlendOpacity();
+    const float* modulation = GetBlendModulation();
+    const uint16_t defaultIdx[6] = {0, 1, 2, 2, 3, 0};
+    const uint16_t* idx = indices && indexCount > 0 ? indices : defaultIdx;
+    const int nIdx = indices && indexCount > 0 ? indexCount : 6;
+    for (int q = 0; q < quadCount; ++q)
+    {
+        const float* v = vertices + (size_t)q * 16;
+        DrawMesh(v, 4, idx, nIdx, texture, opacity, modulation);
+    }
 }
 
 } // namespace krkrsdl3
