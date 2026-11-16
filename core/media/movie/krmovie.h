@@ -40,6 +40,8 @@ class tTVPBaseTexture;
 class iTVPVideoOverlay // this is not a COM object
 {
 public:
+    virtual ~iTVPVideoOverlay() {}
+
     virtual void AddRef() = 0;
     virtual void Release() = 0;
 
