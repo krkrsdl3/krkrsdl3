@@ -58,6 +58,8 @@ struct tTVPMovieStream
     int channels = 0;
     int sampleRate = 0;
     int bitrate = 0;
+    // 编码帧的最小单位（WMA 之类按固定块打包的编码器初始化时要看它）。
+    int blockAlign = 0;
 
     // 解码器初始化数据（如 Theora 的三个头包、H.264 的 SPS/PPS）。
     std::vector<uint8_t> extradata;

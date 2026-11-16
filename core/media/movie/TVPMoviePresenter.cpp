@@ -3,8 +3,6 @@
 #include "TVPMoviePresenter.h"
 
 #include <algorithm>
-#include <cstdio>
-#include <cstdlib>
 
 #include "LayerBitmap.h"
 #include "NativeEventQueue.h"
@@ -20,16 +18,6 @@ namespace
 
 // 音量/平衡在 iTVPVideoOverlay 里用 0..100000 的整数表示。
 constexpr float kAudioScale = 100000.0f;
-
-// 与播放器共用的诊断开关（KRKR_MOVIE_DIAG=1）。
-bool TVPMovieDiagEnabled()
-{
-    static const bool enabled = []() {
-        const char* value = std::getenv("KRKR_MOVIE_DIAG");
-        return value != nullptr && value[0] != '\0' && value[0] != '0';
-    }();
-    return enabled;
-}
 
 } // namespace
 
@@ -100,15 +88,6 @@ void tTVPMoviePresenter::OnContinuousCallback(tjs_uint64 tick)
     if (!opened_ && !player_->Finished())
         return;
 
-    static int diagTicks = 0;
-    const bool diag = TVPMovieDiagEnabled();
-    if (diag && (++diagTicks % 30) == 0)
-    {
-        printf("[movie] tick n=%d pos=%.1f playing=%d finished=%d\n", diagTicks,
-               player_->Position(), int(player_->IsPlaying()), int(player_->Finished()));
-        fflush(stdout);
-    }
-
     if (mode_ == tMode::Layer)
         TickLayer();
     else
@@ -136,13 +115,6 @@ void tTVPMoviePresenter::ApplyVisibility()
 
     const bool hasFrame = player_->HasFrontFrame();
     const bool show = visible_ && hasFrame;
-
-    if (TVPMovieDiagEnabled() && show != sprite_->isVisible)
-    {
-        printf("[movie] overlay#%p vis=%d want=%d front=%d\n", (void*)this, int(show),
-               int(visible_), int(hasFrame));
-        fflush(stdout);
-    }
 
     sprite_->isVisible = show;
 }
@@ -248,13 +220,6 @@ void tTVPMoviePresenter::Play()
     player_->Play();
     visible_ = true;
 
-    if (TVPMovieDiagEnabled())
-    {
-        printf("[movie] overlay#%p play want=1 front=%d -> show=%d\n", (void*)this,
-               int(player_->HasFrontFrame()),
-               int(visible_ && player_->HasFrontFrame()));
-        fflush(stdout);
-    }
     // 注意：这里不能直接把 sprite 点亮 —— 复用缓存的 overlay 时，
     // 纹理里还是上一次播放的最后一帧。
     ApplyVisibility();
@@ -302,9 +267,6 @@ void tTVPMoviePresenter::GetStatus(tTVPVideoStatus* status)
 
 void tTVPMoviePresenter::Rewind()
 {
-    if (TVPMovieDiagEnabled())
-        printf("[movie] overlay#%p rewind -> rebuild\n", (void*)this);
-
     RestartPlayback();
 }
 

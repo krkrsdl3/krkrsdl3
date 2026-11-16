@@ -40,23 +40,6 @@ inline bool TVPIsSelectableStream(tTVPStreamKind kind)
            kind == tTVPStreamKind::Subtitle;
 }
 
-inline const char* TVPStreamKindName(tTVPStreamKind kind)
-{
-    switch (kind)
-    {
-        case tTVPStreamKind::Video:
-            return "video";
-        case tTVPStreamKind::Audio:
-            return "audio";
-        case tTVPStreamKind::Subtitle:
-            return "subtitle";
-        case tTVPStreamKind::Data:
-            return "data";
-        default:
-            return "unknown";
-    }
-}
-
 //---------------------------------------------------------------------------
 // 像素格式
 //

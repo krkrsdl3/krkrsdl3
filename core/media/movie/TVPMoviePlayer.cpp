@@ -4,9 +4,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdarg>
-#include <cstdio>
-#include <cstdlib>
 
 #include "Platform.h" // TVPGetTickCount
 #include "TVPMovieBackend.h"
@@ -26,37 +23,34 @@ constexpr int kMaxPendingPictures = 4;
 // 音频缓冲段数：与内核其它音源保持一致的数量级。
 constexpr int kAudioBufferCount = 8;
 
+// 送声卡的一块有多大（毫秒）。内核声卡按「块数」分配缓冲，解码器给的帧长短
+// 不一，统一成固定块数才有稳定的余量（8 块 ≈ 400ms）。
+constexpr int kAudioChunkMs = 50;
+
+// 起播前先攒几块（约 150ms）再打开声卡。设备一开就会按实时速度抽数据，
+// 解码线程还在啃首个关键帧的时候就只能放静音 —— 听感就是开头口吃。
+constexpr int kAudioPrerollBlocks = 3;
+
+// 待解码音频包的上限。只有声卡完全不动才会堆到这里，届时丢最旧的包，
+// 不能反过来把解复用/视频解码卡住。
+constexpr size_t kMaxQueuedAudioPackets = 256;
+
 // 解码线程在无事可做时的轮询间隔（毫秒）。
 constexpr unsigned kIdleSleepMs = 2;
 
-// 环境变量 KRKR_MOVIE_DIAG=1 打开逐帧时序日志（排查卡顿用，默认零开销）。
-// 诊断行前缀用的实例编号。
-int TVPMovieNextInstanceId()
-{
-    static std::atomic<int> next{0};
-    return ++next;
-}
+// 有视频流却迟迟解不出第一帧时的容忍时长。解码器不报错、也不给画面
+// （不支持的 profile / 缺参考帧之类），再等下去就是挂着黑屏。
+constexpr tjs_uint64 kNoFrameTimeoutMs = 5000;
 
-bool TVPMovieDiagEnabled()
-{
-    static const bool enabled = []() {
-        const char* value = std::getenv("KRKR_MOVIE_DIAG");
-        return value != nullptr && value[0] != '\0' && value[0] != '0';
-    }();
-    return enabled;
-}
+// 允许画面落后时钟多少毫秒。这个窗口内的迟到帧按顺序放（60Hz 下每帧本来
+// 就占两拍，追得回来），超过就跳到最新帧重新对齐，免得一路拖下去。
+constexpr double kMaxLagMs = 250.0;
 
-void TVPMovieDiag(const char* format, ...)
-{
-    if (!TVPMovieDiagEnabled())
-        return;
+// 播完之后最多再等多久让声卡把尾巴放完。等太久会把游戏卡在「影片结束了
+// 但场景还没切」的状态，一声尾音不值这个价。
+constexpr tjs_uint64 kEndAudioWaitMs = 1000;
 
-    va_list args;
-    va_start(args, format);
-    std::vfprintf(stdout, format, args);
-    va_end(args);
-    std::fflush(stdout);
-}
+
 
 double ClampPosition(double value)
 {
@@ -68,7 +62,6 @@ double ClampPosition(double value)
 tTVPMoviePlayer::tTVPMoviePlayer()
   : tTVPThread("TVPMoviePlayer")
 {
-    instanceId_ = TVPMovieNextInstanceId();
     TVPRegisterMovieBackends();
     baseTick_ = TVPGetTickCount();
 }
@@ -105,19 +98,7 @@ bool tTVPMoviePlayer::Open(TJS::tTJSBinaryStream* stream, const ttstr& name)
 
     streams_ = demuxer_->Streams();
     duration_ = demuxer_->Duration();
-    TVPMovieDiag("[movie#%d] open demux=%s streams=%d duration=%.1fms file=%s\n", instanceId_,
-                 demuxer_->Name(), int(streams_.size()), duration_, io_->Name().c_str());
 
-    if (TVPMovieDiagEnabled())
-    {
-        for (const tTVPMovieStream& stream : streams_)
-        {
-            TVPMovieDiag("[movie#%d]   stream id=%d kind=%s codec=%s %dx%d %dHz %dch\n",
-                         instanceId_, stream.id, TVPStreamKindName(stream.kind),
-                         stream.codec.c_str(), stream.width, stream.height, stream.sampleRate,
-                         stream.channels);
-        }
-    }
 
     if (!OpenStreams())
     {
@@ -142,6 +123,12 @@ bool tTVPMoviePlayer::Open(TJS::tTJSBinaryStream* stream, const ttstr& name)
 void tTVPMoviePlayer::Close()
 {
     playing_ = false;
+
+    audioTailDrained_ = false;
+    {
+        tTJSUniqueLock lock(audioQueueLock_);
+        audioPackets_.clear();
+    }
 
     if (io_)
         io_->Abort();
@@ -189,6 +176,7 @@ bool tTVPMoviePlayer::OpenStreams()
 {
     videoStreamCount_ = 0;
     audioStreamCount_ = 0;
+    unsupported_ = false;
     videoStreamId_ = -1;
     audioStreamId_ = -1;
 
@@ -206,6 +194,7 @@ bool tTVPMoviePlayer::OpenStreams()
     {
         const tTVPMovieStream& stream = streams_[videoIndex];
         videoDecoder_ = tTVPMovieBackends::Get().CreateDecoder(stream);
+
         if (videoDecoder_)
         {
             videoStreamId_ = stream.id;
@@ -214,12 +203,20 @@ bool tTVPMoviePlayer::OpenStreams()
 
             const double streamFps = stream.Fps();
             if (!fpsForced_ && streamFps > 0.0)
+            {
                 fps_ = streamFps;
+                fpsKnown_ = true;
+            }
 
             aspect_ = stream.aspect > 0.0f
                           ? stream.aspect
                           : (stream.height > 0 ? float(stream.width) / float(stream.height)
                                                : 0.0f);
+        }
+        else
+        {
+            // 有视频流却没人能解：整部影片按失败处理，交给上层立刻结束。
+            unsupported_ = true;
         }
     }
 
@@ -228,6 +225,7 @@ bool tTVPMoviePlayer::OpenStreams()
     {
         const tTVPMovieStream& stream = streams_[audioIndex];
         audioDecoder_ = tTVPMovieBackends::Get().CreateDecoder(stream);
+
         if (audioDecoder_)
         {
             audioStreamId_ = stream.id;
@@ -242,6 +240,9 @@ bool tTVPMoviePlayer::OpenStreams()
             }
         }
     }
+
+    if (unsupported_)
+        return false;
 
     return videoDecoder_ != nullptr || audioDecoder_ != nullptr;
 }
@@ -274,6 +275,9 @@ int tTVPMoviePlayer::PickStream(tTVPStreamKind kind) const
 
 void tTVPMoviePlayer::Play()
 {
+    if (!playing_.load())
+        playStartTick_ = TVPGetTickCount();
+
     if (demuxer_ == nullptr)
         return;
 
@@ -284,8 +288,9 @@ void tTVPMoviePlayer::Play()
         baseTick_ = TVPGetTickCount();
     }
 
-    if (sound_)
-        sound_->Play();
+    // 不在这里直接开设备：先让解码线程攒几块，否则开头必定欠载。
+    audioStarted_ = false;
+    audioQueuedBlocks_ = 0;
 }
 
 void tTVPMoviePlayer::Pause()
@@ -301,16 +306,8 @@ void tTVPMoviePlayer::Pause()
 
     if (sound_)
     {
-        const unsigned int queuedBefore = sound_->GetCurrentPlaySamples();
         sound_->Pause();
         FlushAudio();
-
-        if (TVPMovieDiagEnabled())
-        {
-            printf("[movie#%d] pause queued=%u -> %u\n", instanceId_, queuedBefore,
-                   sound_->GetCurrentPlaySamples());
-            fflush(stdout);
-        }
     }
 }
 
@@ -447,8 +444,7 @@ bool tTVPMoviePlayer::OpenAudioOutput()
     format.Seekable = false;
 
     sound_ = TVPCreateSoundBuffer(format, kAudioBufferCount);
-    TVPMovieDiag("[movie#%d] audio out %dHz %dch -> %s\n", instanceId_, audioRate_, audioChannels_,
-                 sound_ ? "ok" : "FAILED");
+
     if (sound_ == nullptr)
         return false;
 
@@ -507,6 +503,16 @@ void tTVPMoviePlayer::SetLoopSegment(int beginFrame, int endFrame)
 
 bool tTVPMoviePlayer::Advance()
 {
+    // 有视频流但一直出不了帧：不能把画面停在黑屏上，直接结束。
+    if (playing_.load(std::memory_order_relaxed) && videoStreamCount_ > 0 &&
+        !firstFrameSeen_.load(std::memory_order_relaxed) && playStartTick_ != 0 &&
+        TVPGetTickCount() - playStartTick_ > kNoFrameTimeoutMs)
+    {
+
+        ended_ = true;
+        playing_ = false;
+    }
+
     const double now = Position();
     bool advanced = false;
 
@@ -516,11 +522,15 @@ bool tTVPMoviePlayer::Advance()
         if (pending_.empty())
             return false;
 
-        // 只保留最新的一帧：落后的帧直接丢掉，避免慢机器上越拖越久。
-        while (pending_.size() > 1 && pending_[1].pts <= now)
+        // 落后太多才跳帧：引擎偶尔渲染晚几十毫秒，那些帧到了下一拍就能补上，
+        // 按顺序放反而更顺；只有累计落后超过窗口（真跟不上了）才跳到最新一帧。
+        if (now - pending_.front().pts > kMaxLagMs)
         {
-            pending_.pop_front();
-            ++dropped_;
+            while (pending_.size() > 1 && pending_[1].pts <= now)
+            {
+                pending_.pop_front();
+                ++dropped_;
+            }
         }
 
         if (pending_.front().pts <= now)
@@ -535,8 +545,7 @@ bool tTVPMoviePlayer::Advance()
             advanced = true;
             pictureCond_.notify_all();
 
-            TVPMovieDiag("[movie#%d] show t=%.1f pts=%.1f late=%.1f ring=%d drop=%d\n", instanceId_,
-                         now, front_.pts, late, int(pending_.size()), dropped_);
+
         }
     }
 
@@ -614,13 +623,8 @@ void tTVPMoviePlayer::DecodeLoop()
             continue;
         }
 
-        // 积压到顶：解码跑到声卡前面了（纯音频流没有帧环节流，这里就是
-        // 唯一的刹车）。让出 CPU 等声卡消费，别一路解完再往外丢。
-        if (audioBacklogBytes_ >= AudioBacklogBytesLimit())
-        {
-            Sleep(kIdleSleepMs);
-            continue;
-        }
+        // 音频按声卡的空位节奏逐包解码；积压满了就只停音频，不停视频。
+        PumpAudioDecoder();
 
         tTVPMoviePacket packet;
         if (!demuxer_->Read(packet))
@@ -648,7 +652,7 @@ void tTVPMoviePlayer::DecodeLoop()
         if (packet.stream == videoStreamId_ && videoDecoder_)
             FeedVideo(packet);
         else if (packet.stream == audioStreamId_ && audioDecoder_)
-            FeedAudio(packet);
+            QueueAudioPacket(packet);
     }
 }
 
@@ -712,9 +716,43 @@ void tTVPMoviePlayer::PushPicture(tTVPMovieFrame& frame)
         tTJSUniqueLock lock(pictureLock_);
         if (pending_.size() >= kMaxPendingPictures)
             return;
+        const bool firstPicture = !firstFrameSeen_.load();
         pending_.push_back(std::move(picture));
-        TVPMovieDiag("[movie#%d] push pts=%.1f ring=%d\n", instanceId_, frame.pts,
-                     int(pending_.size()));
+        firstFrameSeen_ = true;
+
+        // 首帧到位才让时钟起跑：Play() 到首帧解出来之间通常要一两百毫秒，
+        // 这段算进去的话开头每帧都是「迟到」，画面会先顿一下再追。
+        if (firstPicture)
+        {
+            tTJSUniqueLock clockLock(clockLock_);
+            if (basePosition_ <= 0.0)
+            {
+                basePosition_ = 0.0;
+                baseTick_ = TVPGetTickCount();
+            }
+        }
+
+        // 容器没声明帧率时，用相邻两帧的 pts 间隔估一个；估出来之前
+        // fps_ 只是个占位值，帧号/循环区间都会算偏。
+        if (!fpsKnown_ && !fpsForced_)
+        {
+            if (fpsLastPts_ != TVPMovieNoTime)
+            {
+                const double delta = picture.pts - fpsLastPts_;
+                if (delta > 0.5 && delta < 200.0)
+                {
+                    fpsSampleSum_ += delta;
+                    if (++fpsSampleCount_ >= 15)
+                    {
+                        fps_ = TVPMovieMsPerSecond * fpsSampleCount_ / fpsSampleSum_;
+                        fpsKnown_ = true;
+
+                    }
+                }
+            }
+            fpsLastPts_ = picture.pts;
+        }
+
     }
 
     // 循环区间：越过结束帧就把下一轮定位排进队列，由解码线程处理。
@@ -726,10 +764,16 @@ void tTVPMoviePlayer::PushPicture(tTVPMovieFrame& frame)
     }
 }
 
-void tTVPMoviePlayer::FeedAudio(const tTVPMoviePacket& packet)
+bool tTVPMoviePlayer::FeedAudioData(const uint8_t* data, int size, double pts)
 {
-    if (rate_ != 1.0 || sound_ == nullptr)
-        return; // 变速/无声卡时不消耗音频帧
+    if (rate_ != 1.0 || sound_ == nullptr || audioDecoder_ == nullptr)
+        return false; // 变速/无声卡时不消耗音频帧
+
+    tTVPMoviePacket packet;
+    packet.stream = audioStreamId_;
+    packet.data = data;
+    packet.size = size;
+    packet.pts = pts;
 
     if (!audioDecoder_->Feed(packet))
     {
@@ -738,12 +782,75 @@ void tTVPMoviePlayer::FeedAudio(const tTVPMoviePacket& packet)
             AppendAudio(frame);
 
         if (!audioDecoder_->Feed(packet))
-            return;
+            return false;
     }
 
     tTVPMovieFrame frame;
     while (!GetTerminated() && audioDecoder_->Receive(frame))
         AppendAudio(frame);
+    return true;
+}
+
+//---------------------------------------------------------------------------
+// 音频：压缩包入队 → 按声卡空位逐包解码
+//---------------------------------------------------------------------------
+
+void tTVPMoviePlayer::QueueAudioPacket(const tTVPMoviePacket& packet)
+{
+    if (packet.data == nullptr || packet.size <= 0)
+        return;
+
+    tQueuedAudio item;
+    item.data.assign(packet.data, packet.data + packet.size);
+    item.pts = packet.pts;
+
+    tTJSUniqueLock lock(audioQueueLock_);
+    // 队列只会在声卡完全不动时堆起来；真堆起来了丢最旧的压缩包，
+    // 绝不能反过来把解码线程（视频）卡住。
+    if (audioPackets_.size() >= kMaxQueuedAudioPackets)
+        audioPackets_.pop_front();
+    audioPackets_.push_back(std::move(item));
+}
+
+void tTVPMoviePlayer::PumpAudioDecoder()
+{
+    // 声卡积压已经到顶就先不解，包留在队列里；视频继续跑。
+    const size_t limit = AudioBacklogBytesLimit();
+    if (sound_ != nullptr && limit > 0 && audioBacklogBytes_ >= limit)
+        return;
+
+    tQueuedAudio item;
+    {
+        tTJSUniqueLock lock(audioQueueLock_);
+        if (audioPackets_.empty())
+            return;
+        item = std::move(audioPackets_.front());
+        audioPackets_.pop_front();
+    }
+
+    FeedAudioData(item.data.data(), int(item.data.size()), item.pts);
+}
+
+bool tTVPMoviePlayer::AudioQueueEmpty() const
+{
+    tTJSUniqueLock lock(audioQueueLock_);
+    return audioPackets_.empty();
+}
+
+void tTVPMoviePlayer::DrainAudioDecoder()
+{
+    if (audioDecoder_ == nullptr)
+        return;
+
+    audioDecoder_->Drain();
+    tTVPMovieFrame frame;
+    while (!GetTerminated() && audioDecoder_->Receive(frame))
+        AppendAudio(frame);
+
+    // 把拼接缓冲里剩下的尾巴也交出去。
+    tTJSUniqueLock lock(audioLock_);
+    FlushAudioStage();
+    DrainAudioBacklogLocked();
 }
 
 void tTVPMoviePlayer::AppendAudio(tTVPMovieFrame& frame)
@@ -761,16 +868,28 @@ void tTVPMoviePlayer::AppendAudio(tTVPMovieFrame& frame)
     const size_t bytes =
         size_t(frame.sampleCount) * size_t(frame.channels) * sizeof(int16_t);
 
-    // 积压上限：约 1 秒的音频。超过说明声卡已经跟不上了，丢最旧的。
-    const size_t limit = AudioBacklogBytesLimit();
+    // 目标是约 1 秒的积压，由解码线程的节流维持；这里只在声卡彻底不消费
+    // （设备丢了之类）时兜底，把积压压到 4 秒以内。
+    // 注意不能按目标值丢：解码线程本来就贴着上限跑，按上限丢等于每帧都扔掉
+    // 一段还没播出去的音频，听感就是持续的口吃。
+    const size_t hardLimit = AudioBacklogBytesLimit() * 4;
 
     tTJSUniqueLock lock(audioLock_);
 
-    audioBacklog_.emplace_back(static_cast<const uint8_t*>(frame.samples[0]),
-                               static_cast<const uint8_t*>(frame.samples[0]) + bytes);
-    audioBacklogBytes_ += bytes;
+    // 拼成 50ms 一块再入队：解码器给的帧可能只有 5.8ms，直接往下塞的话
+    // 声卡那 8 个缓冲合起来也就几十毫秒，开头很容易欠载成口吃。
+    const uint8_t* src = static_cast<const uint8_t*>(frame.samples[0]);
+    const size_t chunk = AudioChunkBytes();
+    audioStage_.insert(audioStage_.end(), src, src + bytes);
 
-    while (audioBacklogBytes_ > limit && audioBacklog_.size() > 1)
+    while (audioStage_.size() >= chunk)
+    {
+        audioBacklog_.emplace_back(audioStage_.begin(), audioStage_.begin() + chunk);
+        audioStage_.erase(audioStage_.begin(), audioStage_.begin() + chunk);
+        audioBacklogBytes_ += chunk;
+    }
+
+    while (audioBacklogBytes_ > hardLimit && audioBacklog_.size() > 1)
     {
         audioBacklogBytes_ -= audioBacklog_.front().size();
         audioDroppedBytes_ += audioBacklog_.front().size();
@@ -778,6 +897,25 @@ void tTVPMoviePlayer::AppendAudio(tTVPMovieFrame& frame)
     }
 
     DrainAudioBacklogLocked();
+
+}
+
+size_t tTVPMoviePlayer::AudioChunkBytes() const
+{
+    const size_t bytesPerSecond =
+        size_t(std::max(audioRate_, 1)) * size_t(std::max(audioChannels_, 1)) * sizeof(int16_t);
+    return std::max<size_t>(bytesPerSecond * kAudioChunkMs / TVPMovieMsPerSecond,
+                            size_t(1024));
+}
+
+void tTVPMoviePlayer::FlushAudioStage()
+{
+    if (audioStage_.empty())
+        return;
+
+    audioBacklog_.emplace_back(audioStage_.begin(), audioStage_.end());
+    audioBacklogBytes_ += audioStage_.size();
+    audioStage_.clear();
 }
 
 size_t tTVPMoviePlayer::AudioBacklogBytesLimit() const
@@ -788,6 +926,10 @@ size_t tTVPMoviePlayer::AudioBacklogBytesLimit() const
 void tTVPMoviePlayer::FlushAudio()
 {
     tTJSUniqueLock lock(audioLock_);
+
+    audioStage_.clear();
+    audioQueuedBlocks_ = 0;
+    audioStarted_ = false;
 
     if (!audioBacklog_.empty())
     {
@@ -818,11 +960,19 @@ void tTVPMoviePlayer::DrainAudioBacklogLocked()
     {
         std::vector<uint8_t>& block = audioBacklog_.front();
         sound_->AppendBuffer(block.data(), static_cast<unsigned int>(block.size()));
+        ++audioQueuedBlocks_;
+
         audioBacklogBytes_ -= block.size();
         audioBacklog_.pop_front();
+    }
 
-        if (!sound_->IsPlaying() && playing_.load())
-            sound_->Play();
+    // 攒够门限再开设备；影片特别短、攒不满时由 HandleEnd 兜底开。
+    if (!audioStarted_ && playing_.load(std::memory_order_relaxed) &&
+        audioQueuedBlocks_ >= kAudioPrerollBlocks &&
+        (firstFrameSeen_.load(std::memory_order_relaxed) || drained_))
+    {
+        sound_->Play();
+        audioStarted_ = true;
     }
 }
 
@@ -838,32 +988,71 @@ void tTVPMoviePlayer::DrainDecoders()
         while (!GetTerminated() && videoDecoder_->Receive(frame))
             PushPicture(frame);
     }
-    if (audioDecoder_)
-    {
-        audioDecoder_->Drain();
-        tTVPMovieFrame frame;
-        while (!GetTerminated() && audioDecoder_->Receive(frame))
-            AppendAudio(frame);
-    }
+    // 音频的收尾由 DrainAudioQueue/DrainAudioDecoder 在 EOF 时统一处理。
 }
 
 bool tTVPMoviePlayer::HandleEnd()
 {
-    ended_ = true;
-    TVPMovieDiag("[movie#%d] eof t=%.1f dropped=%d audioDrop=%lluKB backlog=%zu loop=%d\n",
-                 instanceId_, Position(), dropped_,
-                 (unsigned long long)(audioDroppedBytes_ / 1024), audioBacklog_.size(),
-                 loopBegin_);
-
+    // 循环：回卷到起点，重新开始一轮解码。
     if (loopBegin_ >= 0)
     {
-        // 循环：回卷到起点，重新开始一轮解码。
-        const double beginMs =
-            fps_ > 0.0 ? loopBegin_ * TVPMovieMsPerSecond / fps_ : 0.0;
+
+
+        const double beginMs = fps_ > 0.0 ? loopBegin_ * TVPMovieMsPerSecond / fps_ : 0.0;
         PerformSeek(beginMs, false);
         ended_ = false;
         drained_ = false;
         return true;
+    }
+
+    // 收尾：边等声卡放，边把还没解码的音频包喂完。声卡队列里通常还排着
+    // 几百毫秒，立刻结束会把结尾切掉一截（ED/OP 的最后一小节）。
+    if (sound_ != nullptr)
+    {
+        const bool queueEmpty = AudioQueueEmpty();
+        if (!queueEmpty)
+        {
+            PumpAudioDecoder();
+        }
+        else if (!audioTailDrained_)
+        {
+            audioTailDrained_ = true;
+            DrainAudioDecoder(); // 队列空了，把解码器内部的延迟帧冲出来
+        }
+
+        {
+            tTJSUniqueLock lock(audioLock_);
+            FlushAudioStage();
+            DrainAudioBacklogLocked();
+
+            // 很短的片子可能攒不满起播门槛，收尾时兜底把设备开起来。
+            if (!audioStarted_ && playing_.load(std::memory_order_relaxed))
+            {
+                sound_->Play();
+                audioStarted_ = true;
+            }
+        }
+
+        // 设备没在放（被别的流抢走、或本来就暂停）就别等了，队列不会动。
+        const bool audioPending =
+            sound_->IsPlaying() &&
+            (!queueEmpty || !audioBacklog_.empty() || sound_->GetCurrentPlaySamples() > 0);
+        if (audioPending)
+        {
+            if (endWaitStart_ == 0)
+                endWaitStart_ = TVPGetTickCount();
+            if (TVPGetTickCount() - endWaitStart_ < kEndAudioWaitMs)
+            {
+                Sleep(kIdleSleepMs);
+                return true;
+            }
+        }
+    }
+
+    if (!ended_.load())
+    {
+        ended_ = true;
+
     }
 
     // 等主线程把剩余帧消费完，再让解码线程挂起。
@@ -883,11 +1072,16 @@ bool tTVPMoviePlayer::HandleEnd()
 
 void tTVPMoviePlayer::PerformSeek(double positionMs, bool flushAudio)
 {
+    endWaitStart_ = 0;
+    audioTailDrained_ = false;
+    {
+        tTJSUniqueLock lock(audioQueueLock_);
+        audioPackets_.clear();
+    }
     if (demuxer_ == nullptr)
         return;
 
-    TVPMovieDiag("[movie#%d] seek -> %.1f (from %.1f, dropped=%d)\n", instanceId_, positionMs,
-                 Position(), dropped_);
+
     demuxer_->Seek(positionMs);
 
     if (videoDecoder_)

@@ -214,6 +214,7 @@ void BuildStream(AVStream* avStream, bool matroska, tTVPMovieStream& out)
         out.channels = params->ch_layout.nb_channels;
         out.sampleRate = params->sample_rate;
         out.bitrate = params->bit_rate;
+        out.blockAlign = params->block_align;
     }
 }
 
@@ -377,8 +378,6 @@ bool tTVPMovieFFmpegDemuxer::Open(tTVPMovieIO* io)
         return false;
     }
 
-    format_->fps_probe_size = 0;
-
     if (inputFormat->name && std::strcmp(inputFormat->name, "mpegts") == 0)
         av_opt_set_int(format_, "probesize", 10000000, 0);
 
@@ -399,6 +398,19 @@ bool tTVPMovieFFmpegDemuxer::Open(tTVPMovieIO* io)
     {
         tTVPMovieStream stream;
         BuildStream(format_->streams[i], matroska_, stream);
+
+        // 有些容器（ASF/WMV 这类）不写帧率，avformat 的流信息里也是空的。
+        // 让 libavformat 按前几帧的 pts 估一个，避免上层拿不到帧率。
+        if (stream.IsVideo() && stream.Fps() <= 0.0)
+        {
+            const AVRational guessed = av_guess_frame_rate(format_, format_->streams[i], nullptr);
+            if (guessed.num > 0 && guessed.den > 0)
+            {
+                stream.fpsNumerator = guessed.num;
+                stream.fpsDenominator = guessed.den;
+            }
+        }
+
         streams_.push_back(std::move(stream));
     }
 
@@ -762,6 +774,13 @@ bool tTVPMovieFFmpegAudioDecoder::Open(const tTVPMovieStream& stream)
 
     context_->codec_type = AVMEDIA_TYPE_AUDIO;
     context_->codec_tag = stream.codecTag;
+    // WMA 系（wmapro/wmav2/wmav1）初始化时要看 block_align 与声道布局，
+    // 缺了会直接 open 失败，表现就是「画面正常但整片没声音」。
+    context_->sample_rate = stream.sampleRate;
+    context_->block_align = stream.blockAlign;
+    context_->bit_rate = stream.bitrate;
+    if (stream.channels > 0)
+        av_channel_layout_default(&context_->ch_layout, stream.channels);
 
     if (!stream.extradata.empty())
     {

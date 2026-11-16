@@ -115,10 +115,16 @@ private:
     // 释放后端对象（不动线程）。
     void ReleaseResources();
 
+    // 音频：压缩包先入队，按声卡的空位节奏逐包解码，绝不阻塞视频。
+    void QueueAudioPacket(const tTVPMoviePacket& packet);
+    void PumpAudioDecoder();
+    bool AudioQueueEmpty() const;
+    bool FeedAudioData(const uint8_t* data, int size, double pts);
+    void DrainAudioDecoder();
+
     // 解码线程内部
     void DecodeLoop();
     void FeedVideo(const tTVPMoviePacket& packet);
-    void FeedAudio(const tTVPMoviePacket& packet);
     void PushPicture(tTVPMovieFrame& frame);
     void DrainDecoders();
     // flushAudio=false 用于循环回卷：上一轮的尾巴还要接着放，不能丢。
@@ -129,6 +135,9 @@ private:
     bool OpenAudioOutput();
     void CloseAudioOutput();
     void AppendAudio(tTVPMovieFrame& frame);
+    // 把解码器吐出来的小块拼成整块再送声卡（见 AppendAudio 注释）。
+    void FlushAudioStage();
+    size_t AudioChunkBytes() const;
     // 把积压的音频块尽量塞进声卡；不阻塞，塞不下就留着。
     void DrainAudioBacklog();
     // 调用方需已持有 audioLock_。
@@ -149,16 +158,28 @@ private:
 
     std::vector<tTVPMovieStream> streams_;
     int videoStreamId_ = -1;
+    // 有视频流但没有任何解码器接得住：按「不支持的格式」直接结束，
+    // 不能挂着黑屏。
+    bool unsupported_ = false;
+    // 播放起点，用于「解码器不报错也永远不出帧」的超时判定。
+    tjs_uint64 playStartTick_ = 0;
+    // 播完后等音频尾巴的起始时刻（0 表示还没开始等）。
+    tjs_uint64 endWaitStart_ = 0;
+    std::atomic<bool> firstFrameSeen_{false};
     int audioStreamId_ = -1;
     int videoStreamCount_ = 0;
     int audioStreamCount_ = 0;
     int audioStreamIndex_ = 0;
-    int instanceId_ = 0; // 诊断用：区分同时存在的多个播放器
 
     // -- 视频参数 ----------------------------------------------------------
     double duration_ = 0.0;
     double fps_ = 25.0;
     bool fpsForced_ = false;
+    // 容器没给帧率时，用解出来的前几帧 pts 间隔估一个（ASF/WMV 常见）。
+    bool fpsKnown_ = false;
+    double fpsSampleSum_ = 0.0;
+    int fpsSampleCount_ = 0;
+    double fpsLastPts_ = TVPMovieNoTime;
     double aspect_ = 0.0;
     int codedWidth_ = 0;
     int codedHeight_ = 0;
@@ -200,6 +221,21 @@ private:
     // 完，一个旧块又被塞回声卡，听起来就是一声杂音。
     mutable tTJSCriticalSection audioLock_;
     std::deque<std::vector<uint8_t>> audioBacklog_;
+    // 拼接中的音频：解码器给的帧长短不一，先攒成固定大小再送声卡。
+    std::vector<uint8_t> audioStage_;
+    // 音频压缩包队列（解复用线程投递，解码按声卡空位逐包消费）
+    struct tQueuedAudio
+    {
+        std::vector<uint8_t> data;
+        double pts = TVPMovieNoTime;
+    };
+    mutable tTJSCriticalSection audioQueueLock_;
+    std::deque<tQueuedAudio> audioPackets_;
+    // 收尾时解码器只冲一次，避免反复 Drain。
+    bool audioTailDrained_ = false;
+    // 起播门槛：攒够几块才开设备，否则开头必欠载（详情见 DrainAudioBacklogLocked）。
+    int audioQueuedBlocks_ = 0;
+    bool audioStarted_ = false;
     size_t audioBacklogBytes_ = 0;
     uint64_t audioDroppedBytes_ = 0;
 
