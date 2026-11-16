@@ -1,7 +1,6 @@
 package org.tvp.krkrsdl3;
 
-import static org.tvp.krkrsdl3.MainActivity.SHAREDPREF_GAMECONFIG;
-
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.res.AssetManager;
@@ -22,7 +21,14 @@ import java.util.ArrayList;
 import java.util.Objects;
 
 public class KRKRActivity extends SDLActivity {
-    private ArrayList<String> m_gameargs;
+    public static final String EXTRA_ARGV = "org.tvp.krkrsdl3.ARGV";
+    private ArrayList<String> m_gameargs = new ArrayList<>();
+
+    public static Intent createIntent(Context context, ArrayList<String> argv) {
+        Intent intent = new Intent(context, KRKRActivity.class);
+        intent.putStringArrayListExtra(EXTRA_ARGV, argv);
+        return intent;
+    }
 
     // override sdl functions
     static {
@@ -50,7 +56,8 @@ public class KRKRActivity extends SDLActivity {
         setNativeAssetManager(getAssets());
         Intent intent = getIntent();
 
-        m_gameargs = intent.getStringArrayListExtra(SHAREDPREF_GAMECONFIG);
+        ArrayList<String> args = intent.getStringArrayListExtra(EXTRA_ARGV);
+        if (args != null) m_gameargs = args;
         this.fullscreen();
     }
 
