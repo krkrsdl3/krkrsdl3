@@ -477,25 +477,9 @@ void DrawDeviceD3D::ComposeLayerManager(int index, void* target)
 static void DrawD3DLayerPictures(DrawDeviceD3D* dev, void* target, D3DLayer* layer,
                                  float offsetX, float offsetY)
 {
-    // 批绘制：把连续的、同 texture + 同混合 + 同 opacity 的图片合并为一次
-    // DrawQuads 提交（抽象层现代原语）。VK 后端一次 bind/draw 完成整批，
-    // 取代原先每图一次 SetTarget/ClearTarget/SetBlend/DrawMesh 的重复开销。
     krkrsdl3::iTVPRenderBackend* backend = dev->GetBackend();
-    backend->SetTarget(target);
-
     const float* m = layer->Matrix;
     const float tw = (float)dev->GetWidth(), th = (float)dev->GetHeight();
-    void* batchTex = nullptr;
-    int batchBlend = -1;
-    float batchOpa = -1.0f;
-    std::vector<float> batchVerts; // 每 quad 16 float (x,y,u,v)
-    auto flush = [&]() {
-        if (batchVerts.empty())
-            return;
-        backend->SetBlend(batchBlend, batchOpa, nullptr, nullptr);
-        backend->DrawQuads(batchTex, batchVerts.data(), (int)(batchVerts.size() / 16));
-        batchVerts.clear();
-    };
 
     for (auto* pic : layer->Pictures)
     {
@@ -510,17 +494,7 @@ static void DrawD3DLayerPictures(DrawDeviceD3D* dev, void* target, D3DLayer* lay
             case 1: lbm = krkrsdl3::iTVPRenderBackend::BM_MUL_RM; break;
             default: lbm = krkrsdl3::iTVPRenderBackend::BM_ALPHA; break;
         }
-        int meshBlend = LayerToMeshBlendMode(lbm);
         float opa = (float)pic->opacity / 255.0f;
-        void* tex = pic->Image->Texture;
-        if (!batchVerts.empty() && (tex != batchTex || meshBlend != batchBlend || opa != batchOpa))
-            flush();
-        if (batchVerts.empty())
-        {
-            batchTex = tex;
-            batchBlend = meshBlend;
-            batchOpa = opa;
-        }
 
         float px = (float)pic->DstX + pic->CoordX + offsetX;
         float py = (float)pic->DstY + pic->CoordY + offsetY;
@@ -534,15 +508,18 @@ static void DrawD3DLayerPictures(DrawDeviceD3D* dev, void* target, D3DLayer* lay
         float cx1 = m[0] * r + m[4] * t + m[12], cy1 = m[1] * r + m[5] * t + m[13];
         float cx2 = m[0] * r + m[4] * b + m[12], cy2 = m[1] * r + m[5] * b + m[13];
         float cx3 = m[0] * l + m[4] * b + m[12], cy3 = m[1] * l + m[5] * b + m[13];
-        const float v[16] = {
+        float v[16] = {
             cx0 / tw * 2.f, cy0 / th * 2.f, u0, v0,
             cx1 / tw * 2.f, cy1 / th * 2.f, u1, v0,
             cx2 / tw * 2.f, cy2 / th * 2.f, u1, v1,
             cx3 / tw * 2.f, cy3 / th * 2.f, u0, v1,
         };
-        batchVerts.insert(batchVerts.end(), v, v + 16);
+        uint16_t idx[] = {0, 1, 2, 2, 3, 0};
+        backend->SetTarget(target);
+        backend->ClearTarget(false);
+        backend->SetBlend(LayerToMeshBlendMode(lbm), opa, nullptr, nullptr);
+        backend->DrawMesh(v, 4, idx, 6, pic->Image->Texture, opa);
     }
-    flush();
 }
 
 void DrawDeviceD3D::RenderFrame()
@@ -612,7 +589,7 @@ void DrawDeviceD3D::RenderFrame()
         DrawD3DLayerPictures(this, CompositeTarget, l, (float)OffsetX, (float)OffsetY);
         l->DrawEmoteTarget(CompositeTarget);
     }
-    if (activeLayerDrawIndex == 2)
+    if (TransitionActive || activeLayerDrawIndex == 2)
     {
         for (auto* l : backLayers)
         {
@@ -621,7 +598,17 @@ void DrawDeviceD3D::RenderFrame()
         }
     }
     // EmotePlayer 属于其所属的 D3DLayer，由 D3DLayer 在对应平面绘制。
-    if (activeLayerDrawIndex >= 1 && activeLayerDrawIndex < (tjs_int)Managers.size())
+    if (TransitionActive)
+    {
+        const tjs_int otherIndex = (LayerDrawIndex == 1 ? 2 : 1);
+        const tjs_int order[2] = {LayerDrawIndex, otherIndex};
+        for (int i = 0; i < 2; ++i)
+        {
+            if (order[i] >= 1 && order[i] < (tjs_int)Managers.size())
+                ComposeLayerManager(order[i], CompositeTarget);
+        }
+    }
+    else if (activeLayerDrawIndex >= 1 && activeLayerDrawIndex < (tjs_int)Managers.size())
     {
         ComposeLayerManager(activeLayerDrawIndex, CompositeTarget);
     }

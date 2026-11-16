@@ -3302,7 +3302,7 @@ void VulkanRenderBackend::DrawRect(void* handle,
     LayerPushConstants pc{};
     std::memcpy(pc.uniformColor, layerUniformColor_, sizeof(layerUniformColor_));
     pc.opa = layerOpa_;
-    pc.method = layerMethod_;
+    pc.method = layerMethod_ - iTVPRenderBackend::BM_COPY;
     vkCmdPushConstants(meshCommandBuffer_, layerPipelineLayout_, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                        sizeof(pc), &pc);
 

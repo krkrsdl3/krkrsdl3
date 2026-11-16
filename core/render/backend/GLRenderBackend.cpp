@@ -1117,7 +1117,7 @@ void GLRenderBackend::DrawRect(void* handle,
     glEnableVertexAttribArray(1);
 
     glUseProgram(programLayer_);
-    glUniform1i(locLayerMethod_, layerMethod_);
+    glUniform1i(locLayerMethod_, layerMethod_ - iTVPRenderBackend::BM_COPY);
     glUniform1f(locLayerOpa_, layerOpa_);
     glUniform4f(locLayerUniformColor_, layerUniformColor_[0], layerUniformColor_[1],
                 layerUniformColor_[2], layerUniformColor_[3]);
