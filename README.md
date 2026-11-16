@@ -30,8 +30,8 @@ krkrsdl3的核心源码仓库，源码构建参考[krkrsdl3_build](https://githu
 - libpng/libwebp/libjpeg-turbo:图片解码
 - libvorbis/opusfile:音频解码
 - freetype:字体渲染
-- plutosvg:2D矢量图绘制
-- sdl3/glad:跨平台核心
+- plutovg:2D矢量图绘制
+- sdl3/sdl3-ttf/glad:跨平台核心与字体
 
 使用说明：对于api稳定的库默认采用最新版本，对于api有较大改动的库采用能兼容的最高版本。
 
@@ -41,4 +41,4 @@ krkrsdl3的核心源码仓库，源码构建参考[krkrsdl3_build](https://githu
 - _KRKRSDL3_USE_FFMPEG:使用ffmpeg进行视频解码。
 - _KRKRSDL3_USE_OPENGL/_KRKRSDL3_USE_VULKAN...:区分不同的图形后端是否参与编译
 - _KRKRSDL3_ANDROID/_KRKRSDL3_LINUX...:区分不同操作系统。
-- _KRKRSDL3_EGL/_KRKRSDL3_GL:区分opengles与opengl。
+- _KRKRSDL3_GLES/_KRKRSDL3_GL:区分opengles与opengl。
