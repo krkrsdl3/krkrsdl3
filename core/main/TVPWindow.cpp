@@ -91,6 +91,10 @@ TVPWindow::~TVPWindow()
 {
     TVPUnregisterWindowToList(this);
 
+    // 任何删除路径（Invalidate / Close → delete this / 其它）都要把本窗口从
+    // 窗口更新队列里摘掉：队列里存的是裸指针，漏一条就是 use-after-free
+    TVPRemoveWindowUpdate(this);
+
     // 解除绘制设备对本窗口的引用（D3D 等析构时不再触碰本窗口；
     // 设备只经 SetDrawDeviceObject 被引用，析构必然先于本窗口发生）
     if (DrawDevice)

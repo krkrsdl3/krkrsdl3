@@ -601,6 +601,10 @@ void TVPDeliverAllEvents()
 bool TVPWindowUpdateEventsDelivering = false;
 void TVPPostWindowUpdate(TVPWindow* window)
 {
+    // 已进入关闭流程（NotifyWindowClose 之后）的窗口马上就会被 delete，
+    // 再往队列里塞裸指针必然踩空
+    if (!window || window->IsClosed())
+        return;
 
     if (!TVPWindowUpdateEventsDelivering)
     {

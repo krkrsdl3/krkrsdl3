@@ -123,6 +123,12 @@ void tTJSNI_Window::Invalidate()
         // release draw device
         Window->SetDrawDeviceObject(tTJSVariant());
 
+        // 销毁图层 / 释放 DrawDevice 的过程中，DrawDevice::NotifyLayerImageChange
+        // 会再走一次 Window->RequestUpdate()，把更新事件重新塞回队列。
+        // 这里必须再清一次，否则下面的 delete Window 会留下野指针，
+        // 下一次 TVPDeliverWindowUpdateEvents 直接踩空（Android 上返回标题时崩）。
+        TVPRemoveWindowUpdate(Window);
+
         // 若窗口尚未自行销毁（Close 流程中已 NotifyWindowClose），在此销毁
         if (!Window->IsClosed())
             delete Window;
