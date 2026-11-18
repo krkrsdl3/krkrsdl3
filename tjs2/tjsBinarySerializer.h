@@ -190,13 +190,22 @@ public:
     }
     static inline void PutString(tTJSBinaryStream* stream, const tjs_char* val, tjs_uint len)
     {
+        (void)len; // 长度以实际转码结果为准，保留参数只为兼容旧调用
         // convert
-        tjs_uint64 buffLen = TVPUtf8ToWideCharString(val, NULL);
+        // val 可能是空指针（Dictionary.saveStruct 枚举出无名成员时就是如此），
+        // 直接交给 TVPUtf8ToWideCharString 会踩空指针
+        tjs_uint64 buffLen = val ? TVPUtf8ToWideCharString(val, NULL) : 0;
         if (buffLen <= 0)
+        {
+            // 空串也要写长度标记，否则读取端整体错位（表现为 Read error）
+            tjs_uint8 tmp[1];
+            tmp[0] = TYPE_FIX_STRING_MIN;
+            stream->Write(tmp, sizeof(tmp));
             return;
-        tjs_wchar* buf = new tjs_wchar[len + 1];
+        }
+        tjs_wchar* buf = new tjs_wchar[(size_t)buffLen + 1];
         TVPUtf8ToWideCharString(val, buf);
-        buf[len] = 0;
+        buf[buffLen] = 0;
         // len
         if (buffLen <= TYPE_FIX_STRING_LEN)
         {
@@ -238,7 +247,7 @@ public:
         // data
         if (buffLen)
         {
-            stream->Write(buf, sizeof(tjs_wchar) * len);
+            stream->Write(buf, sizeof(tjs_wchar) * (size_t)buffLen);
         }
         // clear
         delete[] buf;
