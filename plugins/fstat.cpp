@@ -495,22 +495,28 @@ private:
         }
         TVPGetLocalName(dir);
 
-        if (!TVPCheckExistentLocalFolder(dir))
-        {
-            TVPThrowExceptionMessage(TJS_N("Directory not found."));
-        }
-
         iTJSDispatch2* array = TJSCreateArrayObject();
         tTJSVariant result;
         tjs_int count = 0;
-        std::string dirpath = dir.AsStdString();
 
-        TVPGetLocalFileListAt(dir,
-                              [&](const ttstr& file, tTVPLocalFileInfo* info)
-                              {
-                                  if ((*cb)(array, count, file, info, dirpath))
-                                      count++;
-                              });
+        // 目录不存在时返回空数组，不抛异常。
+        // 游戏常把 dirlist 当作"可选目录探测"使用（例如 patch.tjs 枚举 patch/），
+        // 抛 Directory not found 会让整个 startup 脚本中断在顶层，直接弹窗失败。
+        if (TVPCheckExistentLocalFolder(dir))
+        {
+            std::string dirpath = dir.AsStdString();
+
+            TVPGetLocalFileListAt(dir,
+                                  [&](const ttstr& file, tTVPLocalFileInfo* info)
+                                  {
+                                      if ((*cb)(array, count, file, info, dirpath))
+                                          count++;
+                                  });
+        }
+        else
+        {
+            TVPAddLog(ttstr(TJS_N("dirlist : ")) + dir + TJS_N(" not found, returns empty list."));
+        }
 
         result = tTJSVariant(array, array);
         array->Release();
