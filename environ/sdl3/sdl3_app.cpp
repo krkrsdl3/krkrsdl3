@@ -262,8 +262,8 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[])
     // 隐藏命令行（离屏跑要留着 stdout 给测试宿主收日志）
 #ifndef _DEBUG
 #ifdef _KRKRSDL3_WINDOWS
-    if (!krkrsdl3::TVPAutoTestOffscreen())
-        ShowWindow(GetConsoleWindow(), SW_HIDE);
+    //if (!krkrsdl3::TVPAutoTestOffscreen())
+    //    ShowWindow(GetConsoleWindow(), SW_HIDE);
 #endif
 #endif
     if (!krkrsdl3::TVPAutoTestOffscreen())

@@ -2,6 +2,7 @@
 #include "tjsNativeStorages.h"
 
 #include "TVPStorage.h"
+#include "PlatformFile.h"
 #include "TVPMsg.h"
 #include "Platform.h"
 #include "TextStream.h"
@@ -147,6 +148,59 @@ TJS_BEGIN_NATIVE_METHOD_DECL(/*func. name*/ chopStorageExt)
     return TJS_S_OK;
 }
 TJS_END_NATIVE_STATIC_METHOD_DECL(/*func. name*/ chopStorageExt)
+//----------------------------------------------------------------------
+// deleteFile / moveFile：全引擎唯一实现。
+// fstat.dll 里虽然也声明了这两个，但 ncbind 没能把它们注册成功
+// （实测 Storages.deleteFile / moveFile 一直是 undefined，而同批的
+//  truncateFile / copyFile 都正常），所以放在内核 Storages 类里实现。
+//----------------------------------------------------------------------
+TJS_BEGIN_NATIVE_METHOD_DECL(/*func. name*/ deleteFile)
+{
+    if (numparams < 1)
+        return TJS_E_BADPARAMCOUNT;
+
+    bool r = false;
+    ttstr placed = TVPGetPlacedPath(*param[0]);
+    if (placed.length())
+    {
+        ttstr local(TVPGetLocallyAccessibleName(placed));
+        if (local.length())
+        {
+            r = TVPDeleteFile(local.AsStdString());
+            if (r)
+                TVPClearStorageCaches();
+        }
+    }
+
+    if (result)
+        *result = (tjs_int)r;
+
+    return TJS_S_OK;
+}
+TJS_END_NATIVE_STATIC_METHOD_DECL(/*func. name*/ deleteFile)
+//----------------------------------------------------------------------
+TJS_BEGIN_NATIVE_METHOD_DECL(/*func. name*/ moveFile)
+{
+    if (numparams < 2)
+        return TJS_E_BADPARAMCOUNT;
+
+    bool r = false;
+    ttstr from = TVPGetLocallyAccessibleName(*param[0]);
+    ttstr to = TVPGetLocallyAccessibleName(*param[1]);
+    if (from.length() && to.length())
+    {
+        r = TVPCopyFile(from.AsStdString(), to.AsStdString());
+        TVPDeleteFile(from.AsStdString());
+        if (r)
+            TVPClearStorageCaches();
+    }
+
+    if (result)
+        *result = (tjs_int)r;
+
+    return TJS_S_OK;
+}
+TJS_END_NATIVE_STATIC_METHOD_DECL(/*func. name*/ moveFile)
 //----------------------------------------------------------------------
 TJS_BEGIN_NATIVE_METHOD_DECL(/*func. name*/ clearArchiveCache)
 {

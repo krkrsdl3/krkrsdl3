@@ -1,10 +1,10 @@
 #include "tjsCommHead.h"
 
 #include "tjsNativeLayer.h"
+#include "TVPDebug.h"
 
 #include "TVPMsg.h"
 #include "TVPColor.h"
-#include "TVPDebug.h"
 #include "LayerTreeOwner.h"
 #include "LayerBitmap.h"
 #include "TVPGraphicsLoader.h"

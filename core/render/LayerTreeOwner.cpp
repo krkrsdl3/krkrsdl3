@@ -10,7 +10,6 @@
 
 #include "TVPMsg.h"
 #include "LayerManager.h"
-#include "TVPDebug.h"
 
 tTVPLayerTreeOwner::tTVPLayerTreeOwner() : PrimaryLayerManagerIndex(0)
 {

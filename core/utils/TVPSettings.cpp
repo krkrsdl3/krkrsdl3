@@ -243,6 +243,35 @@ static void TVPDetectRender()
     }
 }
 
+//---------------------------------------------------------------------------
+// 独立存档目录参数（隔离存档）
+//---------------------------------------------------------------------------
+static bool TVPIsAbsolutePath(const ttstr& path)
+{
+    if (path.IsEmpty())
+        return false;
+    const tjs_char* p = path.c_str();
+    if (p[0] == '/' || p[0] == '\\')
+        return true;
+    // Windows 盘符：C:\... / C:/...
+    return ((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')) && p[1] == ':';
+}
+static ttstr TVPGetSaveDirArgument(int argc, char* argv[])
+{
+    static const char kPrefix[] = "-save-dir=";
+
+    for (int i = 1; i < argc; i++)
+    {
+        const char* a = argv[i];
+        if (!a || TJS_strncmp(a, kPrefix, sizeof(kPrefix) - 1))
+            continue;
+        if (a[sizeof(kPrefix) - 1])
+            return ttstr(a + sizeof(kPrefix) - 1);
+    }
+    return ttstr();
+}
+//---------------------------------------------------------------------------
+
 bool TVPParseArguments(int argc, char* argv[])
 {
     // exeName
@@ -274,8 +303,46 @@ bool TVPParseArguments(int argc, char* argv[])
     TVPAddImportantLog(TVPFormatMessage("(info) Game path : %1", TVPProjectData));
 
     // savedata path
-    TVPDataPath = TVPProjectDir + TJS_N("savedata/");
-    TVPNativeDataPath = TVPGetLocallyAccessibleName(TVPDataPath);
+    // 宿主传了 -save-dir 就用它（隔离存档）；没传仍是 <游戏目录>/savedata/。
+    ttstr save_dir = TVPGetSaveDirArgument(argc, argv);
+    if (!save_dir.IsEmpty())
+    {
+        // 相对路径按进程当前目录补全：桌面端手写 -save-dir=save 时很常见。
+        // 已经绝对就原样保留，不再做路径字符串的二次转换。
+        if (!TVPIsAbsolutePath(save_dir))
+        {
+            ttstr cwd = TVPGetDefaultFileDir().c_str();
+            if (!cwd.IsEmpty())
+            {
+                if (cwd.GetLastChar() != '/' && cwd.GetLastChar() != '\\')
+                    cwd += TJS_N("/");
+                save_dir = cwd + save_dir;
+            }
+        }
+        if (save_dir.GetLastChar() != '/' && save_dir.GetLastChar() != '\\')
+            save_dir += TJS_N("/");
+
+        const ttstr normalized = TVPNormalizeStorageName(save_dir);
+        const ttstr native =
+            normalized.IsEmpty() ? ttstr() : TVPGetLocallyAccessibleName(normalized);
+        if (native.IsEmpty())
+        {
+            TVPAddImportantLog(
+                TVPFormatMessage("(warn) invalid -save-dir '%1', using default", save_dir));
+        }
+        else
+        {
+            TVPDataPath = normalized;
+            TVPNativeDataPath = native;
+            // 引擎后面只做 open(..., "wb")，不会自己建目录。
+            TVPCreateFolders(TVPNativeDataPath);
+        }
+    }
+    if (TVPDataPath.IsEmpty())
+    {
+        TVPDataPath = TVPProjectDir + TJS_N("savedata/");
+        TVPNativeDataPath = TVPGetLocallyAccessibleName(TVPDataPath);
+    }
     TVPAddImportantLog(TVPFormatMessage("(info) Savedata path : %1", TVPDataPath));
 
     // set log output directory

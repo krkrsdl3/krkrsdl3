@@ -440,6 +440,21 @@ ttstr tTVPStorageMediaManager::NormalizeStorageName(const ttstr& name,
 
     tmp = media + TJS_N("://") + domain + path;
 
+    // 隔离存档：宿主把 TVPDataPath 指到独立目录后，KAG 侧写存档用的相对名
+    // "savedata/xxx" 仍然会按当前目录解析成 <游戏目录>/savedata/xxx。
+    // 在这里把这一个前缀改写到 TVPDataPath —— 读取、写入、存在性检查和
+    // 目录枚举都走本函数，所以游戏脚本不需要做任何改动。
+    // 没指定独立目录时 TVPDataPath 就是 <游戏目录>/savedata/，条件不成立。
+    if (TVPDataPath.GetLen() > 0 && !TVPProjectDir.IsEmpty())
+    {
+        const ttstr game_savedata = TVPProjectDir + TJS_N("savedata/");
+        if (game_savedata != TVPDataPath &&
+            !TJS_strncmp(tmp.c_str(), game_savedata.c_str(), game_savedata.GetLen()))
+        {
+            tmp = TVPDataPath + ttstr(tmp.c_str() + game_savedata.GetLen());
+        }
+    }
+
     return tmp;
 }
 //---------------------------------------------------------------------------

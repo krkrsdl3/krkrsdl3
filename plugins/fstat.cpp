@@ -985,9 +985,7 @@ NCB_ATTACH_CLASS(StoragesFstat, Storages)
     NCB_METHOD(getLastModifiedFileTime);
     NCB_METHOD(setLastModifiedFileTime);
     NCB_METHOD(exportFile);
-    NCB_METHOD(deleteFile);
     NCB_METHOD(truncateFile);
-    NCB_METHOD(moveFile);
     NCB_METHOD(dirlist);
     NCB_METHOD(dirlistEx);
     RawCallback("dirtree", &Class::dirtree, TJS_STATICMEMBER);
