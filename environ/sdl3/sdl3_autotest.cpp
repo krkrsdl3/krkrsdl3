@@ -18,6 +18,7 @@
 #include "TVPSettings.h"
 #include "TVPStorage.h"
 #include "TVPGraphicsLoader.h"
+#include "TVPApplication.h"
 #include "LayerBitmap.h"
 #include "WindowManager.h"
 #include "tjsError.h"
@@ -297,6 +298,8 @@ tjs_int TVPAutoTestStepFrames(tjs_int count)
     tjs_int stepped = 0;
     for (tjs_int i = 0; i < count; ++i)
     {
+        if (::Application)
+            ::Application->ProcessMessages();
         if (TVPDrawSceneOnce(0) != 0)
             break;
         ++stepped;

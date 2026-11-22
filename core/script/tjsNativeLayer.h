@@ -339,6 +339,10 @@ public:
     tTVPLayerType GetType() const { return Type; }
     void SetType(tTVPLayerType type);
 
+    //! 绘制设备要求的目标格式：只改变实际合成类型，脚本可见的 type 不变
+    tTVPLayerType GetDisplayType() const { return DisplayType; }
+    void SetDisplayTypeForRender(tTVPLayerType type);
+
     const tjs_char* GetTypeNameString();
 
     void ConvertLayerType(tTVPDrawFace fromtype);

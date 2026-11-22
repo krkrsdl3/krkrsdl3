@@ -1598,6 +1598,18 @@ tTVPBlendOperationMode tTJSNI_BaseLayer::GetOperationModeFromType() const
     }
 }
 //---------------------------------------------------------------------------
+void tTJSNI_BaseLayer::SetDisplayTypeForRender(tTVPLayerType type)
+{
+    // 绘制设备要求的目标格式（SetDesiredLayerType 的契约）：
+    // 只改变实际合成类型 DisplayType，Type（脚本可见的 layer.type）保持不变。
+    if (DisplayType != type)
+    {
+        DisplayType = type;
+        SetToCreateExposedRegion();
+        Update();
+    }
+}
+//---------------------------------------------------------------------------
 void tTJSNI_BaseLayer::SetType(tTVPLayerType type)
 {
     // set layer type to "type"

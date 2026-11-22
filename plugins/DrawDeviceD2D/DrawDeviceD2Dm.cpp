@@ -20,11 +20,18 @@
 #include "TVPWindow.h"
 #include "LayerBitmap.h"
 #include "TVPCompositor.h"
+#include "TVPDebug.h"
 #include "tjsDictionary.h"
 #include "tjsNative.h"
 #include "tjsNativeLayer.h"
+#include "tjsDebug.h"
+#include "TVPScript.h"
 
+#include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <map>
+#include <thread>
 #include <vector>
 
 #define NCB_MODULE_NAME TJS_N("DrawDeviceD2D.dll")
@@ -42,6 +49,7 @@ static std::map<iTJSDispatch2*, iTJSDispatch2*> ViewStates;
 struct ViewRect
 {
     tjs_int X = 0, Y = 0, W = 0, H = 0;
+    tjs_int Type = 0; //!< setRect 的第 5 个参数：该 view 的合成类型
 };
 static std::map<iTJSDispatch2*, ViewRect> ViewRects;
 
@@ -75,6 +83,8 @@ static tjs_error SetRect(tTJSVariant* result, tjs_int numparams, tTJSVariant** p
     vr.Y = (tjs_int)*param[1];
     vr.W = (tjs_int)*param[2] - vr.X;
     vr.H = (tjs_int)*param[3] - vr.Y;
+    if (numparams >= 5)
+        vr.Type = (tjs_int)*param[4];
     return TJS_S_OK;
 }
 
@@ -137,7 +147,8 @@ static tjs_error GetViewState(tTJSVariant* result, tjs_int /*numparams*/, tTJSVa
 }
 
 //! 取某个原生图层记录的目标矩形
-static bool GetRect(iTJSDispatch2* layerKey, tjs_int& x, tjs_int& y, tjs_int& w, tjs_int& h)
+static bool GetRect(iTJSDispatch2* layerKey, tjs_int& x, tjs_int& y, tjs_int& w, tjs_int& h,
+                    tjs_int* type = nullptr)
 {
     auto it = ViewRects.find(layerKey);
     if (it == ViewRects.end())
@@ -146,6 +157,8 @@ static bool GetRect(iTJSDispatch2* layerKey, tjs_int& x, tjs_int& y, tjs_int& w,
     y = it->second.Y;
     w = it->second.W;
     h = it->second.H;
+    if (type)
+        *type = it->second.Type;
     return w > 0 && h > 0;
 }
 
@@ -167,9 +180,46 @@ NCB_ATTACH_CLASS(LayerViewState, Layer)
 //---------------------------------------------------------------------------
 // 软件多图层绘制设备
 //---------------------------------------------------------------------------
+static bool GetViewRect(iTVPLayerManager* manager,
+                        tjs_int& x,
+                        tjs_int& y,
+                        tjs_int& w,
+                        tjs_int& h,
+                        tjs_int& opacity,
+                        bool& visible,
+                        tjs_int& order);
+
+//! 调试看门狗：主线程卡死时抓 TJS 调用栈
+static std::atomic<long long> gD2DRenderCalls{0};
+static std::atomic<bool> gD2DWatchdogStop{false};
+static std::atomic<bool> gD2DWatchdogStarted{false};
+
+static void StartD2DWatchdog()
+{
+    // 诊断看门狗已关闭：跨线程读 TJS 栈会崩，等主渲染路径稳定后再做。
+    (void)gD2DRenderCalls;
+    (void)gD2DWatchdogStop;
+    (void)gD2DWatchdogStarted;
+}
+
 class DrawDeviceD2D : public iTVPDrawDevice
 {
+    struct ManagerState
+    {
+        bool Dirty = true;
+        bool Valid = false;
+        tTVPRect Content; //!< 非透明像素包围盒（主画面合成时只处理这块）
+        tjs_int Order = 0; //!< 脚本 viewState.order
+        tTVPRect ViewRect;
+        bool HasView = false;
+        bool ViewVisible = true;
+        tjs_int ViewOpacity = 255;
+        tjs_int W = 0, H = 0;
+    };
+
     std::vector<iTVPLayerManager*> Managers;
+    std::map<iTVPLayerManager*, ManagerState> States;
+    bool CompositeDirty = true;
 
     TVPWindow* Window = nullptr;
     tTVPRect DestRect;
@@ -181,6 +231,14 @@ class DrawDeviceD2D : public iTVPDrawDevice
     tjs_int Width = 0, Height = 0; //!< 画面（虚拟）尺寸
 
     tjs_int LayerIndex = 0;
+    tjs_int DebugOnlyManager = -1; //!< 调试：只合成指定 manager（-1 = 全部）
+    //! 调试统计：每 120 帧打一行，确认卡顿发生在哪一段
+    tjs_int StatFrames = 0;
+    tjs_int StatImageChanges = 0;
+    tjs_int StatMainUpdates = 0;
+    tjs_int StatOverlayUpdates = 0;
+    tjs_int StatComposites = 0;
+    double StatRenderMs = 0.0;
     tjs_int StretchType = 0;
     tjs_real BicubicParam = 0.5;
     tjs_real TransState = 0.0;
@@ -193,6 +251,7 @@ public:
         Height(h)
     {
         DestRect = tTVPRect(0, 0, w, h);
+        StartD2DWatchdog();
     }
 
     //! 无参构造（used2d.tjs 的 create() 不带参数）
@@ -201,6 +260,7 @@ public:
         Height(1080)
     {
         DestRect = tTVPRect(0, 0, Width, Height);
+        StartD2DWatchdog();
     }
 
     ~DrawDeviceD2D()
@@ -266,8 +326,78 @@ public:
         return tTJSVariant(arr, arr);
     }
 
+    //! 调试：把所有 manager 的主图层信息与层树写进日志（kag.dump() 会调用）
+    void dump(tjs_int /*level*/)
+    {
+        tjs_int index = 0;
+        for (auto* m : Managers)
+        {
+            tTJSNI_BaseLayer* pri = m ? m->GetPrimaryLayer() : nullptr;
+            ttstr line(TJS_N("[D2D] manager "));
+            line += ttstr(index);
+            if (pri)
+            {
+                line += TJS_N(" name=");
+                line += pri->GetName();
+                line += TJS_N(" size=");
+                line += ttstr((tjs_int)pri->GetWidth());
+                line += TJS_N("x");
+                line += ttstr((tjs_int)pri->GetHeight());
+                line += TJS_N(" type=");
+                line += ttstr((tjs_int)pri->GetType());
+                line += TJS_N(" visible=");
+                line += ttstr((tjs_int)pri->GetVisible());
+                line += TJS_N(" opacity=");
+                line += ttstr(pri->GetOpacity());
+
+                tjs_int vx = 0, vy = 0, vw = 0, vh = 0, opacity = 255, vorder = 0;
+                bool visible = true;
+                const bool hasView = GetViewRect(m, vx, vy, vw, vh, opacity, visible, vorder);
+                line += TJS_N(" view=");
+                line += hasView ? TJS_N("1") : TJS_N("0");
+                if (hasView)
+                {
+                    line += TJS_N("(");
+                    line += ttstr(vx);
+                    line += TJS_N(",");
+                    line += ttstr(vy);
+                    line += TJS_N(",");
+                    line += ttstr(vw);
+                    line += TJS_N(",");
+                    line += ttstr(vh);
+                    line += TJS_N(") opa=");
+                    line += ttstr(opacity);
+                    line += TJS_N(" vis=");
+                    line += ttstr((tjs_int)visible);
+                    line += TJS_N(" order=");
+                    line += ttstr(vorder);
+                }
+            }
+            TVPAddImportantLog(line);
+            if (m)
+                m->DumpLayerStructure();
+            index++;
+        }
+    }
+
     tjs_int getLayerManagerIndex() const { return LayerIndex; }
     void setLayerManagerIndex(tjs_int index) { LayerIndex = index; }
+    tjs_int getDebugOnlyManager() const { return DebugOnlyManager; }
+    void setDebugOnlyManager(tjs_int index) { DebugOnlyManager = index; }
+
+    //! 调试：读某个 manager 的 DrawBuffer 像素（0xAARRGGBB）
+    tjs_int probeBuffer(tjs_int index, tjs_int x, tjs_int y)
+    {
+        if (index < 0 || index >= (tjs_int)Managers.size())
+            return -1;
+        auto* lm = dynamic_cast<tTVPLayerManager*>(Managers[index]);
+        if (!lm)
+            return -2;
+        tTVPBaseTexture* buf = lm->GetOrCreateDrawBuffer();
+        if (!buf)
+            return -3;
+        return (tjs_int)buf->GetPoint(x, y);
+    }
     tjs_int getStretchType() const { return StretchType; }
     void setStretchType(tjs_int t) { StretchType = t; }
     tjs_real getBicubicParam() const { return BicubicParam; }
@@ -295,14 +425,24 @@ public:
     void SetClipRectangle(const tTVPRect& /*rect*/) override {}
     void GetSrcSize(tjs_int& w, tjs_int& h) override;
 
-    void NotifyLayerResize(iTVPLayerManager* /*manager*/) override
+    void NotifyLayerResize(iTVPLayerManager* manager) override
     {
+        States[manager].Dirty = true;
+        CompositeDirty = true;
         if (Window)
             Window->NotifySrcResize();
     }
-    void NotifyLayerImageChange(iTVPLayerManager* /*manager*/) override
+    void NotifyLayerImageChange(iTVPLayerManager* manager) override
     {
-        // 层内容变化 → 请求窗口更新，否则 UpdateContent 不会触发
+        // 层内容变化 → 记脏并请求窗口更新，否则 UpdateContent 不会触发
+        States[manager].Dirty = true;
+        CompositeDirty = true;
+        if (++StatImageChanges % 120 == 0)
+        {
+            ttstr l(TJS_N("[D2D] imageChanges="));
+            l += ttstr(StatImageChanges);
+            TVPAddImportantLog(l);
+        }
         if (Window)
             Window->RequestUpdate();
     }
@@ -436,7 +576,11 @@ public:
     void RequestInvalidation(const tTVPRect& rect) override
     {
         for (auto* m : Managers)
+        {
+            States[m].Dirty = true;
             m->RequestInvalidation(rect);
+        }
+        CompositeDirty = true;
     }
     void Update() override
     {
@@ -444,9 +588,8 @@ public:
     }
     void Show() override
     {
-        // KAG 只对 D3D/GPU 设备每帧调 update()，普通设备靠失效通知；
-        // 这里每次送显前重画一遍，保证不会停在某一帧的旧内容上。
-        RenderFrame();
+        // 只送显。重绘在 Update()/update() 里完成；Show 再画一遍等于每帧双倍开销，
+        // 这是走进度卡顿的主要来源之一。
         Present();
     }
     bool WaitForVBlank(tjs_int* /*in_vblank*/, tjs_int* /*delayed*/) override { return false; }
@@ -491,6 +634,7 @@ private:
 //---------------------------------------------------------------------------
 void DrawDeviceD2D::Destruct()
 {
+    gD2DWatchdogStop.store(true);
     if (Window)
         Window->ReleaseBorrowedTexture();
     if (ScratchTexture)
@@ -509,18 +653,24 @@ void DrawDeviceD2D::AddLayerManager(iTVPLayerManager* manager)
         return;
     manager->AddRef();
 
+    // 主 manager（KAG 页面）保持 ltOpaque：背景图/对白/UI 作为不透明底。
+    // 额外 manager（ZoomView 地图根 ltAddAlpha）按加算 alpha 叠在主画面上。
+    // 这样原版 D2D 的 ltAddAlpha 语义成立，也不会把没有 alpha 通道的背景图弄黑。
     if (Managers.empty())
     {
         manager->SetDesiredLayerType(ltOpaque);
+        if (auto* lm = dynamic_cast<tTVPLayerManager*>(manager))
+            lm->SetHoldAlpha(true);
     }
     else
     {
-        // 额外 manager（ZoomView 根图层）保留 alpha，便于叠加到主画面上
         manager->SetDesiredLayerType(ltAlpha);
         if (auto* lm = dynamic_cast<tTVPLayerManager*>(manager))
             lm->SetHoldAlpha(false);
     }
     Managers.push_back(manager);
+    States[manager] = ManagerState();
+    CompositeDirty = true;
 }
 
 //---------------------------------------------------------------------------
@@ -532,6 +682,8 @@ void DrawDeviceD2D::RemoveLayerManager(iTVPLayerManager* manager)
         {
             manager->Release();
             Managers.erase(it);
+            States.erase(manager);
+            CompositeDirty = true;
             return;
         }
     }
@@ -615,8 +767,9 @@ void DrawDeviceD2D::ResetImeMode(iTVPLayerManager* manager)
 // 读取某个 manager 的 viewState 取景矩形
 //---------------------------------------------------------------------------
 static bool GetViewRect(iTVPLayerManager* manager, tjs_int& x, tjs_int& y, tjs_int& w, tjs_int& h,
-                        tjs_int& opacity, bool& visible)
+                        tjs_int& opacity, bool& visible, tjs_int& order)
 {
+    order = 0;
     if (!manager)
         return false;
     tTJSNI_BaseLayer* pri = manager->GetPrimaryLayer();
@@ -634,6 +787,16 @@ static bool GetViewRect(iTVPLayerManager* manager, tjs_int& x, tjs_int& y, tjs_i
     if (!vs)
         return false;
 
+    tTJSVariant v;
+    auto getInt = [&](const tjs_char* name, tjs_int def) -> tjs_int {
+        if (TJS_SUCCEEDED(vs->PropGet(0, name, NULL, &v, vs)))
+            return (tjs_int)v;
+        return def;
+    };
+
+    // viewState.order：脚本指定的合成顺序（ZoomView 用 setRootVisible(1,-1) 把地图放到最底层）
+    order = getInt(TJS_N("order"), 0);
+
     bool rectOk = viewstate::GetRect((iTJSDispatch2*)pri, x, y, w, h);
     if (!rectOk)
         rectOk = viewstate::GetRect(vs, x, y, w, h);
@@ -641,13 +804,6 @@ static bool GetViewRect(iTVPLayerManager* manager, tjs_int& x, tjs_int& y, tjs_i
     visible = pri->GetVisible();
     if (rectOk)
         return true;
-
-    tTJSVariant v;
-    auto getInt = [&](const tjs_char* name, tjs_int def) -> tjs_int {
-        if (TJS_SUCCEEDED(vs->PropGet(0, name, NULL, &v, vs)))
-            return (tjs_int)v;
-        return def;
-    };
 
     x = getInt(TJS_N("rectX"), 0);
     y = getInt(TJS_N("rectY"), 0);
@@ -661,22 +817,100 @@ static bool GetViewRect(iTVPLayerManager* manager, tjs_int& x, tjs_int& y, tjs_i
 //---------------------------------------------------------------------------
 void DrawDeviceD2D::RenderFrame()
 {
+    const auto statStart = std::chrono::steady_clock::now();
+    gD2DRenderCalls.fetch_add(1);
+    static tjs_int sRenderCalls = 0;
+    if (++sRenderCalls % 120 == 0)
+    {
+        ttstr l(TJS_N("[D2D] renderCalls="));
+        l += ttstr(sRenderCalls);
+        TVPAddImportantLog(l);
+    }
     if (Managers.empty())
         return;
 
-    // 1) 所有 manager 整幅重绘：
-    //    - 普通页面（KAG 的 fore/back）按不透明处理
-    //    - 带 viewState 的子画面（ZoomView 根图层）按 alpha 处理，并清成透明
+    auto statFinish = [&](bool composed) {
+        StatFrames++;
+        if (composed)
+            StatComposites++;
+        const auto now = std::chrono::steady_clock::now();
+        StatRenderMs += std::chrono::duration<double, std::milli>(now - statStart).count();
+        if (StatFrames % 120 == 0)
+        {
+            ttstr line(TJS_N("[D2D] frames="));
+            line += ttstr(StatFrames);
+            line += TJS_N(" mainUpd=");
+            line += ttstr(StatMainUpdates);
+            line += TJS_N(" ovlUpd=");
+            line += ttstr(StatOverlayUpdates);
+            line += TJS_N(" comp=");
+            line += ttstr(StatComposites);
+            line += TJS_N(" avgRenderMs=");
+            line += ttstr((tjs_int)(StatRenderMs / StatFrames));
+            TVPAddImportantLog(line);
+            StatFrames = StatMainUpdates = StatOverlayUpdates = StatComposites = 0;
+            StatRenderMs = 0.0;
+        }
+    };
+
+    // 1) 收集参与合成的 manager。
+    //    顺序、取景矩形、可见性、透明度全部来自脚本 viewState，内核不做猜测：
+    //    - ZoomView 的地图 manager 在脚本里 setRootVisible(1, -1) → order=-1，画在主画面下方
+    //    - 主 manager（无 viewState）order=0
+    //    只要画面上不止一个 manager，主画面就必须输出带 alpha 的缓冲，
+    //    设备的 DesiredLayerType(ltAlpha) 才有可能让 UI 的透明区域露出地图。
     struct DrawItem
     {
         iTVPLayerManager* Mgr = nullptr;
         iTVPBaseBitmap* Src = nullptr;
-        bool Overlay = false;
-        tjs_int X = 0, Y = 0, W = 0, H = 0, Opacity = 255;
+        tjs_int Order = 0;            //!< 脚本 viewState.order
+        tjs_int LayerType = ltOpaque; //!< 实际合成类型（DisplayType）
+        tjs_int Index = 0;
+        tTVPRect SrcRect;
+        tTVPRect DestRect;
+        tjs_int Opacity = 255;
     };
     std::vector<DrawItem> items;
 
     tjs_int screenW = 0, screenH = 0;
+    bool anyUpdated = false;
+
+    // 画面尺寸以主 manager（注册顺序第一个）的 primary 为准
+    if (iTVPLayerManager* first = Managers[0])
+    {
+        if (tTJSNI_BaseLayer* pri = first->GetPrimaryLayer())
+        {
+            screenW = (tjs_int)pri->GetWidth();
+            screenH = (tjs_int)pri->GetHeight();
+        }
+    }
+    if (screenW <= 0 || screenH <= 0)
+    {
+        statFinish(false);
+        return;
+    }
+
+    // 先数一下真正参与合成的 manager 数量（跳过不可见与标题阶段的 32x32 占位）
+    tjs_int drawnManagers = 0;
+    for (size_t i = 0; i < Managers.size(); ++i)
+    {
+        iTVPLayerManager* mgr = Managers[i];
+        tTJSNI_BaseLayer* pri = mgr ? mgr->GetPrimaryLayer() : nullptr;
+        if (!pri)
+            continue;
+        const tjs_int pw = (tjs_int)pri->GetWidth();
+        const tjs_int ph = (tjs_int)pri->GetHeight();
+        if (pw <= 0 || ph <= 0)
+            continue;
+        tjs_int vx = 0, vy = 0, vw = 0, vh = 0, opacity = 255, order = 0;
+        bool visible = true;
+        const bool hasView = GetViewRect(mgr, vx, vy, vw, vh, opacity, visible, order);
+        if (!visible)
+            continue;
+        if (hasView && pw <= 32 && ph <= 32)
+            continue;
+        drawnManagers++;
+    }
 
     for (size_t i = 0; i < Managers.size(); ++i)
     {
@@ -692,63 +926,126 @@ void DrawDeviceD2D::RenderFrame()
         const tjs_int ph = (tjs_int)pri->GetHeight();
         if (pw <= 0 || ph <= 0)
             continue;
-        if (pw > screenW)
-            screenW = pw;
-        if (ph > screenH)
-            screenH = ph;
 
         tjs_int vx = 0, vy = 0, vw = 0, vh = 0, opacity = 255;
         bool visible = true;
-        const bool overlay = GetViewRect(mgr, vx, vy, vw, vh, opacity, visible);
+        tjs_int order = 0;
+        const bool hasView = GetViewRect(mgr, vx, vy, vw, vh, opacity, visible, order);
 
-        if (auto* lm = dynamic_cast<tTVPLayerManager*>(mgr))
+        ManagerState& st = States[mgr];
+        const bool viewChanged = st.HasView != hasView || st.ViewVisible != visible ||
+                                 st.ViewOpacity != opacity || st.W != pw || st.H != ph ||
+                                 st.Order != order ||
+                                 st.ViewRect.left != vx || st.ViewRect.top != vy ||
+                                 st.ViewRect.right != vx + vw || st.ViewRect.bottom != vy + vh;
+        if (viewChanged)
         {
-            if (overlay)
+            st.HasView = hasView;
+            st.ViewVisible = visible;
+            st.ViewOpacity = opacity;
+            st.Order = order;
+            st.ViewRect = tTVPRect(vx, vy, vx + vw, vy + vh);
+            st.W = pw;
+            st.H = ph;
+            CompositeDirty = true;
+        }
+        if (!visible)
+            continue;
+
+        // ZoomView 根图层在标题阶段还是 32x32 的空占位，不能拿它覆盖主画面
+        if (hasView && pw <= 32 && ph <= 32)
+            continue;
+
+        auto* lm = dynamic_cast<tTVPLayerManager*>(mgr);
+        if (!lm)
+            continue;
+
+        // 主 manager 是容器根（hasImage=0）：多 manager 叠加时按设备要求的
+        // ltAlpha 目标格式合成，UI 的 alpha 才会累积到缓冲里。脚本可见的
+        // layer.type 仍是 ltOpaque，不改变任何脚本语义。
+        // 原版 D2D 的图层都是带 alpha 的位图，按 source-over 绘制：
+        // ltOpaque 在该设备上同样是"按图层自身的 alpha 合成"，所以这里把
+        // 主画面树里的 ltOpaque 图层改为按 ltAlpha 合成（不透明度由图像
+        // 自身的 alpha 决定）。纯不透明图像(alpha=255)的结果与 bmCopy 相同。
+        if (i == 0)
+        {
+            if (drawnManagers > 1)
             {
-                lm->SetHoldAlpha(false);
-                mgr->SetDesiredLayerType(ltAlpha);
+                for (tTJSNI_BaseLayer* lay : lm->GetAllNodes())
+                {
+                    if (lay && lay->GetType() == ltOpaque && lay->GetDisplayType() == ltOpaque)
+                        lay->SetDisplayTypeForRender(ltAlpha);
+                }
             }
             else
             {
-                lm->SetHoldAlpha(true);
-                mgr->SetDesiredLayerType(ltOpaque);
+                // 单 manager（剧情/标题）恢复脚本原语义：ltOpaque 图层按不透明复制。
+                for (tTJSNI_BaseLayer* lay : lm->GetAllNodes())
+                {
+                    if (lay && lay->GetType() == ltOpaque && lay->GetDisplayType() == ltAlpha)
+                        lay->SetDisplayTypeForRender(ltOpaque);
+                }
+                if (!pri->GetHasImage())
+                    pri->SetDisplayTypeForRender(pri->GetType());
             }
+            mgr->SetDesiredLayerType(drawnManagers > 1 ? ltAlpha : ltOpaque);
         }
 
-        if (overlay)
+        if (st.Dirty || !st.Valid)
         {
-            if (tTVPBaseTexture* buf = dynamic_cast<tTVPBaseTexture*>(mgr->GetDrawBuffer()))
-            {
-                const tjs_int bw = (tjs_int)buf->GetWidth();
-                const tjs_int bh = (tjs_int)buf->GetHeight();
-                if ((tjs_int)pri->GetWidth() != bw || (tjs_int)pri->GetHeight() != bh)
-                    buf->SetSize((tjs_uint)pw, (tjs_uint)ph, false);
-                buf->Fill(tTVPRect(0, 0, (tjs_int)buf->GetWidth(), (tjs_int)buf->GetHeight()), 0x00000000);
-            }
+            lm->SetHoldAlpha(false);
+
+            tTVPBaseTexture* buf = lm->GetOrCreateDrawBuffer();
+            if (!buf)
+                continue;
+            if ((tjs_int)buf->GetWidth() != pw || (tjs_int)buf->GetHeight() != ph)
+                buf->SetSize((tjs_uint)pw, (tjs_uint)ph, false);
+            buf->Fill(tTVPRect(0, 0, pw, ph), 0x00000000u);
+
+            mgr->RequestInvalidation(tTVPRect(0, 0, pw, ph));
+            mgr->UpdateToDrawDevice();
+
+            st.Content = tTVPRect(0, 0, pw, ph);
+            st.Dirty = false;
+            st.Valid = true;
+            anyUpdated = true;
+            CompositeDirty = true;
+            if (i == 0)
+                StatMainUpdates++;
+            else
+                StatOverlayUpdates++;
         }
 
-        mgr->RequestInvalidation(tTVPRect(0, 0, pw, ph));
-        mgr->UpdateToDrawDevice();
-
-        // ZoomView 根图层在标题阶段还是 32x32 的空占位，不能拿它覆盖主画面
-        if (overlay && pw <= 32 && ph <= 32)
+        iTVPBaseBitmap* src = lm->GetDrawBuffer();
+        if (!src)
             continue;
 
         DrawItem it;
         it.Mgr = mgr;
-        it.Src = mgr->GetDrawBuffer();
-        it.Overlay = overlay;
-        it.X = vx;
-        it.Y = vy;
-        it.W = vw;
-        it.H = vh;
+        it.Src = src;
+        it.Index = (tjs_int)i;
         it.Opacity = opacity;
-        if (it.Src)
-            items.push_back(it);
+        it.Order = order;
+        it.LayerType = (tjs_int)pri->GetDisplayType();
+        it.SrcRect = tTVPRect(0, 0, pw, ph);
+        if (hasView)
+            it.DestRect = tTVPRect(vx, vy, vx + vw, vy + vh);
+        else
+            it.DestRect = tTVPRect(0, 0, screenW, screenH);
+        items.push_back(it);
     }
 
-    if (screenW <= 0 || screenH <= 0)
+    if (items.empty())
+    {
+        statFinish(false);
         return;
+    }
+
+    if (!CompositeDirty && Composite && !anyUpdated)
+    {
+        statFinish(false);
+        return; // 没有任何图层变化，复用上一帧的合成结果
+    }
 
     if (!Composite || (tjs_int)Composite->GetWidth() != screenW || (tjs_int)Composite->GetHeight() != screenH)
     {
@@ -756,52 +1053,64 @@ void DrawDeviceD2D::RenderFrame()
         Composite = new tTVPDestTexture(screenW, screenH);
     }
     if (!Composite)
+    {
+        statFinish(false);
         return;
+    }
+
+    // 2) 按脚本声明的顺序合成到同一张画面：
+    //    order 小的先画（地图 -1），主画面 0 在其上；每个 manager 用自己
+    //    根图层的实际合成类型：ltAddAlpha（地图）→ bmAddAlpha，ltAlpha
+    //    （主画面容器）→ bmAlpha，ltOpaque（真不透明管理器）→ bmCopy。
+    std::stable_sort(items.begin(), items.end(), [](const DrawItem& a, const DrawItem& b) {
+        return a.Order != b.Order ? a.Order < b.Order : a.Index < b.Index;
+    });
 
     Composite->Fill(tTVPRect(0, 0, screenW, screenH), (tjs_uint32)ClearColor);
 
-    // 2) 先画整页（fore/back），再画带 viewState 的叠加画面
-    for (int pass = 0; pass < 2; ++pass)
+    for (const DrawItem& it : items)
     {
-        for (const DrawItem& it : items)
+        if (DebugOnlyManager >= 0 && it.Index != DebugOnlyManager)
+            continue;
+        if (!it.Src)
+            continue;
+
+        tTVPRect dest = it.DestRect;
+        if (dest.left < 0) dest.left = 0;
+        if (dest.top < 0) dest.top = 0;
+        if (dest.right > screenW) dest.right = screenW;
+        if (dest.bottom > screenH) dest.bottom = screenH;
+        if (dest.get_width() <= 0 || dest.get_height() <= 0)
+            continue;
+
+        tTVPBBBltMethod method;
+        switch (it.LayerType)
         {
-            if ((pass == 0) == it.Overlay)
-                continue;
-            if (!it.Src)
-                continue;
-
-            const tjs_int dw = (tjs_int)it.Src->GetWidth();
-            const tjs_int dh = (tjs_int)it.Src->GetHeight();
-            if (dw <= 0 || dh <= 0)
-                continue;
-
-            tjs_int destX = 0, destY = 0, destW = screenW, destH = screenH;
-            tjs_int opa = 255;
-            if (it.Overlay)
-            {
-                if (!it.Src || it.W <= 0 || it.H <= 0)
-                    continue;
-                destX = it.X;
-                destY = it.Y;
-                destW = it.W;
-                destH = it.H;
-                opa = it.Opacity;
-            }
-
-            tTVPRect dest(destX, destY, destX + destW, destY + destH);
-            if (dest.left < 0) dest.left = 0;
-            if (dest.top < 0) dest.top = 0;
-            if (dest.right > screenW) dest.right = screenW;
-            if (dest.bottom > screenH) dest.bottom = screenH;
-            if (dest.get_width() <= 0 || dest.get_height() <= 0)
-                continue;
-
-            // 图层缓冲的 alpha 通道不可靠（多数为 0），叠加画面按 bmCopy 直接覆盖
-            Composite->StretchBlt(tTVPRect(0, 0, screenW, screenH), dest, it.Src,
-                                  tTVPRect(0, 0, dw, dh), bmCopy, opa, true,
-                                  StretchType == 0 ? stFastLinear : stNearest);
+            case ltAddAlpha:
+                method = bmAddAlpha;
+                break;
+            case ltAdditive:
+                method = bmAdd;
+                break;
+            case ltSubtractive:
+                method = bmSub;
+                break;
+            case ltMultiplicative:
+                method = bmMul;
+                break;
+            case ltAlpha:
+                method = bmAlpha;
+                break;
+            default:
+                method = bmCopy;
+                break;
         }
+
+        Composite->StretchBlt(tTVPRect(0, 0, screenW, screenH), dest, it.Src, it.SrcRect, method,
+                              it.Opacity, false, stNearest);
     }
+    CompositeDirty = false;
+    statFinish(true);
 }
 
 void DrawDeviceD2D::Present()
@@ -848,6 +1157,9 @@ void DrawDeviceD2D::Present()
 //---------------------------------------------------------------------------
 // 脚本类
 //---------------------------------------------------------------------------
+// 说明：原版 D2Dm 的 GPU 路径需要引擎提供 primaryLayers/backIndex/frontIndex
+// 与 GPUBaseLayer 的原生图层模型（baselayer.tjs 依赖），本实现没有这套结构。
+// 强行声明为 GPUDrawDevice 会在 baselayer.tjs 处抛异常，因此保持软件设备语义。
 NCB_REGISTER_CLASS(DrawDeviceD2D)
 {
     NCB_CONSTRUCTOR(());
@@ -857,6 +1169,8 @@ NCB_REGISTER_CLASS(DrawDeviceD2D)
     NCB_METHOD(setSize);
     NCB_PROPERTY(clearColor, getClearColor, setClearColor);
     NCB_PROPERTY(layerManagerIndex, getLayerManagerIndex, setLayerManagerIndex);
+    NCB_PROPERTY(debugOnlyManager, getDebugOnlyManager, setDebugOnlyManager);
+    NCB_METHOD(probeBuffer);
     NCB_PROPERTY(stretchType, getStretchType, setStretchType);
     NCB_PROPERTY(bicubicParam, getBicubicParam, setBicubicParam);
     NCB_PROPERTY(transState, getTransState, setTransState);
@@ -873,4 +1187,5 @@ NCB_REGISTER_CLASS(DrawDeviceD2D)
     NCB_METHOD(setOffset);
     NCB_METHOD(recreate);
     NCB_METHOD(finalize);
+    NCB_METHOD(dump);
 }
