@@ -610,6 +610,13 @@ void TVPWindow::SetZoom(tjs_int numer, tjs_int denom)
     AdjustNumerAndDenom(numer, denom);
     ZoomNumer = numer;
     ZoomDenom = denom;
+    if (isFullScreen)
+    {
+        // 全屏内容按 1:1 呈现；保留窗口缩放设置，退出全屏后恢复
+        ActualZoomNumer = 1;
+        ActualZoomDenom = 1;
+        return;
+    }
     ActualZoomDenom = denom;
     ActualZoomNumer = numer;
     RecalcPaintBox();
@@ -714,11 +721,28 @@ void TVPWindow::SetCaption(const std::string& s)
 //---------------------------------------------------------------------------
 void TVPWindow::SetFullScreenMode(bool isFull)
 {
-    if (TVPIsFirstWindow(this))
+    if (!TVPIsFirstWindow(this))
+        return;
+
+    const bool changed = isFullScreen != isFull;
+    isFullScreen = isFull;
+    if (isFullScreen)
     {
-        TVPSetWindowFullscreen(isFull);
-        isFullScreen = isFull;
+        // 全屏内容按 1:1 呈现；窗口缩放设置仍保留，供退出全屏时恢复
+        ActualZoomNumer = 1;
+        ActualZoomDenom = 1;
     }
+    else
+    {
+        ActualZoomNumer = ZoomNumer;
+        ActualZoomDenom = ZoomDenom;
+    }
+    TVPSetWindowFullscreen(isFull);
+    if (!changed)
+        return;
+
+    // 全屏/窗口切换会改变画布尺寸；通知 KAG 侧重算 sysbase/ZoomView 取景矩形
+    OnResize();
 }
 //---------------------------------------------------------------------------
 bool TVPWindow::GetWindowActive() const

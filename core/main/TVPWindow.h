@@ -118,6 +118,7 @@ class TVPWindow : public iTVPLayerTreeOwner
 protected:
     tTVPMouseCursorState MouseCursorState = mcsVisible;
     tjs_int HintDelay = 500;
+    // 窗口模式下的缩放设置；全屏时 ActualZoom* 固定为 1:1，退出全屏后恢复
     tjs_int ZoomDenom = 1; // Zooming factor denominator (setting)
     tjs_int ZoomNumer = 1; // Zooming factor numerator (setting)
     double TouchScaleThreshold = 5, TouchRotateThreshold = 5;
@@ -201,7 +202,7 @@ public:
     void SetZoom(tjs_int numer, tjs_int denom);
     void SetZoomNumer(tjs_int n) { SetZoom(n, ZoomDenom); }
     tjs_int GetZoomNumer() const { return ZoomNumer; }
-    void SetZoomDenom(tjs_int d) { SetZoom(ZoomDenom, d); }
+    void SetZoomDenom(tjs_int d) { SetZoom(ZoomNumer, d); }
     tjs_int GetZoomDenom() const { return ZoomDenom; }
     void ZoomRectangle(tjs_int& left, tjs_int& top, tjs_int& right, tjs_int& bottom);
     // 统一呈现入口：把 compositor 体系（iTVPRenderBackend）的可采样贴图呈现到窗口 sprite

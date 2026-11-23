@@ -45,6 +45,9 @@ namespace viewstate
 //! 每个 Layer 的 TJS 对象对应一个 viewState 字典
 static std::map<iTJSDispatch2*, iTJSDispatch2*> ViewStates;
 
+//! viewState 字典 -> 拥有它的 Layer TJS 对象（setRect 的 objthis 是字典，不是 Layer）
+static std::map<iTJSDispatch2*, iTJSDispatch2*> ViewStateOwners;
+
 //! 取景矩形（key 为原生图层指针）
 struct ViewRect
 {
@@ -75,6 +78,14 @@ static tjs_error SetRect(tTJSVariant* result, tjs_int numparams, tTJSVariant** p
         return TJS_S_OK;
 
     tTJSNI_BaseLayer* layer = NativeLayer(objthis);
+    if (!layer)
+    {
+        // 脚本以 layer.viewState.setRect(...) 调用时 objthis 是字典；
+        // 通过字典 -> Layer 的映射找回真正的原生图层
+        auto owner = ViewStateOwners.find(objthis);
+        if (owner != ViewStateOwners.end())
+            layer = NativeLayer(owner->second);
+    }
     if (!layer)
         return TJS_S_OK;
 
@@ -142,6 +153,7 @@ static tjs_error GetViewState(tTJSVariant* result, tjs_int /*numparams*/, tTJSVa
     objthis->AddRef();
     d->AddRef();
     ViewStates[objthis] = d;
+    ViewStateOwners[d] = objthis;
     *result = d;
     return TJS_S_OK;
 }
@@ -223,12 +235,25 @@ class DrawDeviceD2D : public iTVPDrawDevice
 
     TVPWindow* Window = nullptr;
     tTVPRect DestRect;
+    tTVPRect ScreenRect; //!< setScreenRect 记录的屏幕矩形
+    bool HasScreenRect = false;
+    tjs_int PrimaryW = 0, PrimaryH = 0; //!< setPrimarySize 记录的主画面尺寸
+    tjs_int OffsetX = 0, OffsetY = 0;   //!< setOffset 记录的屏幕偏移
 
     tTVPDestTexture* Composite = nullptr; //!< 合成目标
     void* ScratchTexture = nullptr;       //!< 呈现用贴图
     tjs_int ScratchW = 0, ScratchH = 0;
 
     tjs_int Width = 0, Height = 0; //!< 画面（虚拟）尺寸
+
+    // ZoomView 的取景矩形由脚本按“窗口缩放”计算；窗口/全屏或主画面尺寸变化后
+    // 需要让脚本重算一次，否则矩形会停留在旧尺寸（典型：全屏后仍是 3/4）。
+    bool PendingZoomViewRefresh = false;
+    bool RefreshingZoomView = false;
+    bool ZoomProbeValid = false;
+    bool ZoomViewRefreshFailed = false;
+    tjs_int LastZoomNumer = 1, LastZoomDenom = 1;
+    bool LastFullScreen = false;
 
     tjs_int LayerIndex = 0;
     tjs_int DebugOnlyManager = -1; //!< 调试：只合成指定 manager（-1 = 全部）
@@ -284,17 +309,46 @@ public:
     }
     tjs_int64 getInterface() { return (tjs_int64)(tjs_intptr_t)(iTVPDrawDevice*)this; }
 
-    void setScreenRect(tjs_int /*x*/, tjs_int /*y*/, tjs_int w, tjs_int h)
+    void setScreenRect(tjs_int x, tjs_int y, tjs_int w, tjs_int h)
     {
-        Width = w;
-        Height = h;
+        const bool valid = w > 0 && h > 0;
+        const bool changed = HasScreenRect != valid || ScreenRect.left != x ||
+                             ScreenRect.top != y || ScreenRect.right != x + w ||
+                             ScreenRect.bottom != y + h;
+        if (!changed)
+            return;
+        ScreenRect = tTVPRect(x, y, x + w, y + h);
+        HasScreenRect = valid;
+        if (valid)
+        {
+            Width = w;
+            Height = h;
+        }
+        CompositeDirty = true;
+        PendingZoomViewRefresh = true;
     }
     void setPrimarySize(tjs_int w, tjs_int h)
     {
-        Width = w;
-        Height = h;
+        if (PrimaryW == w && PrimaryH == h)
+            return;
+        PrimaryW = w;
+        PrimaryH = h;
+        if (w > 0 && h > 0)
+        {
+            Width = w;
+            Height = h;
+        }
+        CompositeDirty = true;
+        PendingZoomViewRefresh = true;
     }
-    void setOffset(tjs_int /*x*/, tjs_int /*y*/) {}
+    void setOffset(tjs_int x, tjs_int y)
+    {
+        if (OffsetX == x && OffsetY == y)
+            return;
+        OffsetX = x;
+        OffsetY = y;
+        CompositeDirty = true;
+    }
 
     void update(tjs_real /*diff*/)
     {
@@ -420,7 +474,16 @@ public:
     void AddLayerManager(iTVPLayerManager* manager) override;
     void RemoveLayerManager(iTVPLayerManager* manager) override;
 
-    void SetDestRectangle(const tTVPRect& rect) override { DestRect = rect; }
+    void SetDestRectangle(const tTVPRect& rect) override
+    {
+        DestRect = rect;
+        if (!HasScreenRect && rect.get_width() > 0 && rect.get_height() > 0)
+        {
+            ScreenRect = rect;
+            HasScreenRect = true;
+            CompositeDirty = true;
+        }
+    }
     void SetWindowSize(tjs_int /*w*/, tjs_int /*h*/) override {}
     void SetClipRectangle(const tTVPRect& /*rect*/) override {}
     void GetSrcSize(tjs_int& w, tjs_int& h) override;
@@ -429,6 +492,8 @@ public:
     {
         States[manager].Dirty = true;
         CompositeDirty = true;
+        if (!RefreshingZoomView)
+            PendingZoomViewRefresh = true;
         if (Window)
             Window->NotifySrcResize();
     }
@@ -627,6 +692,8 @@ private:
         Present();
     }
 
+    bool ProbeZoomViewRefresh();
+    void TryRefreshZoomView();
     void RenderFrame();
     void Present();
 };
@@ -671,6 +738,7 @@ void DrawDeviceD2D::AddLayerManager(iTVPLayerManager* manager)
     Managers.push_back(manager);
     States[manager] = ManagerState();
     CompositeDirty = true;
+    PendingZoomViewRefresh = true;
 }
 
 //---------------------------------------------------------------------------
@@ -695,6 +763,18 @@ void DrawDeviceD2D::GetSrcSize(tjs_int& w, tjs_int& h)
     iTVPLayerManager* m = Primary();
     if (m && m->GetPrimaryLayerSize(w, h))
         return;
+    if (PrimaryW > 0 && PrimaryH > 0)
+    {
+        w = PrimaryW;
+        h = PrimaryH;
+        return;
+    }
+    if (HasScreenRect && ScreenRect.get_width() > 0 && ScreenRect.get_height() > 0)
+    {
+        w = ScreenRect.get_width();
+        h = ScreenRect.get_height();
+        return;
+    }
     w = Width;
     h = Height;
 }
@@ -815,6 +895,104 @@ static bool GetViewRect(iTVPLayerManager* manager, tjs_int& x, tjs_int& y, tjs_i
 }
 
 //---------------------------------------------------------------------------
+// 窗口缩放/全屏变化探测：脚本的 ZoomView 取景矩形是按窗口缩放算的，
+// 窗口内容尺寸变化后必须让脚本重算一次。
+//---------------------------------------------------------------------------
+bool DrawDeviceD2D::ProbeZoomViewRefresh()
+{
+    bool changed = !ZoomProbeValid;
+    if (Window)
+    {
+        const bool full = Window->GetFullScreenMode();
+        const tjs_int numer = Window->GetZoomNumer();
+        const tjs_int denom = Window->GetZoomDenom();
+        if (!ZoomProbeValid || full != LastFullScreen || numer != LastZoomNumer ||
+            denom != LastZoomDenom)
+        {
+            LastFullScreen = full;
+            LastZoomNumer = numer;
+            LastZoomDenom = denom;
+            ZoomProbeValid = true;
+            changed = true;
+        }
+    }
+    if (changed)
+    {
+        PendingZoomViewRefresh = true;
+        CompositeDirty = true;
+    }
+    return changed;
+}
+
+//---------------------------------------------------------------------------
+// 让 KAG 的 ZoomView 用当前窗口/画布尺寸重算取景矩形。
+// 只在窗口缩放/全屏/主画面尺寸变化后调用，避免每帧进入脚本。
+//---------------------------------------------------------------------------
+void DrawDeviceD2D::TryRefreshZoomView()
+{
+    if (!PendingZoomViewRefresh || RefreshingZoomView || !Window)
+        return;
+
+    iTJSDispatch2* owner = Window->GetOwnerNoAddRef();
+    if (!owner)
+        return;
+
+    tTJSVariant zoomViewVar;
+    if (TJS_FAILED(owner->PropGet(0, TJS_N("ZoomView"), NULL, &zoomViewVar, owner)))
+        return; // 地图尚未创建：保留 pending，下一帧再试
+    iTJSDispatch2* zoomView = zoomViewVar.AsObjectNoAddRef();
+    if (!zoomView)
+        return;
+
+    RefreshingZoomView = true;
+    try
+    {
+        tTJSVariant result;
+        zoomView->FuncCall(0, TJS_N("resetScreenRect"), NULL, &result, 0, NULL, zoomView);
+        PendingZoomViewRefresh = false;
+        ZoomViewRefreshFailed = false;
+        CompositeDirty = true;
+    }
+    catch (...)
+    {
+        PendingZoomViewRefresh = false;
+        if (!ZoomViewRefreshFailed)
+        {
+            ZoomViewRefreshFailed = true;
+            TVPAddImportantLog(ttstr(TJS_N("[D2D] ZoomView.resetScreenRect failed")));
+        }
+    }
+    RefreshingZoomView = false;
+}
+
+//---------------------------------------------------------------------------
+// 脚本按 window zoom 算出的取景矩形（例如全屏下仍是 1440x810）映射回
+// 实际内容尺寸（1920x1080）。只有矩形正好等于“内容尺寸 * zoom”时才映射，
+// 自定义视口/真正的 letterbox 保持原样。
+//---------------------------------------------------------------------------
+static tTVPRect MapZoomedViewRect(const tTVPRect& view, tjs_int screenW, tjs_int screenH,
+                                  tjs_int numer, tjs_int denom)
+{
+    if (numer <= 0 || denom <= 0 || numer >= denom || view.get_width() <= 0 ||
+        view.get_height() <= 0)
+        return view;
+
+    const tjs_int expectedW = (tjs_int)((tjs_int64)screenW * numer / denom);
+    const tjs_int expectedH = (tjs_int)((tjs_int64)screenH * numer / denom);
+    const tjs_int dw = view.get_width() - expectedW;
+    const tjs_int dh = view.get_height() - expectedH;
+    if (dw < -2 || dw > 2 || dh < -2 || dh > 2)
+        return view;
+
+    tTVPRect mapped;
+    mapped.left = (tjs_int)((tjs_int64)view.left * denom / numer);
+    mapped.top = (tjs_int)((tjs_int64)view.top * denom / numer);
+    mapped.right = (tjs_int)((tjs_int64)view.right * denom / numer);
+    mapped.bottom = (tjs_int)((tjs_int64)view.bottom * denom / numer);
+    return mapped;
+}
+
+//---------------------------------------------------------------------------
 void DrawDeviceD2D::RenderFrame()
 {
     const auto statStart = std::chrono::steady_clock::now();
@@ -828,6 +1006,10 @@ void DrawDeviceD2D::RenderFrame()
     }
     if (Managers.empty())
         return;
+
+    // 窗口缩放/全屏/画布变化后，先让脚本重算 ZoomView 取景矩形，再收集 manager
+    ProbeZoomViewRefresh();
+    TryRefreshZoomView();
 
     auto statFinish = [&](bool composed) {
         StatFrames++;
@@ -882,6 +1064,20 @@ void DrawDeviceD2D::RenderFrame()
         {
             screenW = (tjs_int)pri->GetWidth();
             screenH = (tjs_int)pri->GetHeight();
+        }
+    }
+    // 主 manager 尚未建立有效主图层时，退回脚本 setPrimarySize/setScreenRect 的记录
+    if (screenW <= 0 || screenH <= 0)
+    {
+        if (PrimaryW > 0 && PrimaryH > 0)
+        {
+            screenW = PrimaryW;
+            screenH = PrimaryH;
+        }
+        else if (HasScreenRect)
+        {
+            screenW = ScreenRect.get_width();
+            screenH = ScreenRect.get_height();
         }
     }
     if (screenW <= 0 || screenH <= 0)
@@ -1029,9 +1225,20 @@ void DrawDeviceD2D::RenderFrame()
         it.LayerType = (tjs_int)pri->GetDisplayType();
         it.SrcRect = tTVPRect(0, 0, pw, ph);
         if (hasView)
+        {
             it.DestRect = tTVPRect(vx, vy, vx + vw, vy + vh);
+            if (Window)
+                it.DestRect = MapZoomedViewRect(it.DestRect, screenW, screenH,
+                                                Window->GetZoomNumer(), Window->GetZoomDenom());
+            it.DestRect.left += OffsetX;
+            it.DestRect.top += OffsetY;
+            it.DestRect.right += OffsetX;
+            it.DestRect.bottom += OffsetY;
+        }
         else
+        {
             it.DestRect = tTVPRect(0, 0, screenW, screenH);
+        }
         items.push_back(it);
     }
 
