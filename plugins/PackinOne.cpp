@@ -570,6 +570,24 @@ static void parse_value(Reader& r, tTJSVariant& out, int depth)
     {
         case 0: out.Clear(); break;
         case 2: out = read_string(r); break;
+        case 3:
+        {
+            uint32_t count = r.u32();
+            if (count > 16u * 1024u * 1024u)
+                throw 1;
+            const uint8_t* bytes = r.take(count);
+            iTJSDispatch2* arr = TJSCreateArrayObject();
+            if (!arr)
+                throw 1;
+            for (uint32_t i = 0; i < count; i++)
+            {
+                tTJSVariant item((tjs_int)bytes[i]);
+                arr->PropSetByNum(TJS_MEMBERENSURE, i, &item, arr);
+            }
+            out.SetObject(arr, arr);
+            arr->Release();
+            break;
+        }
         case 4: out = (tjs_int64)(int64_t)r.u64(); break;
         case 5:
         {
@@ -1209,9 +1227,10 @@ public:
 
     //! 外层包装：任何异常都不能漏到 TJS 侧。
     /*!
-        游戏在加载 txtevlist.tjs 时会用不支持的 PBD（sisconratio.pbd，值类型 0x03）
-        调 loadDataPack；原生抛出的 TJS 异常若逃到脚本层会直接终止进程，
-        所以这里统一吞掉并返回空值，让调用方走它自己的回退路径。
+        PBD 解析失败时返回空值，让调用方走自己的回退路径。注意
+        sisconratio.pbd（值类型 0x03）不能落进这里：default.tjs 的
+        RPGSetSisterCondition 会直接对返回值索引，空值会导致第二次进入
+        RPG 模式时异常；parse_value 已支持 0x03 字节数组。
     */
     static tjs_error loadDataPack(tTJSVariant* result, tjs_int numparams, tTJSVariant** param,
                                   iTJSDispatch2* objthis)
