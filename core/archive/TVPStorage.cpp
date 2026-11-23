@@ -644,7 +644,15 @@ bool TVPIsExistentStorageNoSearchNoNormalize(const ttstr& name)
         ttstr arcname(name, (int)(sharp_pos - name.c_str()));
 
         tTVPArchive* arc;
-        arc = TVPArchiveCache.Get(arcname);
+        try
+        {
+            arc = TVPArchiveCache.Get(arcname);
+        }
+        catch (...)
+        {
+            // 归档不存在时 isExistentStorage 应返回 false，而不是抛出异常。
+            return false;
+        }
         bool ret;
         try
         {
@@ -886,7 +894,17 @@ static tjs_uint TVPRebuildAutoPathTable()
             tjs_int in_arc_name_len = in_arc_name.GetLen();
 
             tTVPArchive* arc;
-            arc = TVPArchiveCache.Get(arcname);
+            try
+            {
+                arc = TVPArchiveCache.Get(arcname);
+            }
+            catch (...)
+            {
+                // auto path 指向的归档不存在/损坏。
+                // 这里只应跳过这一条 auto path，不能让整个启动失败。
+                TVPAddLog(ttstr(TJS_N("(warning) auto path archive is not available: ")) + arcname);
+                continue;
+            }
 
             try
             {

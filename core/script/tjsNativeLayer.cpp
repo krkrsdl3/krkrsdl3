@@ -2832,7 +2832,39 @@ iTJSDispatch2* tTJSNI_BaseLayer::LoadImages(const ttstr& name, tjs_uint32 colork
     ttstr provincename;
     iTJSDispatch2* metainfo = NULL;
 
-    TVPLoadGraphic(MainImage, name, colorkey, 0, 0, glmNormal, &provincename, &metainfo);
+    auto loadMainGraphic = [&](const ttstr& n) {
+        provincename.Clear();
+        if (metainfo)
+        {
+            metainfo->Release();
+            metainfo = NULL;
+        }
+        TVPLoadGraphic(MainImage, n, colorkey, 0, 0, glmNormal, &provincename, &metainfo);
+    };
+
+    try
+    {
+        loadMainGraphic(name);
+    }
+    catch (...)
+    {
+        // KAG 存档缩略图兼容：dataN.jpg 若是纯数据包（没有图片头），
+        // 退回同名 dataN.bmp —— 旧版标准存档的缩略图就存在那个文件里。
+        bool retried = false;
+        const tjs_uint len = name.GetLen();
+        if (len > 4 && TJS_strcasecmp(name.c_str() + len - 4, TJS_N(".jpg")) == 0)
+        {
+            ttstr alt = name.SubString(0, len - 4) + TJS_N(".bmp");
+            if (TVPIsExistentStorage(alt))
+            {
+                loadMainGraphic(alt);
+                retried = true;
+            }
+        }
+        if (!retried)
+            throw;
+    }
+
     try
     {
 

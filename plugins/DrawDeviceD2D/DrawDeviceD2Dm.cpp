@@ -34,7 +34,7 @@
 #include <thread>
 #include <vector>
 
-#define NCB_MODULE_NAME TJS_N("DrawDeviceD2D.dll")
+#define NCB_MODULE_NAME TJS_N("DrawDeviceD2Dm.dll")
 
 //---------------------------------------------------------------------------
 // Layer.viewState

@@ -284,7 +284,8 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[])
 //   3. 按下后原地抬起   -> MouseDown + MouseUp，作为一次点击
 //   4. 拖动后抬起       -> 不发送 MouseUp（否则引擎会额外合成一次 Click，拖动看 hover 时误翻页）
 //   5. 双指按住并上下移 -> 模拟滚轮（每 SCROLL_STEP_PIXELS 像素一格），不再触发右键
-//   6. 按住不动再移动   -> 先按下左键再拖动，模拟桌面端的"拖拽"（滑块、拖放等）
+//   6. 按住不动超过 150ms -> 补发左键按下
+//   7. 按住不动再移动   -> 先按下左键再拖动，模拟桌面端的"拖拽"（滑块、拖放等）
 enum TouchState
 {
     STATE_IDLE,
@@ -327,6 +328,8 @@ static const Uint64 MOVE_SEND_INTERVAL_MS = 8;
 static const float SCROLL_STEP_PIXELS = 40.0f;
 // 按住多少毫秒之后再移动，才算"按住左键拖拽"（否则算 hover 移动）
 static const Uint64 LONG_PRESS_MS = 350;
+// 按住多少毫秒之后，把触摸直接当成"左键已按下"
+static const Uint64 HOLD_TO_PRESS_MS = 150;
 // 左键是否处于按下状态（长按拖拽期间为 true）
 static bool mouseButtonHeld = false;
 // 双指滚轮状态：锚点（两指平均 Y）、累计位移、本次手势是否已经滚动过
@@ -336,6 +339,27 @@ static bool twoFingerScrolled = false;
 void sendMouseEvent(int button, int eventType, float pX, float pY, bool generateClick = true);
 void sendMouseMotion(float pX, float pY);
 void sendMouseScroll(int dx, int dy, float pX, float pY);
+// 按住不动 -> 视为按住左键
+void pollHoldToPress()
+{
+    if (mouseButtonHeld)
+        return;
+    if (_state != STATE_SINGLE_FINGER || fingers.size() != 1)
+        return;
+
+    Finger& f = fingers.begin()->second;
+    if (!f.active || f.moved || f.dragCancelled)
+        return;
+    if (SDL_GetTicks() - f.downTime < HOLD_TO_PRESS_MS)
+        return;
+
+    mouseButtonHeld = true;
+    // 指针在按下时已经移到 f.startX/startY，方向就是按住的位置。
+    // 补一次同位置的 Move：部分地图逻辑是在 onMouseMove 里才算方向的，
+    // 这样和"长按后拖动"那条已知可用的路径保持一致。
+    sendMouseEvent(SDL_BUTTON_LEFT, SDL_EVENT_MOUSE_BUTTON_DOWN, f.startX, f.startY);
+    sendMouseMotion(f.startX, f.startY);
+}
 // 结束"按住左键"状态（generateClick=false 用于拖拽收尾，避免拖完又触发一次点击）
 void releaseHeldButton(bool generateClick)
 {
@@ -849,6 +873,10 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event)
 
 SDL_AppResult SDL_AppIterate(void* appstate)
 {
+    // 按住不动超过阈值 -> 补发左键按下
+#if defined(_KRKRSDL3_ANDROID) || defined(_KRKRSDL3_EMSCRIPTEN) || defined(_KRKRSDL3_IOS)
+    pollHoldToPress();
+#endif
     if (!::Application->Run())
         return SDL_APP_SUCCESS;
     // 写入缓冲区

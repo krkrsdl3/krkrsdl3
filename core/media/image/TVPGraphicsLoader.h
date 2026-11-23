@@ -12,6 +12,8 @@
 #ifndef GraphicsLoaderIntfH
 #define GraphicsLoaderIntfH
 
+#include <vector>
+
 class tTVPBaseBitmap;
 namespace TJS
 {
@@ -231,6 +233,11 @@ extern void TVPSaveImage(const ttstr& storagename,
                          const ttstr& mode,
                          const iTVPBaseBitmap* image,
                          iTJSDispatch2* meta);
+// 把图像编码到内存（不落盘）。mode 为 bmp/png/jpg 等已注册的保存格式。
+extern bool TVPSaveImageToMemory(const ttstr& mode,
+                                 const iTVPBaseBitmap* image,
+                                 iTJSDispatch2* meta,
+                                 std::vector<unsigned char>& out);
 extern bool TVPGetSaveOption(const ttstr& type, iTJSDispatch2** dic);
 //---------------------------------------------------------------------------
 

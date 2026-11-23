@@ -205,6 +205,67 @@ void TVPSaveImage(const ttstr& storagename,
         TVPThrowExceptionMessage(TVPUnknownGraphicFormat, mode);
 }
 //---------------------------------------------------------------------------
+bool TVPSaveImageToMemory(const ttstr& mode,
+                          const iTVPBaseBitmap* image,
+                          iTJSDispatch2* meta,
+                          std::vector<unsigned char>& out)
+{
+    out.clear();
+    if (!image || !image->Is32BPP())
+        return false;
+
+    tTVPRegisterGraphicInfo* handler = NULL;
+    for (auto itm : TVPGraphicType._handlers)
+    {
+        if (itm->AcceptSave(mode, NULL))
+        {
+            handler = itm;
+            break;
+        }
+    }
+    if (!handler || !handler->SaveHandler)
+        return false;
+
+    try
+    {
+        // 有些保存器（例如 JPEG）会无条件遍历 meta 字典，NULL 会直接崩，
+        // 这里补一个空字典。
+        iTJSDispatch2* ownMeta = NULL;
+        if (!meta)
+        {
+            ownMeta = TJSCreateDictionaryObject();
+            meta = ownMeta;
+        }
+
+        tTVPMemoryStream stream;
+        try
+        {
+            handler->SaveHandler(handler->FormatData, &stream, image, mode, meta);
+        }
+        catch (...)
+        {
+            if (ownMeta)
+                ownMeta->Release();
+            throw;
+        }
+        if (ownMeta)
+            ownMeta->Release();
+
+        const tjs_uint size = (tjs_uint)stream.GetSize();
+        if (!size)
+            return false;
+        const unsigned char* p = (const unsigned char*)stream.GetInternalBuffer();
+        out.assign(p, p + size);
+    }
+    catch (...)
+    {
+        out.clear();
+        return false;
+    }
+
+    return !out.empty();
+}
+//---------------------------------------------------------------------------
 bool TVPGetSaveOption(const ttstr& type, iTJSDispatch2** dic)
 {
     tTVPRegisterGraphicInfo* handler;

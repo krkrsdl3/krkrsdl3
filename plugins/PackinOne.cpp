@@ -6,6 +6,9 @@
 #include "tjsArray.h"
 #include "tjsDictionary.h"
 #include "tjsConfig.h"
+#include "TVPGraphicsLoader.h"
+#include "tjsNativeLayer.h"
+#include "LayerBitmap.h"
 #include <cstdint>
 #include <cstring>
 #include <vector>
@@ -1112,6 +1115,66 @@ public:
         }
     }
 
+    //! 在「图片缩略图 + 数据包」混合文件里定位数据包起点
+    /*!
+        BookMarkIO_DataPack 的存档既要给 loadImages() 当缩略图用，又要给
+        loadDataPack() 当数据包读。这里采用和 KAG 经典存档（dataN.bmp）相同的
+        布局：缩略图（BMP/PNG/JPEG）在前，TJS/ns0 数据包紧随其后。图片加载器
+        只认文件头、忽略尾部数据；数据包这边则必须先跳过图片才能解析。
+    */
+    static size_t findPackStart(const std::vector<uint8_t>& raw)
+    {
+        if (raw.size() < 8)
+            return 0;
+
+        const bool isBmp = raw[0] == 'B' && raw[1] == 'M';
+        const bool isPng = memcmp(raw.data(), "\x89PNG\r\n\x1a\n", 8) == 0;
+        const bool isJpg = raw[0] == 0xFF && raw[1] == 0xD8 && raw[2] == 0xFF;
+        if (!isBmp && !isPng && !isJpg)
+            return 0;
+
+        auto isMagic = [&raw](size_t p) {
+            return p + 8 <= raw.size() &&
+                   (memcmp(raw.data() + p, "TJS/ns0\0", 8) == 0 ||
+                    memcmp(raw.data() + p, "TJS/4s0\0", 8) == 0);
+        };
+
+        if (isBmp && raw.size() >= 30)
+        {
+            const uint32_t dataOff = (uint32_t)raw[10] | ((uint32_t)raw[11] << 8) |
+                                     ((uint32_t)raw[12] << 16) | ((uint32_t)raw[13] << 24);
+            const int32_t w = (int32_t)((uint32_t)raw[18] | ((uint32_t)raw[19] << 8) |
+                                        ((uint32_t)raw[20] << 16) | ((uint32_t)raw[21] << 24));
+            const int32_t h = (int32_t)((uint32_t)raw[22] | ((uint32_t)raw[23] << 8) |
+                                        ((uint32_t)raw[24] << 16) | ((uint32_t)raw[25] << 24));
+            const uint16_t bpp = (uint16_t)(raw[28] | (raw[29] << 8));
+
+            size_t pixelEnd = 54;
+            if (w > 0 && h != 0 && bpp > 0)
+            {
+                const size_t row = (((size_t)w * bpp + 31) / 32) * 4;
+                const size_t absH = (size_t)(h < 0 ? -h : h);
+                if (row <= raw.size() && absH <= raw.size() / row)
+                    pixelEnd = (size_t)dataOff + row * absH;
+            }
+
+            if (isMagic(pixelEnd))
+                return pixelEnd;
+
+            // 少数编码器会在像素数据后补 padding，先小范围向后找
+            for (size_t p = pixelEnd; p + 8 <= raw.size() && p < pixelEnd + 64; p++)
+                if (isMagic(p))
+                    return p;
+        }
+
+        // PNG/JPEG 没有固定长度字段，直接找魔数（尾部追加数据不影响解码）
+        for (size_t p = 0; p + 8 <= raw.size(); p++)
+            if (isMagic(p))
+                return p;
+
+        return raw.size();
+    }
+
     //! 尝试按二进制 PBD 解析 <name>[.pbd]
     //! 按名字原样读一个 PBD 容器
     static bool loadBinaryPackFile(const ttstr& file, tTJSVariant* result)
@@ -1143,33 +1206,38 @@ public:
             return false;
         }
 
-        if (raw.size() < 16)
+        // 存档可能是「BMP 缩略图 + 数据包」的混合文件，先定位数据包起点
+        const size_t packStart = findPackStart(raw);
+        if (packStart >= raw.size() || raw.size() - packStart < 16)
             return false;
 
-        const bool is4s0 = memcmp(raw.data(), "TJS/4s0\0", 8) == 0;
-        const bool isns0 = memcmp(raw.data(), "TJS/ns0\0", 8) == 0;
+        const uint8_t* base = raw.data() + packStart;
+        const size_t avail = raw.size() - packStart;
+
+        const bool is4s0 = memcmp(base, "TJS/4s0\0", 8) == 0;
+        const bool isns0 = memcmp(base, "TJS/ns0\0", 8) == 0;
         if (!is4s0 && !isns0)
             return false;
 
-        const uint32_t seed = (uint32_t)raw[8] | ((uint32_t)raw[9] << 8) |
-                              ((uint32_t)raw[10] << 16) | ((uint32_t)raw[11] << 24);
-        const uint16_t crypt = (uint16_t)(raw[12] | (raw[13] << 8));
-        const uint16_t ivLen = (uint16_t)(raw[14] | (raw[15] << 8));
+        const uint32_t seed = (uint32_t)base[8] | ((uint32_t)base[9] << 8) |
+                              ((uint32_t)base[10] << 16) | ((uint32_t)base[11] << 24);
+        const uint16_t crypt = (uint16_t)(base[12] | (base[13] << 8));
+        const uint16_t ivLen = (uint16_t)(base[14] | (base[15] << 8));
 
         try
         {
             std::vector<uint8_t> body;
             if (isns0)
             {
-                body.assign(raw.begin() + 16, raw.end());
+                body.assign(base + 16, base + avail);
             }
             else
             {
                 const size_t ivEnd = 16 + (size_t)ivLen;
-                if (ivEnd > raw.size())
+                if (ivEnd > avail)
                     return false;
-                std::vector<uint8_t> iv(raw.begin() + 16, raw.begin() + ivEnd);
-                std::vector<uint8_t> framed(raw.begin() + ivEnd, raw.end());
+                std::vector<uint8_t> iv(base + 16, base + ivEnd);
+                std::vector<uint8_t> framed(base + ivEnd, base + avail);
                 if (!pbd::crypt_4s0(framed, seed, crypt, iv))
                     return false;
                 if (!pbd::decompress_frames(framed, body))
@@ -1309,26 +1377,82 @@ public:
 
     //! Scripts.makeDataPackThumb(storage, ext, quality, component)
     /*!
-        原版把存档缩略图编码成 octet 交给 saveDataPack 塞进数据包。本工程的
-        saveDataPack 不写缩略图（存档列表里的预览走 savedata/*.bmp），
-        这里返回 void 即可，调用方只把它原样传给 saveDataPack。
+        把存档缩略图图层直接编码进内存（不落盘），交给 saveDataPack 放在数据包
+        前面。KAG 的存档列表会用 loadImages("dataN.jpg") 取预览；图片加载器按
+        魔数识别格式。返回 void 表示没有缩略图。
     */
     static tjs_error makeDataPackThumb(tTJSVariant* result, tjs_int numparams, tTJSVariant** param,
                                        iTJSDispatch2* objthis)
     {
         if (result)
             result->Clear();
+
+        if (numparams < 1 || param[0]->Type() != tvtObject)
+            return TJS_S_OK;
+
+        iTJSDispatch2* obj = param[0]->AsObjectNoAddRef();
+        if (!obj)
+            return TJS_S_OK;
+
+        // 尊重调用方要求的编码格式：BookMarkIO_DataPack 传 "jpg"，
+        // snapcapture/cgmode 还会传 ".png"（带点）来单独存缩略图文件。
+        ttstr ext(TJS_N("bmp"));
+        if (numparams >= 2 && param[1]->Type() == tvtString)
+        {
+            ttstr requested = param[1]->GetString();
+            requested.ToLowerCase();
+            if (requested.GetLen() > 0 && requested[0] == TJS_N('.'))
+                requested = requested.SubString(1, requested.GetLen() - 1);
+            if (requested == TJS_N("png") || requested == TJS_N("jpg") ||
+                requested == TJS_N("jpeg") || requested == TJS_N("bmp"))
+                ext = requested;
+        }
+
+        tTJSNI_Layer* layer = NULL;
+        if (TJS_FAILED(obj->NativeInstanceSupport(TJS_NIS_GETINSTANCE, tTJSNC_Layer::ClassID,
+                                                 (iTJSNativeInstance**)&layer)) ||
+            !layer)
+            return TJS_S_OK;
+
+        iTVPBaseBitmap* image = layer->GetMainImage();
+        if (!image)
+            return TJS_S_OK;
+
+        std::vector<unsigned char> buf;
+        if (!TVPSaveImageToMemory(ext, image, NULL, buf) || buf.size() < 8)
+            return TJS_S_OK;
+
+        // 只接受真实编码结果（编码器失败时可能给出空数据或别的格式）
+        bool ok = false;
+        if (ext == TJS_N("png"))
+            ok = memcmp(buf.data(), "\x89PNG\r\n\x1a\n", 8) == 0;
+        else if (ext == TJS_N("jpg") || ext == TJS_N("jpeg"))
+            ok = buf[0] == 0xFF && buf[1] == 0xD8 && buf[2] == 0xFF;
+        else
+            ok = buf[0] == 'B' && buf[1] == 'M';
+        if (!ok)
+            return TJS_S_OK;
+
+        tTJSVariantOctet* oct = TJSAllocVariantOctet(buf.data(), (tjs_uint)buf.size());
+        if (oct)
+        {
+            if (result)
+                *result = oct;
+            oct->Release();
+        }
+
         return TJS_S_OK;
     }
 
     //! Scripts.saveDataPack(name, data, options)
     /*!
         退出时 KAG 的 saveSystemVariables / voicemode.tjs 会把系统变量和播放列表
-        写进 savedata/*.ksd；原版由 PackinOne 的这个接口完成，缺了会报
+        写进 savedata 目录的 .ksd；原版由 PackinOne 的这个接口完成，缺了会报
         "Member saveDataPack does not exist" 并存不下数据。
 
-        options 目前只看 compress（本实现固定写未压缩的 TJS/ns0）；缩略图与
-        digest 由其它接口负责，这里不处理，写出的文件仍能被 loadDataPack 读回。
+        options 目前只看 compress（本实现固定写未压缩的 TJS/ns0）；第 4 个参数
+        是 makeDataPackThumb 返回的图片缩略图（BMP/PNG/JPEG），会放在数据包前面，
+        使同一个文件既能被 loadImages() 当预览图，又能被 loadDataPack() 当存档读取。
     */
     static tjs_error saveDataPack(tTJSVariant* result, tjs_int numparams, tTJSVariant** param,
                                   iTJSDispatch2* objthis)
@@ -1345,6 +1469,19 @@ public:
                 if (pbd::serialize_value(*param[1], w, 0))
                 {
                     std::vector<uint8_t> out;
+
+                    // 第 4 个参数是 makeDataPackThumb 生成的图片缩略图：
+                    // 放在数据包前面，存档列表的 loadImages() 直接读它。
+                    if (numparams >= 4 && param[3] && param[3]->Type() == tvtOctet)
+                    {
+                        if (tTJSVariantOctet* oct = param[3]->AsOctetNoAddRef())
+                        {
+                            if (oct->GetLength() >= 2)
+                                out.insert(out.end(), oct->GetData(),
+                                           oct->GetData() + oct->GetLength());
+                        }
+                    }
+
                     static const uint8_t magic[8] = { 'T', 'J', 'S', '/', 'n', 's', '0', 0 };
                     out.insert(out.end(), magic, magic + 8);
                     // seed(4) + crypt(2) + ivlen(2)：ns0 不需要加密，全部填 0
