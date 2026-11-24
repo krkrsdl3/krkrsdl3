@@ -5,6 +5,7 @@
 #include "tjsNative.h"
 #include "tjsArray.h"
 #include "tjsDictionary.h"
+#include "tjsBinarySerializer.h"
 #include "tjsConfig.h"
 #include "TVPGraphicsLoader.h"
 #include "tjsNativeLayer.h"
@@ -13,6 +14,7 @@
 #include <cstring>
 #include <vector>
 
+// 没有统一的标准，各种补丁和资源包格式打架，以后或许不再打算做兼容了
 #define NCB_MODULE_NAME TJS_N("PackinOne.dll")
 
 /*
@@ -1213,6 +1215,33 @@ public:
 
         const uint8_t* base = raw.data() + packStart;
         const size_t avail = raw.size() - packStart;
+
+        // TJS2 二进制序列化容器（"KBAD100\0" 魔数）。
+        // 补丁包 patch.xp3 根目录下的 *.pbd 就是这种格式（原版由脚本侧的
+        // Dictionary.loadStruct 读取）。这里直接交给内核的二进制反序列化器，
+        // 否则同名文件会被当成不认识的包，psdlayer.tjs 拿不到图层数据。
+        if (TJS::tTJSBinarySerializer::IsBinary(base))
+        {
+            try
+            {
+                tTJSBinaryStream* st = TVPCreateStream(file, TJS_BS_READ);
+                if (!st)
+                    return false;
+                st->SetPosition((tjs_uint64)packStart + TJS::tTJSBinarySerializer::HEADER_LENGTH);
+                TJS::tTJSBinarySerializer serializer;
+                tTJSVariant* var = serializer.Read(st);
+                delete st;
+                if (!var)
+                    return false;
+                *result = *var;
+                delete var;
+                return true;
+            }
+            catch (...)
+            {
+                return false;
+            }
+        }
 
         const bool is4s0 = memcmp(base, "TJS/4s0\0", 8) == 0;
         const bool isns0 = memcmp(base, "TJS/ns0\0", 8) == 0;
