@@ -81,12 +81,11 @@ ResourceManager::~ResourceManager()
 }
 tTJSVariant ResourceManager::load(tTJSString path)
 {
-    ttstr trimPath;
-    if (path.StartsWith(TJS_N("lzfs://./")))
-        trimPath = path.SubString(9, path.length() - 9);
-    else
-        trimPath = path;
-    auto rst = cacheData.find(TVPGetPlacedPath(trimPath));
+    // Keep the storage name intact.  "lzfs://xxx" is dispatched by the kernel
+    // storage layer to the lzfs storage media, which unwraps the LZ4 frame and
+    // returns a decompressed stream; stripping the prefix here would bypass it.
+    const ttstr storageName = path;
+    auto rst = cacheData.find(TVPGetPlacedPath(storageName));
     if (rst != cacheData.end())
     {
         return rst->second->root();
@@ -94,20 +93,20 @@ tTJSVariant ResourceManager::load(tTJSString path)
     emotefile* file = new emotefile();
     file->setSeed(_decryptkey);
     file->setFun(_decryptClo);
-    file->load(trimPath);
+    if (!file->load(storageName))
+    {
+        TVPConsoleLog((ttstr(TJS_N("motion: cannot load ")) + storageName).c_str());
+        delete file;
+        return tTJSVariant();
+    }
 
     // motionKey是唯一可区分的表示符，我们用其作为标志
-    cacheData.insert(std::pair<ttstr, emotefile*>(TVPGetPlacedPath(trimPath), file));
+    cacheData.insert(std::pair<ttstr, emotefile*>(TVPGetPlacedPath(storageName), file));
     return file->root();
 }
 void ResourceManager::unload(tTJSString path)
 {
-    ttstr trimPath;
-    if (path.StartsWith(TJS_N("lzfs://./")))
-        trimPath = path.SubString(9, path.length() - 9);
-    else
-        trimPath = path;
-    auto it = cacheData.find(TVPGetPlacedPath(trimPath));
+    auto it = cacheData.find(TVPGetPlacedPath(path));
     if (it != cacheData.end())
     {
         if (it->second != nullptr)

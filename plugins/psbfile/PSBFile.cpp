@@ -109,9 +109,11 @@ bool tTJSNI_PsbFile::loadFromStream(tTJSBinaryStream* _filePtr, const ttstr& fil
         TVPConsoleLog("psb file is encrypted");
         return false;
     }
-    if (_header.version > 3)
+    // E-mote exports PSB v4.  The chunk tables v4 adds are parsed below, so
+    // there is no reason to reject the file here.
+    if (_header.version > 4)
     {
-        TVPConsoleLog("not support psb file format version > 3");
+        TVPConsoleLog("not support psb file format version > 4");
         return false;
     }
 
@@ -197,7 +199,8 @@ bool tTJSNI_PsbFile::loadFromStream(tTJSBinaryStream* _filePtr, const ttstr& fil
                        filePtr->ReadI8LE() - static_cast<tjs_int8>(PSB::PSBObjType::ArrayN1) + 1,
                        filePtr);
 
-    if (_header.version >= 4)
+    if (_header.version >= 4 && _header.offsetExtraChunkOffsets &&
+        _header.offsetExtraChunkOffsets < filePtr->GetSize())
     {
         // Pre Load Extra Resources (Chunks)
         filePtr->SetPosition(_header.offsetExtraChunkOffsets);
