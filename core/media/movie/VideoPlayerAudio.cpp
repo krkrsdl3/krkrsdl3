@@ -57,6 +57,7 @@ CVideoPlayerAudio::~CVideoPlayerAudio()
     {
         av_freep(&audio_buf);
     }
+    audio_buf_size = 0;
     if (m_soundDevice)
     {
         delete m_soundDevice;
@@ -563,6 +564,7 @@ void CVideoPlayerAudio::Destroy()
     {
         av_freep(&audio_buf);
     }
+    audio_buf_size = 0;
     if (m_soundDevice)
     {
         delete m_soundDevice;
@@ -625,7 +627,16 @@ unsigned int CVideoPlayerAudio::AddPackets(const DVDAudioFrame& audioframe)
                 int out_count = frames + 256;
                 int out_size = av_samples_get_buffer_size(NULL, audioframe.m_channelCount,
                                                           out_count, swr_tgtFormat, 0);
+                if (out_size <= 0)
+                {
+                    continue;
+                }
                 av_fast_malloc(&audio_buf, &audio_buf_size, out_size);
+                if (!audio_buf)
+                {
+                    audio_buf_size = 0;
+                    break;
+                }
                 int len2 = swr_convert(swr_ctx, &audio_buf, out_count, in, frames);
                 if (len2 == out_count)
                 {
